@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="SubConsole/SubConsole.csproj" Id="35d030b9-5d8a-43ec-9897-e87b7f9884ff" />
+  <Project Path="SubControlMAUI/SubControlMAUI.csproj">
+    <Deploy Solution="Debug|*" />
+  </Project>
+</Solution>
