@@ -1,32 +1,35 @@
 @echo off
 setlocal
 
-set PROJECT=SubControlMAUI.csproj
-set CONFIG=Release
-set FRAMEWORK=net8.0-windows10.0.19041.0
+REM ==========================
+REM CONFIG
+REM ==========================
+set PROJECT_PATH=SubControlMAUI.csproj
+set CONFIGURATION=Release
+set FRAMEWORK=net10.0-windows10.0.19041.0
 set RUNTIME=win-x64
+set OUTPUT_DIR=publish
 
-echo Cleaning...
-dotnet clean "%PROJECT%"
+REM ==========================
+REM CLEAN
+REM ==========================
+if exist "%OUTPUT_DIR%" (
+    rmdir /s /q "%OUTPUT_DIR%"
+)
 
-echo Removing obj/bin...
-rmdir /s /q bin 2>nul
-rmdir /s /q obj 2>nul
+REM ==========================
+REM PUBLISH
+REM ==========================
+dotnet publish "%PROJECT_PATH%" ^
+    -c %CONFIGURATION% ^
+    -f %FRAMEWORK% ^
+    -r %RUNTIME% ^
+    --self-contained true ^
+    -o "%OUTPUT_DIR%" ^
+    /p:PublishSingleFile=true ^
+    /p:IncludeNativeLibrariesForSelfExtract=true ^
+    /p:EnableCompressionInSingleFile=true ^
+    /p:UseMonoRuntime=false
 
-echo Restoring Windows target...
-dotnet restore "%PROJECT%" -p:TargetFramework=%FRAMEWORK%
-
-echo Publishing single-file EXE...
-dotnet publish "%PROJECT%" ^
-  -c %CONFIG% ^
-  -f %FRAMEWORK% ^
-  -r %RUNTIME% ^
-  --self-contained true ^
-  /p:PublishSingleFile=true ^
-  /p:PublishTrimmed=false ^
-  /p:IncludeNativeLibrariesForSelfExtract=true
-
-echo.
-echo Done!
 pause
 endlocal

@@ -1,12 +1,15 @@
 ﻿
 
+using SubControlMAUI.ViewModels;
+
 namespace SubControlMAUI
 {
     public partial class AppShell : Shell
     {
-        public AppShell()
+        public AppShell(AppShellViewModel viewModel)
         {
             InitializeComponent();
+            BindingContext = viewModel;
         }
 
         protected override async void OnAppearing()

@@ -34,10 +34,11 @@ namespace SubConsole
         {
             _cts = new CancellationTokenSource();
 
-            _listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            _listener.Bind(new IPEndPoint(IPAddress.Any, _port));
+            _listener = new Socket(AddressFamily.InterNetworkV6, SocketType.Stream, ProtocolType.Tcp);
+            _listener.DualMode = true; 
+            _listener.Bind(new IPEndPoint(IPAddress.IPv6Any, _port));
             _listener.Listen(1);
-
+            
             Console.WriteLine($"Server listening on port {_port}");
 
             while (!_cts.Token.IsCancellationRequested)

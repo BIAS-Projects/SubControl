@@ -36,9 +36,16 @@ namespace SubControlMAUI.Services
         {
             try
             {
+              //  host = "fe80::8aa2:9eff:fe8d:678f%3";
+
                 _cts = new CancellationTokenSource();
 
-                _socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
+                //_socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
+                //{
+                //    NoDelay = true
+                //};
+
+                _socket = new Socket(SocketType.Stream, ProtocolType.Tcp)
                 {
                     NoDelay = true
                 };
@@ -72,10 +79,16 @@ namespace SubControlMAUI.Services
                 {
                     int bytesRead = await _socket!.ReceiveAsync(buffer, SocketFlags.None, token);
 
+                    //if (bytesRead == 0)
+                    //{
+                    //    await StopAsync();
+                    //    return;
+                    //}
+
                     if (bytesRead == 0)
                     {
-                        await StopAsync();
-                        return;
+                        _messenger.Send(new TcpStatusMessage("Remote closed connection"));
+                        break; // just exit the loop
                     }
 
                     var text = Encoding.UTF8.GetString(buffer, 0, bytesRead);
@@ -83,18 +96,31 @@ namespace SubControlMAUI.Services
                     ProcessIncomingText(text);
                 }
             }
-            catch (OperationCanceledException) { }
-            catch (Exception ex)
+            //catch (OperationCanceledException) { }
+            //catch (Exception ex)
+            //{
+            //    _messenger.Send(new TcpIsConnected(false));
+            //    _messenger.Send(new TcpErrorMessage(ex));
+            //    await StopAsync();
+            //}
+            catch (OperationCanceledException)
             {
-                _messenger.Send(new TcpIsConnected(false));
-                _messenger.Send(new TcpErrorMessage(ex));
-                await StopAsync();
+                // normal shutdown
             }
+            catch (Exception ex)
+{
+                _messenger.Send(new TcpErrorMessage(ex));
+            }
+            finally
+{
+                _messenger.Send(new TcpIsConnected(false));
+            }
+
         }
 
         // ---------------- MESSAGE REASSEMBLY ----------------
 
-        private void ProcessIncomingText(string text)
+        private async Task ProcessIncomingText(string text)
         {
             _incomingBuffer.Append(text);
 
@@ -109,13 +135,13 @@ namespace SubControlMAUI.Services
                 var message = full[..idx];
                 _incomingBuffer.Remove(0, idx + TcpProtocol.EOM.Length);
 
-                HandleCompleteMessage(message);
+                await HandleCompleteMessage(message);
             }
         }
 
         // ---------------- PROTOCOL HANDLER ----------------
 
-        private async void HandleCompleteMessage(string message)
+        private async Task HandleCompleteMessage(string message)
         {
             // If this is ACK -> ignore
             if (message == TcpProtocol.ACK)

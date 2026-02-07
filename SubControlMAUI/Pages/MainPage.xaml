@@ -22,6 +22,7 @@
         </Grid.RowDefinitions>
 
 
+        
         <Label 
             Text="{Binding Status}"
             Grid.Row="0"
@@ -38,6 +39,8 @@
             Grid.Row="1"
             Grid.ColumnSpan="0"
             Margin="10"/>
+
+
 
         <Button 
             IsEnabled="{Binding IsConnected}"

@@ -1,17 +1,21 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+﻿
+using Microsoft.Extensions.DependencyInjection;
+using SubControlMAUI.ViewModels;
 
 namespace SubControlMAUI
 {
     public partial class App : Application
     {
-        public App()
+        AppShellViewModel _viewModel;
+        public App(AppShellViewModel viewModel)
         {
             InitializeComponent();
+            _viewModel = viewModel;
         }
 
         protected override Window CreateWindow(IActivationState? activationState)
         {
-            return new Window(new AppShell());
+            return new Window(new AppShell(_viewModel));
         }
     }
 }

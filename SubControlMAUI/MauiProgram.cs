@@ -2,6 +2,7 @@
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.Logging;
 using SubControlMAUI.Services;
+using SubControlMAUI.ViewModels;
 
 namespace SubControlMAUI
 {
@@ -30,6 +31,10 @@ namespace SubControlMAUI
 
             builder.Services.AddSingleton<Pages.Comms>();
             builder.Services.AddSingleton<ViewModels.CommsViewModel>();
+
+            builder.Services.AddSingleton<AppShellViewModel>();
+            builder.Services.AddSingleton<AppShell>();
+
 
             builder.Services.AddSingleton<SQLiteService>();
 
