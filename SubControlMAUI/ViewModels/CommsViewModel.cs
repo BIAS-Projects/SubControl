@@ -19,61 +19,11 @@ namespace SubControlMAUI.ViewModels
 
 
 
-            //WeakReferenceMessenger.Default.Register<TCPReceiveMessage>(this, (r, m) =>
-            //{
-            //    MainThread.BeginInvokeOnMainThread(() =>
-            //    {
-            //        UpdateText(m.Value);
-            //    });
-
-            //});
-
-            _messenger.Register<TcpDataReceivedMessage>(this, (r, m) =>
-            {
-                MainThread.BeginInvokeOnMainThread(() =>
-                {
-                    UpdateText(Encoding.UTF8.GetString(m.Value));
-                });
-
-            });
-
-            _messenger.Register<TcpSendRequestMessage>(this, (r, m) =>
-            {
-                MainThread.BeginInvokeOnMainThread(() =>
-                {
-                    UpdateText(Encoding.UTF8.GetString(m.Value));
-                });
-
-            });
-
-            _messenger.Register<TcpStatusMessage>(this, (r, m) =>
-            {
-                MainThread.BeginInvokeOnMainThread(() =>
-                {
-                    UpdateText(m.Value);
-                });
-
-            });
-
-            _messenger.Register<TcpErrorMessage>(this, (r, m) =>
-            {
-                MainThread.BeginInvokeOnMainThread(() =>
-                {
-                    UpdateText(m.Value.Message);
-                });
-
-            });
 
 
         }
 
-        [ObservableProperty]
-        string receivedText;
 
-        public void UpdateText(string text)
-        {
-            ReceivedText += text + Environment.NewLine;
-        }
 
     } 
 }

@@ -27,7 +27,7 @@ namespace SubControlMAUI.ViewModels
 
         public SettingsViewModel(SQLiteService sQLiteService, IAlertService alertService, TcpSocketService tCPService, IMessenger messenger)
         {
-            Title = "Settings";
+            Title = "Ethernet Settings";
             _sqliteService = sQLiteService;
             _alertService = alertService;
             _messenger = messenger;
@@ -78,17 +78,10 @@ namespace SubControlMAUI.ViewModels
             }
             try
             {
+                _sqliteService.config.IPAddress = InputIPAddress;
+                _sqliteService.config.Port = Port;
 
-                int result = await _sqliteService.SaveConfigAsync(new Config
-                {
-                    Id = 0,
-                    IPAddress = InputIPAddress,
-                    Port = Port,
-                    UpCommand = UpCommand,
-                    DownCommand = DownCommand,
-                    LeftCommand = LeftCommand,
-                    RightCommand = RightCommand
-                }, true);
+                int result = await _sqliteService.SaveConfigAsync(true);
                 if (result != 1)
                 {
                     await _alertService.ShowAlertAsync("Error", $"Error Loading Settings - Settings Not Saved", "OK");
@@ -200,10 +193,10 @@ namespace SubControlMAUI.ViewModels
         {
             InputIPAddress = _sqliteService.config.IPAddress;
             Port = _sqliteService.config.Port;
-            UpCommand = _sqliteService.config.UpCommand;
-            DownCommand = _sqliteService.config.DownCommand;
-            LeftCommand = _sqliteService.config.LeftCommand;
-            RightCommand = _sqliteService.config.RightCommand;
+            UpCommand = _sqliteService.config.CutterUpCommand;
+            DownCommand = _sqliteService.config.CutterDownCommand;
+            LeftCommand = _sqliteService.config.CutterLeftCommand;
+            RightCommand = _sqliteService.config.CutterRightCommand;
         }
 
     }

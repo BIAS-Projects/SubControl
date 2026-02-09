@@ -12,13 +12,13 @@ public partial class MainPage : ContentPage
 		BindingContext = _viewModel;
     }
 
-    protected override async void OnAppearing()
-    {
-        base.OnAppearing();
-        await _viewModel.GetConfig();
+    //protected override async void OnAppearing()
+    //{
+    //    base.OnAppearing();
+    //    await _viewModel.GetConfig();
 
 
-    }
+    //}
 
     private async void Button_Loaded(object sender, EventArgs e)
     {

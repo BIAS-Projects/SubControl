@@ -87,7 +87,7 @@ namespace SubControlMAUI.Services
 
                     if (bytesRead == 0)
                     {
-                        _messenger.Send(new TcpStatusMessage("Remote closed connection"));
+                        _messenger.Send(new TcpStatusMessage("Remote Closed Connection"));
                         break; // just exit the loop
                     }
 
@@ -201,7 +201,7 @@ namespace SubControlMAUI.Services
                 if (_receiveTask != null)
                     await _receiveTask;
 
-                _messenger.Send(new TcpStatusMessage("Disconncted"));
+                _messenger.Send(new TcpStatusMessage("Disconnected"));
                 _messenger.Send(new TcpIsConnected(false));
             }
             catch { }

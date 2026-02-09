@@ -2,10 +2,9 @@ using SubControlMAUI.ViewModels;
 
 namespace SubControlMAUI.Pages;
 
-public partial class PeriscopePage : ContentPage
+public partial class FeatureOptionsPage : ContentPage
 {
-
-	public PeriscopePage(PeriscopeViewModel viewModel)
+    public FeatureOptionsPage( FeatureOptionViewModel viewModel)
 	{
 		InitializeComponent();
 		BindingContext = viewModel;

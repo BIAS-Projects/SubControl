@@ -18,9 +18,11 @@ namespace SubControlMAUI.Services
         //https://github.com/praeclarum/sqlite-net
         SQLiteAsyncConnection Database;
 
-        public string LastError { get; set; }
+        public string LastError { get; set; } = string.Empty;
 
         public bool DefaultsLoaded { get; set; } = false;
+
+        public bool ConfigLoadedError { get; set; } = false;
 
         public SQLiteService()
         {
@@ -99,12 +101,24 @@ namespace SubControlMAUI.Services
                 Id = 0,
                 IPAddress = "127.0.0.1",
                 Port = "9000",
-                UpCommand = "UP",
-                DownCommand = "DOWN",
-                LeftCommand = "LEFT",
-                RightCommand = "RIGHT"
+                Rs232Port = "COM1",
+                BaudRate = 9600,
+                Parity = "None",
+                DataBits = 8,
+                StopBits = "One",
+                FlowControl = "None",
+                BusId = 1,
+                DeviceAddress = 60,
+                ClockRate = 1000000,
+                CutterUpCommand = "CUTTER_UP",
+                CutterDownCommand = "CUTTER_DOWN",
+                CutterLeftCommand = "CUTTER_LEFT",
+                CutterRightCommand = "CUTTER_RIGHT",
+                PeriscopeUpCommand = "PERISCOPE_UP",
+                PeriscopeDownCommand = "PERISCOPE_DOWN",
+                Features = "CUTTER,PERISCOPE"
             };
-            if(await SaveConfigAsync(config, false) == 1)
+            if(await SaveConfigAsync(false) == 1)
             { 
                 return true;
             }
@@ -113,7 +127,7 @@ namespace SubControlMAUI.Services
                 return false;
             }
         }
-        public async Task<int> SaveConfigAsync(Config config, bool isUpdate)
+        public async Task<int> SaveConfigAsync(bool isUpdate)
         {
             try
             {

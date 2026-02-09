@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:viewModel="clr-namespace:SubControlMAUI.ViewModels"
+             x:Class="SubControlMAUI.Pages.RS232SettingsPage"
+             x:DataType="viewModel:RS232SettingsViewModel"
+             Title="{Binding Title}">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="50" />
+            <RowDefinition Height="50" />
+            <RowDefinition Height="50" />
+            <RowDefinition Height="50" />
+            <RowDefinition Height="50" />
+            <RowDefinition Height="50" />
+            <RowDefinition Height="50" />
+        </Grid.RowDefinitions>
+
+
+        <Label Text="Comm Port:"
+               Grid.Column="0"
+               Grid.Row="0"
+               HorizontalOptions="Start"
+               VerticalOptions="Center"
+               Margin="3"/>
+        <Picker
+            Grid.Column="1"
+            Grid.Row="0"
+            HeightRequest="40"
+            Margin="3"
+            IsEnabled="{Binding IsNotConnected}"
+            ItemsSource="{Binding CommPortList}"
+            SelectedItem="{Binding SelectedCommPort}" />
+        <Label Text="Baud Rate:"
+               Grid.Column="0"
+               Grid.Row="1"
+               HorizontalOptions="Start"
+               VerticalOptions="Center"
+               Margin="3"/>
+        <Picker
+            Grid.Column="1"
+            Grid.Row="1"
+            HeightRequest="40"
+            Margin="3"
+            IsEnabled="{Binding IsNotConnected}"
+            ItemsSource="{Binding BaudRateList}"
+            SelectedItem="{Binding SelectedBaudRate}" />
+        <Label Text="Parity:"
+               Grid.Column="0"
+               Grid.Row="2"
+               HorizontalOptions="Start"
+               VerticalOptions="Center"
+               Margin="3"/>
+        <Picker
+            Grid.Column="1"
+            Grid.Row="2"
+            HeightRequest="40"
+            Margin="3"
+            IsEnabled="{Binding IsNotConnected}"
+            ItemsSource="{Binding ParityList}"
+            SelectedItem="{Binding SelectedParity}" />
+        <Label Text="Data Bits:"
+               Grid.Column="0"
+               Grid.Row="3"
+               HorizontalOptions="Start"
+               VerticalOptions="Center"
+               Margin="3"/>
+        <Picker
+            Grid.Column="1"
+            Grid.Row="3"
+            HeightRequest="40"
+            Margin="3"
+            IsEnabled="{Binding IsNotConnected}"
+            ItemsSource="{Binding DataBitsList}"
+            SelectedItem="{Binding SelectedDataBits}" />
+        <Label Text="Stop Bits:"
+               Grid.Column="0"
+               Grid.Row="4"
+               HorizontalOptions="Start"
+               VerticalOptions="Center"
+               Margin="3"/>
+        <Picker
+            Grid.Column="1"
+            Grid.Row="4"
+            HeightRequest="40"
+            Margin="3"
+            IsEnabled="{Binding IsNotConnected}"
+            ItemsSource="{Binding StopBitsList}"
+            SelectedItem="{Binding SelectedStopBits}" />
+        <Label Text="Flow Control:"
+               Grid.Column="0"
+               Grid.Row="5"
+               HorizontalOptions="Start"
+               VerticalOptions="Center"
+               Margin="3"/>
+        <Picker
+            Grid.Column="1"
+            Grid.Row="5"
+            HeightRequest="40"
+            Margin="3"
+            IsEnabled="{Binding IsNotConnected}"
+            ItemsSource="{Binding FlowControlList}"
+            SelectedItem="{Binding SelectedFlowControl}" />
+
+        
+        
+        
+        <Button 
+            IsEnabled="{Binding IsNotConnected}"
+            Text="Save"
+            Command="{Binding SaveCommand}"
+            Grid.Row="6"
+            Grid.ColumnSpan="2"
+            Margin="3"/>
+
+
+
+    </Grid>
+</ContentPage>

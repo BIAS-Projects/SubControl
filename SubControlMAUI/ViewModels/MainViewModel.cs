@@ -73,7 +73,7 @@ namespace SubControlMAUI.ViewModels
 
         public MainViewModel(SQLiteService sqliteService, IAlertService alertService, IMessenger messenger, TcpSocketService tcp)
         {
-            Title = "Main Page";
+            Title = "Cutter";
             _sqliteService = sqliteService;
             _alertService = alertService;
 
@@ -149,27 +149,33 @@ namespace SubControlMAUI.ViewModels
         [RelayCommand]
         async Task Up()
         {
-            Send(_sqliteService.config.UpCommand);
+            Send(_sqliteService.config.CutterUpCommand);
         }
         [RelayCommand]
         async Task Down()
         {
-            Send(_sqliteService.config.DownCommand);
+            Send(_sqliteService.config.CutterDownCommand);
         }
 
         [RelayCommand]
         async Task Left()
         {
-            Send(_sqliteService.config.LeftCommand);
+            Send(_sqliteService.config.CutterLeftCommand);
         }
         [RelayCommand]
         async Task Right()
         {
-            Send(_sqliteService.config.RightCommand);
+            Send(_sqliteService.config.CutterRightCommand);
         }
 
         public async Task ButtonLoaded()
         {
+            if(_sqliteService.ConfigLoadedError)
+            {
+                await _alertService.ShowAlertAsync("Error", $"Failed To Load Configuration File, Failed To Load Default Settings, {_sqliteService.LastError}", "OK");
+                return;
+            }
+
             if (_sqliteService.DefaultsLoaded)
             {
                 await _alertService.ShowAlertAsync("Warning", $"Failed To Load Configuration File, Restoring Default Settings", "OK");
@@ -184,11 +190,11 @@ namespace SubControlMAUI.ViewModels
                 if (await _sqliteService.SetDefaultConfig())
                 {
                     _sqliteService.DefaultsLoaded = true;
-                    
+
                 }
 
             }
-               
+
 
         }
 
@@ -201,25 +207,25 @@ namespace SubControlMAUI.ViewModels
             IsBusy = true;
             try
             {
- 
-                if (!IPAddress.TryParse(_sqliteService.config.IPAddress, out IPAddress ip))
-                {
-                    await _alertService.ShowAlertAsync("Error", $"Saved IP Address Is Invalid", "OK");
-                    return;
-                }
-                int _port;
-                if (!int.TryParse(_sqliteService.config.Port, out _port))
-                {
-                    await _alertService.ShowAlertAsync("Error", $"Saved Port Is Invalid", "OK");
-                    return;
-                }
-                if (_port < 0 || _port > 65535)
-                {
-                    await _alertService.ShowAlertAsync("Error", $"Saved Port Is Out Of Range", "OK");
-                    return;
-                }
+
+                //if (!IPAddress.TryParse(_sqliteService.config.IPAddress, out IPAddress ip))
+                //{
+                //    await _alertService.ShowAlertAsync("Error", $"Saved IP Address Is Invalid", "OK");
+                //    return;
+                //}
+                //int _port;
+                //if (!int.TryParse(_sqliteService.config.Port, out _port))
+                //{
+                //    await _alertService.ShowAlertAsync("Error", $"Saved Port Is Invalid", "OK");
+                //    return;
+                //}
+                //if (_port < 0 || _port > 65535)
+                //{
+                //    await _alertService.ShowAlertAsync("Error", $"Saved Port Is Out Of Range", "OK");
+                //    return;
+                //}
                 //await _tcp.StartAsync("127.0.0.1", 9000);
-                await _tcp.StartAsync(_sqliteService.config.IPAddress, _port);
+                await _tcp.StartAsync(_sqliteService.config.IPAddress, Int32.Parse(_sqliteService.config.Port));
                 IsBusy = false;
             }
             catch (Exception ex)

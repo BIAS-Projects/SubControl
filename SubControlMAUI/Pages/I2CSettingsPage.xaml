@@ -2,8 +2,8 @@
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              xmlns:viewModel="clr-namespace:SubControlMAUI.ViewModels"
-             x:Class="SubControlMAUI.Pages.SettingsPage"
-             x:DataType="viewModel:SettingsViewModel"
+             x:Class="SubControlMAUI.Pages.I2CSettingsPage"
+             x:DataType="viewModel:I2CSettingsViewModel"
              Title="{Binding Title}">
     <Grid>
         <Grid.ColumnDefinitions>
@@ -14,63 +14,55 @@
             <RowDefinition Height="50" />
             <RowDefinition Height="50" />
             <RowDefinition Height="50" />
-            <RowDefinition Height="50" />
-            <RowDefinition Height="50" />
-            <RowDefinition Height="50" />
-            <RowDefinition Height="50" />
-            <RowDefinition Height="50" />
+
         </Grid.RowDefinitions>
 
-        <Label Text="IP Address:"
+
+        <Label Text="Bus ID:"
                Grid.Column="0"
                Grid.Row="0"
                HorizontalOptions="Start"
                VerticalOptions="Center"
                Margin="3"/>
-        <Entry x:Name="ipAddress"
-               IsEnabled="{Binding IsNotConnected}"
-                Grid.Column="1"
-                Grid.Row="0"
-                HeightRequest="40"
-                Placeholder="IP Address"
-               Text="{Binding InputIPAddress}"
-               Margin="3"/>
-
-        <Label Text="Port:"
+        <Picker
+            Grid.Column="1"
+            Grid.Row="0"
+            HeightRequest="40"
+            Margin="3"
+            IsEnabled="{Binding IsNotConnected}"
+            ItemsSource="{Binding BusIDList}"
+            SelectedItem="{Binding SelectedBusID}" />
+        <Label Text="Address:"
                Grid.Column="0"
                Grid.Row="1"
                HorizontalOptions="Start"
                VerticalOptions="Center"
                Margin="3"/>
-        <Entry x:Name="port"
-                IsEnabled="{Binding IsNotConnected}"
-                Grid.Column="1"
-                Grid.Row="1"
-                HeightRequest="40"
-                Placeholder="Port"
-               Text="{Binding Port}"
-                Margin="3"/>
-
+        <Picker
+            Grid.Column="1"
+            Grid.Row="1"
+            HeightRequest="40"
+            Margin="3"
+            IsEnabled="{Binding IsNotConnected}"
+            ItemsSource="{Binding DeviceAddressList}"
+            SelectedItem="{Binding SelectedDeviceAddress}" />
 
 
         <Button 
             IsEnabled="{Binding IsNotConnected}"
             Text="Save"
             Command="{Binding SaveCommand}"
-            Grid.Row="2"
+            Grid.Row="6"
             Grid.ColumnSpan="2"
             Margin="3"/>
-
-
 
         <ActivityIndicator IsRunning="{Binding IsBusy}"
                            IsVisible="{Binding IsBusy}"
                            Grid.ColumnSpan="2"
-                           Grid.Row="6"
+                           Grid.RowSpan="5"
                            HorizontalOptions="Center"
                            VerticalOptions="Center"
                            WidthRequest="50"
                            HeightRequest="50"/>
-
     </Grid>
 </ContentPage>

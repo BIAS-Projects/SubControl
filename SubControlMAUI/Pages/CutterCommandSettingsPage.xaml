@@ -2,8 +2,8 @@
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              xmlns:viewModel="clr-namespace:SubControlMAUI.ViewModels"
-             x:Class="SubControlMAUI.Pages.SettingsPage"
-             x:DataType="viewModel:SettingsViewModel"
+             x:Class="SubControlMAUI.Pages.CutterCommandSettingsPage"
+             x:DataType="viewModel:CutterCommandViewModel"
              Title="{Binding Title}">
     <Grid>
         <Grid.ColumnDefinitions>
@@ -16,57 +16,81 @@
             <RowDefinition Height="50" />
             <RowDefinition Height="50" />
             <RowDefinition Height="50" />
-            <RowDefinition Height="50" />
-            <RowDefinition Height="50" />
-            <RowDefinition Height="50" />
         </Grid.RowDefinitions>
+        
 
-        <Label Text="IP Address:"
+        <Label Text="Up Command:"
                Grid.Column="0"
                Grid.Row="0"
                HorizontalOptions="Start"
                VerticalOptions="Center"
                Margin="3"/>
-        <Entry x:Name="ipAddress"
+        <Entry x:Name="upCommand"
                IsEnabled="{Binding IsNotConnected}"
                 Grid.Column="1"
                 Grid.Row="0"
                 HeightRequest="40"
-                Placeholder="IP Address"
-               Text="{Binding InputIPAddress}"
+                Placeholder="Up Command"
+               Text="{Binding UpCommand}"
                Margin="3"/>
 
-        <Label Text="Port:"
+        <Label Text="Down Command:"
                Grid.Column="0"
                Grid.Row="1"
                HorizontalOptions="Start"
                VerticalOptions="Center"
                Margin="3"/>
-        <Entry x:Name="port"
-                IsEnabled="{Binding IsNotConnected}"
+        <Entry x:Name="downCommand"
+               IsEnabled="{Binding IsNotConnected}"
                 Grid.Column="1"
                 Grid.Row="1"
                 HeightRequest="40"
-                Placeholder="Port"
-               Text="{Binding Port}"
-                Margin="3"/>
+                Placeholder="Down Command"
+               Text="{Binding DownCommand}"
+               Margin="3"/>
+
+        <Label Text="Left Command:"
+               Grid.Column="0"
+               Grid.Row="2"
+               HorizontalOptions="Start"
+               VerticalOptions="Center"
+               Margin="3"/>
+        <Entry x:Name="leftCommand"
+               IsEnabled="{Binding IsNotConnected}"
+                Grid.Column="1"
+                Grid.Row="2"
+                HeightRequest="40"
+                Placeholder="Left Command"
+               Text="{Binding LeftCommand}"
+               Margin="3"/>
 
 
-
+        <Label Text="Right Command:"
+               Grid.Column="0"
+               Grid.Row="3"
+               HorizontalOptions="Start"
+               VerticalOptions="Center"
+               Margin="3"/>
+        <Entry x:Name="rightCommand"
+               IsEnabled="{Binding IsNotConnected}"
+                Grid.Column="1"
+                Grid.Row="3"
+                HeightRequest="40"
+                Placeholder="Right Command"
+               Text="{Binding RightCommand}"
+               Margin="3"/>
         <Button 
             IsEnabled="{Binding IsNotConnected}"
             Text="Save"
             Command="{Binding SaveCommand}"
-            Grid.Row="2"
+            Grid.Row="4"
             Grid.ColumnSpan="2"
             Margin="3"/>
-
-
 
         <ActivityIndicator IsRunning="{Binding IsBusy}"
                            IsVisible="{Binding IsBusy}"
                            Grid.ColumnSpan="2"
-                           Grid.Row="6"
+                           Grid.RowSpan="5"
                            HorizontalOptions="Center"
                            VerticalOptions="Center"
                            WidthRequest="50"

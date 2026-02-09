@@ -30,16 +30,41 @@
     <FlyoutItem Title="Settings" Icon="settings.png">
 
 
-        <Tab Title="Cutter" Icon="saw.png" IsVisible="{Binding CutterEnabled}">
+        <Tab Title="Feature Settings" Icon="checkbox.png">
+            <ShellContent
+                ContentTemplate="{DataTemplate pages:FeatureOptionsPage}"
+                Route="FeatureSettingsPage" />
+        </Tab>
+
+        <Tab Title="Ethernet Settings" Icon="comms.png">
             <ShellContent
                 ContentTemplate="{DataTemplate pages:SettingsPage}"
                 Route="SettingsPage" />
         </Tab>
-
-        <Tab Title="Periscope" Icon="periscope.png" IsVisible="{Binding PeriscopeEnabled}">
+        
+        <Tab Title="RS232 Settings" Icon="rs232.png">
             <ShellContent
-                ContentTemplate="{DataTemplate pages:SettingsPage}"
-                Route="SettingsPage" />
+                ContentTemplate="{DataTemplate pages:RS232SettingsPage}"
+                Route="RS232SettingsPage" />
+        </Tab>
+
+        <Tab Title="I2C Settings" Icon="i2c.png">
+            <ShellContent
+                ContentTemplate="{DataTemplate pages:I2CSettingsPage}"
+                Route="I2CSettingsPage" />
+        </Tab>
+
+
+        <Tab Title="Cutter Command Settings" Icon="saw.png" IsVisible="{Binding CutterEnabled}">
+            <ShellContent
+                ContentTemplate="{DataTemplate pages:CutterCommandSettingsPage}"
+                Route="CutterCommandsPage" />
+        </Tab>
+
+        <Tab Title="Periscope Command Settings" Icon="periscope.png" IsVisible="{Binding PeriscopeEnabled}">
+            <ShellContent
+                ContentTemplate="{DataTemplate pages:PeriscopeCommandSettingsPage}"
+                Route="PeriscopeSettingsPage" />
         </Tab>
 
     </FlyoutItem>

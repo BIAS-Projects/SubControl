@@ -2,11 +2,10 @@ using SubControlMAUI.ViewModels;
 
 namespace SubControlMAUI.Pages;
 
-public partial class PeriscopePage : ContentPage
+public partial class I2CSettingsPage : ContentPage
 {
-
-	public PeriscopePage(PeriscopeViewModel viewModel)
-	{
+	public I2CSettingsPage(I2CSettingsViewModel viewModel)
+	{	
 		InitializeComponent();
 		BindingContext = viewModel;
     }
