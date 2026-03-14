@@ -1,187 +1,185 @@
-﻿using SubConsole.Models;
+﻿using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using System.IO.Ports;
-using System.Management;
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Channels;
 
-
-
 namespace SubConsole.Services
 {
-    public class CommPortService
+    public class CommPortService : BackgroundService
     {
+        private readonly ILogger<CommPortService> _logger;
 
-        public CommPortService()
-        {
-            _channel = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
-            {
-                SingleWriter = true,
-                SingleReader = false
-            });
-        }
+        private readonly SemaphoreSlim _portLock = new(1, 1);
 
-        public List<SerialDevice> GetSerialDevices()
-        {
+        private SerialPort? _port;
 
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                return GetWindowsPorts();
-
-
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-                return GetLinuxPortsByID();
-
-            return new List<SerialDevice>();
-        }
-
-
-        private List<SerialDevice> GetWindowsPorts()
-        {
-            List<SerialDevice> devices = new List<SerialDevice>();
-
-            using var searcher = new ManagementObjectSearcher(
-                "SELECT * FROM Win32_PnPEntity WHERE Name LIKE '%(COM%'");
-
-            foreach (var device in searcher.Get())
-            {
-                var name = device["Name"]?.ToString();
-
-                if (name == null)
-                    continue;
-
-                var start = name.LastIndexOf("(COM");
-                var end = name.LastIndexOf(")");
-
-                if (start >= 0 && end > start)
-                {
-                    var port = name.Substring(start + 1, end - start - 1);
-
-                    devices.Add(new SerialDevice
-                    {
-                        Port = port,
-                        Name = name,
-                        DeviceId = device["DeviceID"]?.ToString()
-                    });
-                }
-            }
-
-            return devices;
-        }
-
-
-        private List<SerialDevice> GetLinuxPorts()
-        {
-            List<SerialDevice> devices = new List<SerialDevice>();
-
-            var devPath = "/dev";
-
-            var ports = Directory.GetFiles(devPath, "ttyUSB*")
-                .Concat(Directory.GetFiles(devPath, "ttyACM*"));
-
-            foreach (var port in ports)
-            {
-                devices.Add(new SerialDevice
-                {
-                    Port = port,
-                    Name = Path.GetFileName(port),
-                    DeviceId = port
-                });
-            }
-
-            return devices;
-        }
-
-        private List<SerialDevice> GetLinuxPortsByID()
-        {
-            List<SerialDevice> devices = new List<SerialDevice>();
-            var byIdPath = "/dev/serial/by-id";
-
-            if (Directory.Exists(byIdPath))
-            {
-                foreach (var file in Directory.GetFiles(byIdPath))
-                {
-                    devices.Add(new SerialDevice
-                    {
-                        Port = Path.GetFullPath(file),
-                        Name = Path.GetFileName(file),
-                        DeviceId = file
-                    });
-                }
-            }
-            return devices;
-        }
-
-
-
-
-
-
-
-
-        private SerialPort _port;
         private readonly Channel<string> _channel;
-        private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
-        private readonly StringBuilder _lineBuffer = new();
 
-        private CancellationTokenSource _cts;
+        private readonly StringBuilder _lineBuffer = new();
 
         public ChannelReader<string> Reader => _channel.Reader;
 
+        public bool IsOpen => _port?.IsOpen == true;
 
-
-        public async Task StartAsync(string portName, int baudRate = 115200)
+        public CommPortService(ILogger<CommPortService> logger)
         {
-            await _lifecycleLock.WaitAsync();
+            _logger = logger;
+
+            _channel = Channel.CreateUnbounded<string>(
+                new UnboundedChannelOptions
+                {
+                    SingleWriter = true,
+                    SingleReader = false
+                });
+        }
+
+        // ---------------- BACKGROUND LOOP ----------------
+
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        {
+            var buffer = new byte[1024];
+
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                try
+                {
+                    if (_port == null || !_port.IsOpen)
+                    {
+                        await Task.Delay(200, stoppingToken);
+                        continue;
+                    }
+                }
+                catch(OperationCanceledException)
+                {
+                    break;
+                }
+
+                try
+                {
+                    int bytesRead = await _port.BaseStream.ReadAsync(
+                        buffer,
+                        0,
+                        buffer.Length,
+                        stoppingToken);
+
+                    if (bytesRead > 0)
+                    {
+                        string text = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+
+                        await ProcessIncomingData(text, stoppingToken);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Serial read error");
+                    await Task.Delay(1000, stoppingToken);
+                }
+            }
+        }
+
+        // ---------------- OPEN PORT ----------------
+
+        public async Task<bool> OpenAsync(string portName, int baudRate)
+        {
+            await _portLock.WaitAsync();
 
             try
             {
-                if (_port != null)
-                    return;
+                if (_port != null && _port.IsOpen)
+                {
+                    _logger.LogWarning("Serial port already open");
+                    return false;
+                }
 
                 _port = new SerialPort(portName, baudRate)
                 {
-                    Encoding = Encoding.UTF8
+                    Encoding = Encoding.UTF8,
+                    ReadTimeout = 500,
+                    WriteTimeout = 500
                 };
 
                 _port.Open();
 
-                _cts = new CancellationTokenSource();
+                _logger.LogInformation("Serial port {port} opened", portName);
 
-                _ = Task.Run(() => ReadLoop(_cts.Token));
-            }
-            finally
-            {
-                _lifecycleLock.Release();
-            }
-        }
-
-        private async Task ReadLoop(CancellationToken token)
-        {
-            var buffer = new byte[1024];
-
-            try
-            {
-                while (!token.IsCancellationRequested && _port.IsOpen)
-                {
-                    int bytesRead = await _port.BaseStream.ReadAsync(buffer, 0, buffer.Length, token);
-
-                    if (bytesRead > 0)
-                    {
-                        string data = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                        await ProcessIncomingData(data);
-                    }
-                }
-            }
-            catch (OperationCanceledException)
-            {
+                return true;
             }
             catch (Exception ex)
             {
-                await _channel.Writer.WriteAsync($"[ERROR] {ex.Message}");
+                _logger.LogError(ex, "Failed to open serial port");
+                return false;
+            }
+            finally
+            {
+                _portLock.Release();
             }
         }
 
-        private async Task ProcessIncomingData(string data)
+        // ---------------- CLOSE PORT ----------------
+
+        public async Task CloseAsync()
+        {
+            await _portLock.WaitAsync();
+
+            try
+            {
+                if (_port == null)
+                    return;
+
+                if (_port.IsOpen)
+                    _port.Close();
+
+                _port.Dispose();
+                _port = null;
+
+                _logger.LogInformation("Serial port closed");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error closing serial port");
+            }
+            finally
+            {
+                _portLock.Release();
+            }
+        }
+
+        // ---------------- WRITE ----------------
+
+        public async Task<bool> WriteAsync(string data, CancellationToken token = default)
+        {
+            await _portLock.WaitAsync(token);
+
+            try
+            {
+                if (_port == null || !_port.IsOpen)
+                    return false;
+
+                byte[] bytes = Encoding.UTF8.GetBytes(data);
+
+                await _port.BaseStream.WriteAsync(bytes, token);
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Serial write failed");
+                return false;
+            }
+            finally
+            {
+                _portLock.Release();
+            }
+        }
+
+        // ---------------- DATA PROCESSING ----------------
+
+        private async Task ProcessIncomingData(string data, CancellationToken token)
         {
             _lineBuffer.Append(data);
 
@@ -198,36 +196,21 @@ namespace SubConsole.Services
 
                 _lineBuffer.Remove(0, newlineIndex + 1);
 
-                await _channel.Writer.WriteAsync(line);
+                await _channel.Writer.WriteAsync(line, token);
+
+                _logger.LogInformation("RX: {line}", line);
             }
         }
 
-        public async Task StopAsync()
+        // ---------------- CLEAN SHUTDOWN ----------------
+
+        public override async Task StopAsync(CancellationToken cancellationToken)
         {
-            await _lifecycleLock.WaitAsync();
+            await CloseAsync();
 
-            try
-            {
-                if (_port == null)
-                    return;
+            _channel.Writer.TryComplete();
 
-                _cts.Cancel();
-
-                if (_port.IsOpen)
-                    _port.Close();
-
-                _port.Dispose();
-                _port = null;
-
-                _channel.Writer.TryComplete();
-            }
-            finally
-            {
-                _lifecycleLock.Release();
-            }
+            await base.StopAsync(cancellationToken);
         }
-    
-
-
-}
+    }
 }

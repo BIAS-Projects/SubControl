@@ -1,48 +1,35 @@
-﻿using SubConsole;
-using SubConsole.Models;
+﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using SubConsole;
 using SubConsole.Services;
 
-class Program
-{
-    static async Task Main()
+
+Environment.SetEnvironmentVariable("PATH",
+    @"C:\gstreamer\1.0\msvc_x86_64\1.0\mingw_x86_64\bin" + Environment.GetEnvironmentVariable("PATH"));
+
+
+Gst.Application.Init();
+
+await Host.CreateDefaultBuilder(args)
+    .ConfigureLogging(logging =>
     {
-        var host = new TcpHostService(9000);
-        //   var host = new TcpStreamingServer(9000);
-
-
-        CommPortService commPortService = new CommPortService();
-
-        foreach (SerialDevice device in commPortService.GetSerialDevices())
-        {
-            Console.WriteLine($"{device.DeviceId}");
-        }
-
-
+        logging.ClearProviders();
+        logging.AddConsole();
+    })
+    .ConfigureServices(services =>
+    {
+        services.AddSingleton<TcpHostService>();
+        //services.AddSingleton<CommPortService>();
+        services.AddSingleton<SerialPortManagerService>();
+        services.AddSingleton<WebcamManagerService>();
 
 
 
-
-
-        host.ClientConnected += c =>
-            Console.WriteLine($"Client {c.Client.RemoteEndPoint} connected");
-
-        host.MessageReceived += async (client, message) =>
-        {
-            Console.WriteLine($"Received: {message}");
-
-            // Echo back
-            await host.SendAsync(client, $"Echo: {message}");
-        };
-
-        await host.StartAsync();
-
-        //Linux await serial.StartAsync("/dev/ttyUSB0", 115200);
-        await commPortService.StartAsync("COM6", 115200);
-
-        await foreach (var line in commPortService.Reader.ReadAllAsync())
-        {
-            Console.WriteLine($"RX: {line}");
-        }
-
-    }
-}
+        services.AddHostedService(provider => provider.GetRequiredService<TcpHostService>());
+       // services.AddHostedService(provider => provider.GetRequiredService<CommPortService>());
+        services.AddHostedService(provider => provider.GetRequiredService<SerialPortManagerService>());
+       // services.AddHostedService(provider => provider.GetRequiredService<WebcamManagerService>());
+        services.AddHostedService<DeviceMonitorService>();
+    })
+    .RunConsoleAsync();

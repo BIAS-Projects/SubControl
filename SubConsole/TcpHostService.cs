@@ -1,257 +1,208 @@
-﻿using System;
-using System.Text;
+﻿using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using SubConsole.Helpers;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
-using System.Collections.Concurrent;
+using System.Text;
 
-namespace SubConsole
+namespace SubConsole.Services;
+
+public class TcpHostService : BackgroundService
 {
-    public sealed class TcpHostService : IDisposable
+    private readonly ILogger<TcpHostService> _logger;
+    private readonly TcpListener _listener;
+    private readonly SerialPortManagerService _serialManager;
+    private readonly WebcamManagerService _webcamManager;
+
+    private readonly ConcurrentDictionary<TcpClient, ClientState> _clients = new();
+
+    public TcpHostService(ILogger<TcpHostService> logger, SerialPortManagerService serial, WebcamManagerService webcamManager)
     {
-        private readonly TcpListener _listener;
-        private readonly CancellationTokenSource _cts = new();
+        _logger = logger;
+        _listener = new TcpListener(IPAddress.Any, 9000);
+        _serialManager = serial;
+        _webcamManager = webcamManager;
+    }
 
-        private readonly ConcurrentDictionary<TcpClient, ClientState> _clients = new();
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        await HandleCommand("COM5","OPEN","");
+        await HandleCommand("COM6","OPEN","");
+        await HandleCommand("COM7","OPEN","");
+        await HandleCommand("COM8","OPEN","");
 
-        public event Action<TcpClient, string>? MessageReceived;
-        public event Action<TcpClient>? ClientConnected;
-        public event Action<TcpClient>? ClientDisconnected;
+        //Turn on TOM
+        await HandleCommand("COM5","SEND", @"$PBLUTP,S,PWR,CTRL,ON,15*29");
 
-        public TcpHostService(int port)
+      //  Thread.Sleep(10000);
+
+        var devices = await UsbDeviceEnumerator.GetUsbDevicesAsync();
+
+        //foreach (var d in devices)
+        //{
+        //    Console.WriteLine($"{d.Description}  VID:{d.VendorId} PID:{d.ProductId}");
+        //}
+
+
+        //await _webcamManager.StartWebcamAsync("/dev/video0", "0.0.0.0", 5000);
+        //await _webcamManager.StartWebcamAsync("/dev/video1", "0.0.0.0", 5001);
+
+
+        _listener.Start();
+        _logger.LogInformation("TCP Server started on port 9000");
+
+        try
         {
-            _listener = new TcpListener(IPAddress.Any, port);
-        }
-
-        // ---------------- START ----------------
-
-        public async Task StartAsync()
-        {
-            _listener.Start();
-            Console.WriteLine("TCP Host started.");
-
-            while (!_cts.IsCancellationRequested)
+            while (!stoppingToken.IsCancellationRequested)
             {
-                var client = await _listener.AcceptTcpClientAsync(_cts.Token);
-                Console.WriteLine("Client connected.");
+
+                //Listen on all serial ports
+
+                foreach (var portName in _serialManager.OpenPorts)
+                {
+                    var port = _serialManager.GetPort(portName);
+
+                    if (port == null)
+                        continue;
+
+                    _ = Task.Run(() => ConsumePort(portName, port, stoppingToken), stoppingToken);
+                }
+
+                var client = await _listener.AcceptTcpClientAsync(stoppingToken);
+
+                _logger.LogInformation("Client connected {endpoint}",
+                    client.Client.RemoteEndPoint);
 
                 var state = new ClientState(client);
+
                 _clients[client] = state;
 
-                ClientConnected?.Invoke(client);
+                
 
-                _ = Task.Run(() => HandleClientAsync(state));
+                await Task.Delay(2000, stoppingToken);
+
+
+                _ = HandleClientAsync(state, stoppingToken);
             }
         }
-
-        // ---------------- CLIENT HANDLER ----------------
-
-        private async Task HandleClientAsync(ClientState state)
+        catch (OperationCanceledException)
         {
-            var client = state.Client;
-            var stream = client.GetStream();
-            var buffer = new byte[4096];
-
-            try
-            {
-                while (!_cts.IsCancellationRequested)
-                {
-                    int bytesRead = await stream.ReadAsync(buffer, _cts.Token);
-                    if (bytesRead == 0)
-                        break;
-
-                    var text = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                    ProcessIncomingText(state, text);
-                }
-            }
-            catch (OperationCanceledException) { }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Client error: {ex.Message}");
-            }
-            finally
-            {
-                CleanupClient(client);
-            }
         }
-
-        // ---------------- MESSAGE REASSEMBLY ----------------
-
-        private void ProcessIncomingText(ClientState state, string text)
+        finally
         {
-            state.Buffer.Append(text);
 
-            while (true)
-            {
-                var full = state.Buffer.ToString();
-                var idx = full.IndexOf(TcpProtocol.EOM, StringComparison.Ordinal);
-
-                if (idx < 0)
-                    return;
-
-                var message = full[..idx];
-                state.Buffer.Remove(0, idx + TcpProtocol.EOM.Length);
-
-                HandleCompleteMessage(state, message);
-            }
-        }
-
-        // ---------------- PROTOCOL HANDLER ----------------
-
-        private async void HandleCompleteMessage(ClientState state, string message)
-        {
-            // Ignore ACKs
-            if (message == TcpProtocol.ACK)
-                return;
-
-            // Always ACK
-            await SendRawAsync(state.Client, TcpProtocol.ACK + TcpProtocol.EOM);
-
-            // ---- COMMANDS ----
-
-            if (message == "START")
-            {
-                StartStreaming(state);
-                Console.WriteLine($"Cutter started");
-                return;
-            }
-
-            if (message == "STOP")
-            {
-                StopStreaming(state);
-                Console.WriteLine($"Cutter stopped");
-                return;
-            }
-
-            if (message.StartsWith("SPEED ", StringComparison.Ordinal))
-            {
-                if (int.TryParse(message[6..], out int speed) && speed > -1)
-                {
-                    state.CutterSpeed = speed.ToString();
-                    Console.WriteLine($"Speed set to {speed} ms");
-                    //   state.IntervalMs = speed;
-                    //   Console.WriteLine($"Speed set to {speed} ms");
-                }
-                return;
-            }
-
-            // ---- APPLICATION MESSAGE ----
-            MessageReceived?.Invoke(state.Client, message);
-        }
-
-        // ---------------- STREAMING ----------------
-
-        private void StartStreaming(ClientState state)
-        {
-            if (state.Streaming)
-                return;
-
-            state.Streaming = true;
-            state.StreamCts = new CancellationTokenSource();
-
-            state.StreamTask = Task.Run(async () =>
-            {
-                int value = 1;
-
-                try
-                {
-                    while (!state.StreamCts.Token.IsCancellationRequested)
-                    {
-                        //NEEDS TO BE CHANGED TO READ CURRENT
-
-                        await SendAsync(state.Client, "CURRENT " + state.CutterSpeed);
-
-
-
-
-
-                        await Task.Delay(state.IntervalMs, state.StreamCts.Token);
-                    }
-                }
-                catch (OperationCanceledException) { }
-            });
-        }
-
-        private void StopStreaming(ClientState state)
-        {
-            if (!state.Streaming)
-                return;
-
-            state.Streaming = false;
-            state.StreamCts?.Cancel();
-        }
-
-        // ---------------- SEND ----------------
-
-        public async Task SendAsync(TcpClient client, string message)
-        {
-            var framed = message + TcpProtocol.EOM;
-            await SendRawAsync(client, framed);
-        }
-
-        private static async Task SendRawAsync(TcpClient client, string text)
-        {
-            if (!client.Connected)
-                return;
-
-            var bytes = Encoding.UTF8.GetBytes(text);
-            await client.GetStream().WriteAsync(bytes);
-        }
-
-        // ---------------- STOP ----------------
-
-        public async Task StopAsync()
-        {
-            _cts.Cancel();
-
-            foreach (var state in _clients.Values)
-                StopStreaming(state);
-
-            foreach (var client in _clients.Keys)
-                client.Close();
-
+            await _serialManager.StopAsync(stoppingToken);
             _listener.Stop();
-            await Task.CompletedTask;
-
-            Console.WriteLine("TCP Host stopped.");
-        }
-
-        private void CleanupClient(TcpClient client)
-        {
-            Console.WriteLine($"Check if the cutter is running and shut it off if it is");
-            if (_clients.TryRemove(client, out var state))
-            {
-                StopStreaming(state);
-                client.Close();
-                ClientDisconnected?.Invoke(client);
-                Console.WriteLine("Client disconnected.");
-            }
-        }
-
-        public void Dispose()
-        {
-            _ = StopAsync();
-            _cts.Dispose();
-        }
-
-        // ---------------- CLIENT STATE ----------------
-
-        private sealed class ClientState
-        {
-            public TcpClient Client { get; }
-            public StringBuilder Buffer { get; } = new();
-
-            public bool Streaming { get; set; }
-            public int IntervalMs { get; set; } = 1000;
-
-            public string CutterSpeed { get; set; } = "0";
-
-            public Task? StreamTask { get; set; }
-            public CancellationTokenSource? StreamCts { get; set; }
-
-            public ClientState(TcpClient client)
-            {
-                Client = client;
-            }
         }
     }
+
+    private async Task HandleClientAsync(ClientState state, CancellationToken token)
+    {
+        var client = state.Client;
+        var stream = client.GetStream();
+
+        var buffer = new byte[4096];
+
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                int bytes = await stream.ReadAsync(buffer, token);
+
+                if (bytes == 0)
+                    break;
+
+                var text = Encoding.UTF8.GetString(buffer, 0, bytes);
+
+                await SendAsync(client, $"Echo: {text}", token);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Client error");
+        }
+        finally
+        {
+            CleanupClient(client);
+        }
+    }
+
+
+    private async Task ConsumePort(string portName, SerialPortWorker port, CancellationToken token)
+    {
+        try
+        {
+            await foreach (var line in port.Reader.ReadAllAsync(token))
+            {
+                Console.WriteLine($"{portName} RX: {line}");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    public async Task HandleCommand(string port, string command, string data)
+    {
+        if (command == "OPEN")
+            await _serialManager.OpenPortAsync(port, 115200);
+
+        if (command == "CLOSE")
+            await _serialManager.ClosePortAsync(port);
+
+        if (command.StartsWith("SEND"))
+        {
+            var serialPort = _serialManager.GetPort(port);
+
+            if (serialPort != null)
+                await serialPort.WriteAsync(data+ "\n\r", CancellationToken.None);
+        }
+    }
+
+
+    public async Task SendAsync(TcpClient client, string message, CancellationToken token)
+    {
+        if (!client.Connected)
+            return;
+
+        var bytes = Encoding.UTF8.GetBytes(message);
+
+        await client.GetStream().WriteAsync(bytes, token);
+    }
+
+    private void CleanupClient(TcpClient client)
+    {
+        if (_clients.TryRemove(client, out _))
+        {
+            client.Close();
+            _logger.LogInformation("Client disconnected");
+        }
+    }
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Stopping TCP server");
+
+        foreach (var client in _clients.Keys)
+            client.Close();
+
+        _listener.Stop();
+
+        await base.StopAsync(cancellationToken);
+    }
+
+    private class ClientState
+    {
+        public TcpClient Client { get; }
+
+        public ClientState(TcpClient client)
+        {
+            Client = client;
+        }
+    }
+
+
+
 }
