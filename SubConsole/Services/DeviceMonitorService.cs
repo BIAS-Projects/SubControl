@@ -20,6 +20,9 @@ public class DeviceMonitorService : BackgroundService
     private int _port = 5000;
     private readonly ConcurrentDictionary<string, Device> _devices = new();
 
+    // Tracks display names already claimed to prevent KS+MF double-open
+    private readonly ConcurrentDictionary<string, string> _nameToId = new();
+
     public DeviceMonitorService(WebcamManagerService webcamManager, ILogger<DeviceMonitorService> logger)
     {
         _webcamManager = webcamManager;
@@ -30,7 +33,6 @@ public class DeviceMonitorService : BackgroundService
     {
         _logger.LogInformation("Starting DeviceMonitorService");
 
-        // Start GLib MainLoop on a background thread
         _mainLoop = new MainLoop();
         var thread = new System.Threading.Thread(() => _mainLoop.Run())
         {
@@ -39,12 +41,10 @@ public class DeviceMonitorService : BackgroundService
         };
         thread.Start();
 
-        // Start DeviceMonitor for video sources
         _monitor = new DeviceMonitor();
-        _monitor.AddFilter("Video", null); // detect video sources
+        _monitor.AddFilter("Video", null);
         _monitor.Start();
 
-        // Wait for Bus
         for (int i = 0; i < 20 && _monitor.Bus == null; i++)
             await SysTask.Delay(50, stoppingToken);
 
@@ -60,7 +60,6 @@ public class DeviceMonitorService : BackgroundService
 
         _logger.LogInformation("Device monitor running");
 
-        // Handle existing devices at startup
         SafeEnumerateExistingDevices();
 
         try
@@ -86,8 +85,7 @@ public class DeviceMonitorService : BackgroundService
 
     private void HandleDeviceAdded(Device? device)
     {
-        if (device == null)
-            return;
+        if (device == null) return;
 
         if (string.IsNullOrEmpty(device.DeviceClass) || !device.DeviceClass.Contains("Video"))
             return;
@@ -97,13 +95,67 @@ public class DeviceMonitorService : BackgroundService
             return;
 
         var id = device.PathString;
+        var name = device.DisplayName ?? "Unknown Camera";
+
         if (string.IsNullOrEmpty(id) || _devices.ContainsKey(id))
             return;
 
-        var name = device.DisplayName ?? "Unknown Camera";
+        // Prefer MF provider over KS — if the same camera name already has an
+        // MF entry, skip the KS duplicate. If we have a KS entry and MF arrives,
+        // replace it.
+        bool isMF = id.Contains("mfdevice", System.StringComparison.OrdinalIgnoreCase);
+        bool isKS = id.Contains("ksdevice", System.StringComparison.OrdinalIgnoreCase);
+
+        if (_nameToId.TryGetValue(name, out var existingId))
+        {
+            bool existingIsMF = existingId.Contains("mfdevice", System.StringComparison.OrdinalIgnoreCase);
+
+            if (existingIsMF)
+            {
+                // Already have MF for this camera — skip the KS duplicate
+                _logger.LogDebug("Skipping duplicate KS device for {Name} — MF already registered", name);
+                return;
+            }
+
+            if (isMF && !existingIsMF)
+            {
+                // Upgrade from KS → MF: stop old worker and replace
+                _logger.LogInformation("Upgrading {Name} from KS to MF provider", name);
+                _ = SysTask.Run(async () => await _webcamManager.StopWebcamAsync(existingId));
+                _devices.TryRemove(existingId, out _);
+                _nameToId.TryRemove(name, out _);
+            }
+        }
+
+        if (isKS && !isMF)
+        {
+            // Hold off briefly — MF provider usually arrives within 200ms and is preferred
+            _ = SysTask.Run(async () =>
+            {
+                await SysTask.Delay(300);
+
+                // If MF has arrived by now for this name, skip KS entirely
+                if (_nameToId.TryGetValue(name, out var laterId) &&
+                    laterId.Contains("mfdevice", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogDebug("MF device arrived in time — skipping KS for {Name}", name);
+                    return;
+                }
+
+                RegisterAndStart(device, id, name);
+            });
+            return;
+        }
+
+        RegisterAndStart(device, id, name);
+    }
+
+    private void RegisterAndStart(Device device, string id, string name)
+    {
         var port = Interlocked.Increment(ref _port);
 
         _devices[id] = device;
+        _nameToId[name] = id;
 
         _logger.LogInformation("Camera connected: {Name} | ID: {Id} | Port: {Port}", name, id, port);
 
@@ -111,25 +163,29 @@ public class DeviceMonitorService : BackgroundService
         {
             try
             {
-                await _webcamManager.StartWebcamAsync(device, "0.0.0.0", port);
+                await _webcamManager.StartWebcamAsync(device, "127.0.0.1", port);
+          //      await _webcamManager.StartWebcamAsync(device, "0.0.0.0", port);
             }
             catch (System.Exception ex)
             {
-                _logger.LogError(ex, "Failed to start webcam pipeline");
+                _logger.LogError(ex, "Failed to start webcam pipeline for {Name}", name);
             }
         });
     }
 
     private void HandleDeviceRemoved(Device? device)
     {
-        if (device == null)
-            return;
+        if (device == null) return;
 
         var id = device.PathString;
-        if (string.IsNullOrEmpty(id) || !_devices.TryRemove(id, out var _))
+        var name = device.DisplayName ?? "";
+
+        if (string.IsNullOrEmpty(id) || !_devices.TryRemove(id, out _))
             return;
 
-        _logger.LogInformation("Camera removed: ID: {Id}", id);
+        _nameToId.TryRemove(name, out _);
+
+        _logger.LogInformation("Camera removed: {Name} | ID: {Id}", name, id);
 
         _ = SysTask.Run(async () =>
         {
@@ -139,7 +195,7 @@ public class DeviceMonitorService : BackgroundService
             }
             catch (System.Exception ex)
             {
-                _logger.LogError(ex, "Failed stopping webcam pipeline");
+                _logger.LogError(ex, "Failed stopping webcam pipeline for {Id}", id);
             }
         });
     }
@@ -147,14 +203,11 @@ public class DeviceMonitorService : BackgroundService
     private void SafeEnumerateExistingDevices()
     {
         if (_monitor == null) return;
-
         try
         {
             foreach (var obj in _monitor.Devices)
-            {
                 if (obj is Device device)
                     HandleDeviceAdded(device);
-            }
         }
         catch (System.Exception ex)
         {
@@ -165,7 +218,6 @@ public class DeviceMonitorService : BackgroundService
     public override async SysTask StopAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Stopping DeviceMonitorService");
-
         try
         {
             if (_bus != null)
@@ -173,13 +225,8 @@ public class DeviceMonitorService : BackgroundService
                 _bus.Message -= OnBusMessage;
                 _bus.RemoveSignalWatch();
             }
-
-            if (_monitor != null)
-            {
-                _monitor.Stop();
-                _monitor.Dispose();
-            }
-
+            _monitor?.Stop();
+            _monitor?.Dispose();
             _mainLoop?.Quit();
 
             foreach (var deviceId in _devices.Keys)
@@ -189,7 +236,6 @@ public class DeviceMonitorService : BackgroundService
         {
             _logger.LogError(ex, "Error stopping DeviceMonitorService");
         }
-
         await base.StopAsync(cancellationToken);
     }
 }

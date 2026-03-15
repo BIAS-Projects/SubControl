@@ -22,7 +22,6 @@ public class WebcamManagerService : BackgroundService
     {
         _appToken = stoppingToken;
         _logger.LogInformation("WebcamManager started");
-
         try
         {
             await Task.Delay(Timeout.Infinite, stoppingToken);
@@ -33,21 +32,26 @@ public class WebcamManagerService : BackgroundService
     public async Task<bool> StartWebcamAsync(Gst.Device device, string host, int port)
     {
         var id = device.PathString;
+        var name = device.DisplayName ?? "Unknown";
 
         if (_workers.ContainsKey(id))
         {
-            _logger.LogWarning("Webcam already running: {id}", id);
+            _logger.LogWarning("Webcam already running: {Id}", id);
             return false;
         }
 
-        var worker = new WebcamWorker(device, host, port, _logger);
+        var worker = new WebcamWorker(
+            deviceId: id,
+            deviceName: name,
+            host: host,
+            port: port,
+            logger: _logger);
 
         if (!_workers.TryAdd(id, worker))
             return false;
 
         await worker.StartAsync(_appToken);
-
-        _logger.LogInformation("Webcam started: {id} on port {port}", id, port);
+        _logger.LogInformation("Webcam started: {Id} on port {Port}", id, port);
         return true;
     }
 
@@ -57,22 +61,18 @@ public class WebcamManagerService : BackgroundService
         {
             await worker.StopAsync();
             await worker.DisposeAsync();
-            _logger.LogInformation("Webcam stopped: {deviceId}", deviceId);
+            _logger.LogInformation("Webcam stopped: {DeviceId}", deviceId);
         }
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Stopping all webcams");
-
         var tasks = _workers.Values.Select(w => w.StopAsync()).ToArray();
         await Task.WhenAll(tasks);
-
         foreach (var worker in _workers.Values)
             await worker.DisposeAsync();
-
         _workers.Clear();
-
         await base.StopAsync(cancellationToken);
     }
 }
