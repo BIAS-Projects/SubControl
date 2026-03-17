@@ -36,13 +36,12 @@ public class WebcamManagerService : BackgroundService
 
         if (_workers.ContainsKey(id))
         {
-            _logger.LogWarning("Webcam already running: {Id}", id);
+            _logger.LogWarning("Webcam already running: {Name} ({Id})", name, id);
             return false;
         }
 
         var worker = new WebcamWorker(
-            deviceId: id,
-            deviceName: name,
+            device: device,
             host: host,
             port: port,
             logger: _logger);
@@ -51,7 +50,7 @@ public class WebcamManagerService : BackgroundService
             return false;
 
         await worker.StartAsync(_appToken);
-        _logger.LogInformation("Webcam started: {Id} on port {Port}", id, port);
+        _logger.LogInformation("Webcam started: {Name} on port {Port}", name, port);
         return true;
     }
 
@@ -63,16 +62,29 @@ public class WebcamManagerService : BackgroundService
             await worker.DisposeAsync();
             _logger.LogInformation("Webcam stopped: {DeviceId}", deviceId);
         }
+        else
+        {
+            _logger.LogWarning("StopWebcamAsync: no worker found for {DeviceId}", deviceId);
+        }
     }
+
+    public bool IsRunning(string deviceId) => _workers.ContainsKey(deviceId);
+
+    public IEnumerable<string> RunningDeviceIds => _workers.Keys;
 
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Stopping all webcams");
+        _logger.LogInformation("Stopping all webcams ({Count})", _workers.Count);
+
         var tasks = _workers.Values.Select(w => w.StopAsync()).ToArray();
         await Task.WhenAll(tasks);
+
         foreach (var worker in _workers.Values)
             await worker.DisposeAsync();
+
         _workers.Clear();
+
         await base.StopAsync(cancellationToken);
+        _logger.LogInformation("All webcams stopped");
     }
 }

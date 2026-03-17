@@ -1,231 +1,326 @@
-﻿using Microsoft.Extensions.Logging;
-using System;
+﻿using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using System.Threading;
-using SysTask = System.Threading.Tasks.Task;
+using System.Threading.Tasks;
 using Gst;
+using Microsoft.Extensions.Logging;
+using SysTask = System.Threading.Tasks.Task;
 
-namespace SubConsole.Services;
-
-public class WebcamWorker : IAsyncDisposable
+namespace SubConsole.Services
 {
-    private readonly string _deviceId;
-    private readonly string _deviceName;
-    private readonly string _host;
-    private readonly int _port;
-    private readonly ILogger _logger;
-
-    private Pipeline? _pipeline;
-    private CancellationTokenSource? _cts;
-    private SysTask? _pipelineTask;
-    private readonly SemaphoreSlim _semaphore = new(1, 1);
-
-    private const int X264_PRESET_ULTRAFAST = 1;
-    private const int X264_TUNE_ZEROLATENCY = 4;
-    private const int X264_PRESET_VERYFAST = 3;   // was ULTRAFAST=1; better quality per bit
-
-    public WebcamWorker(string deviceId, string deviceName, string host, int port, ILogger logger)
+    public class WebcamWorker : IAsyncDisposable
     {
-        _deviceId = deviceId;
-        _deviceName = deviceName;
-        _host = host;
-        _port = port;
-        _logger = logger;
-    }
+        private readonly Gst.Device _device;
+        private readonly string _deviceName;
+        private readonly string _host;
+        private readonly int _port;
+        private readonly ILogger _logger;
 
-    public async SysTask StartAsync(CancellationToken parentToken)
-    {
-        await _semaphore.WaitAsync(parentToken);
-        try
+        private Pipeline? _pipeline;
+        private CancellationTokenSource? _cts;
+        private SysTask? _pipelineTask;
+        private readonly SemaphoreSlim _semaphore = new(1, 1);
+
+        private const int MaxRestarts = 10;
+
+        public WebcamWorker(Gst.Device device, string host, int port, ILogger logger)
         {
-            if (_pipelineTask != null) return;
-            _cts = CancellationTokenSource.CreateLinkedTokenSource(parentToken);
-            await SysTask.Delay(300, parentToken);
-            _pipelineTask = SysTask.Run(() => RunPipelineAsync(_cts.Token));
+            _device = device;
+            _deviceName = device.DisplayName ?? "Unknown";
+            _host = host;
+            _port = port;
+            _logger = logger;
         }
-        finally
-        {
-            _semaphore.Release();
-        }
-    }
 
-    private async SysTask RunPipelineAsync(CancellationToken token)
-    {
-        try
-        {
-            Gst.Application.Init();
+        // ------------------------------------------------------------------ //
+        //  Public API                                                          //
+        // ------------------------------------------------------------------ //
 
-            _pipeline = BuildPipeline();
-            if (_pipeline == null)
+        public async SysTask StartAsync(CancellationToken parentToken = default)
+        {
+            await _semaphore.WaitAsync(parentToken);
+            try
             {
-                _logger.LogError("Pipeline construction failed for {Device}", _deviceName);
-                return;
+                if (_pipelineTask != null) return;
+                _cts = CancellationTokenSource.CreateLinkedTokenSource(parentToken);
+                _pipelineTask = SysTask.Run(() => RunPipelineAsync(_cts.Token));
+            }
+            finally { _semaphore.Release(); }
+        }
+
+        public async SysTask StopAsync()
+        {
+            await _semaphore.WaitAsync();
+            try { _cts?.Cancel(); }
+            finally { _semaphore.Release(); }
+
+            if (_pipelineTask != null)
+                await _pipelineTask;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await StopAsync();
+            _cts?.Dispose();
+            _semaphore.Dispose();
+        }
+
+        // ------------------------------------------------------------------ //
+        //  Pipeline loop                                                       //
+        // ------------------------------------------------------------------ //
+
+        private async SysTask RunPipelineAsync(CancellationToken token)
+        {
+            int restartCount = 0;
+
+            while (!token.IsCancellationRequested && restartCount < MaxRestarts)
+            {
+                try
+                {
+                    Gst.Application.Init();
+                    BuildPipeline();
+
+                    _logger.LogInformation("[{Device}] Setting pipeline to PLAYING", _deviceName);
+                    var stateReturn = _pipeline!.SetState(State.Playing);
+                    _logger.LogInformation("[{Device}] SetState(Playing) returned: {Return}",
+                        _deviceName, stateReturn);
+
+                    if (stateReturn == StateChangeReturn.Failure)
+                    {
+                        DrainBusErrors();
+                        throw new Exception("SetState(Playing) returned Failure");
+                    }
+
+                    if (stateReturn == StateChangeReturn.Async)
+                    {
+                        _logger.LogInformation("[{Device}] Waiting for async state change...", _deviceName);
+                        var waitReturn = _pipeline.GetState(out State current, out State pending, 10 * Gst.Constants.SECOND);
+                        _logger.LogInformation("[{Device}] GetState result: {Return} | current={Current} pending={Pending}",
+                            _deviceName, waitReturn, current, pending);
+
+                        if (waitReturn == StateChangeReturn.Failure)
+                        {
+                            DrainBusErrors();
+                            throw new Exception("Async state change to Playing failed");
+                        }
+                    }
+
+                    _logger.LogInformation("[{Device}] Pipeline is PLAYING — monitoring bus", _deviceName);
+
+                    var bus = _pipeline.Bus!;
+                    bus.AddSignalWatch();
+                    bus.Message += OnBusMessage;
+
+                    while (!token.IsCancellationRequested)
+                        await SysTask.Delay(100, token);
+
+                    break;
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    restartCount++;
+                    _logger.LogWarning("[{Device}] Restart #{Count}: {Message}",
+                        _deviceName, restartCount, ex.Message);
+                    TearDownPipeline();
+                    await SysTask.Delay(500, CancellationToken.None);
+                }
             }
 
-            _logger.LogInformation("Starting webcam pipeline: {Device}", _deviceName);
+            if (restartCount >= MaxRestarts)
+                _logger.LogError("[{Device}] Too many failures — stopping", _deviceName);
 
-            var stateChange = _pipeline.SetState(State.Playing);
-            if (stateChange == StateChangeReturn.Failure)
+            TearDownPipeline();
+
+            await _semaphore.WaitAsync();
+            try { _pipelineTask = null; }
+            finally { _semaphore.Release(); }
+        }
+
+        // ------------------------------------------------------------------ //
+        //  Pipeline construction                                               //
+        // ------------------------------------------------------------------ //
+
+        private void BuildPipeline()
+        {
+            TearDownPipeline();
+
+            _pipeline = new Pipeline($"webcam-{_deviceName}");
+
+            var source = _device.CreateElement("src")
+                ?? throw new Exception($"[{_deviceName}] device.CreateElement() returned null");
+
+            _logger.LogInformation("[{Device}] Source element created via device.CreateElement()", _deviceName);
+
+            var convert = ElementFactory.Make("videoconvert", "convert")
+                ?? throw new Exception("Failed to create videoconvert — install gstreamer1-plugins-base");
+
+            string? encoderFactory = FindAvailableEncoder();
+            if (encoderFactory == null)
+                throw new Exception(
+                    "No H.264 encoder found. " +
+                    "Windows: ensure gstreamer is fully installed. " +
+                    "Linux: install gstreamer1-plugin-ugly (x264enc) or gstreamer1-plugin-openh264");
+
+            var encoder = ElementFactory.Make(encoderFactory, "encoder")
+                ?? throw new Exception($"Failed to create encoder: {encoderFactory}");
+
+            ConfigureEncoder(encoder, encoderFactory);
+            _logger.LogInformation("[{Device}] Using encoder: {Encoder}", _deviceName, encoderFactory);
+
+            var parse = ElementFactory.Make("h264parse", "parse")
+                ?? throw new Exception("Failed to create h264parse — install gstreamer1-plugins-bad");
+
+            // RTP payloader — this is what was missing
+            var rtp = ElementFactory.Make("rtph264pay", "rtp")
+                ?? throw new Exception("Failed to create rtph264pay — install gstreamer1-plugins-good");
+            rtp["config-interval"] = -1;  // send SPS/PPS with every keyframe
+            rtp["pt"] = 96;  // payload type must match receiver caps
+            rtp["mtu"] = (uint)1400;
+
+            var sink = ElementFactory.Make("udpsink", "sink")
+                ?? throw new Exception("Failed to create udpsink");
+            sink["host"] = _host;
+            sink["port"] = _port;
+            sink["sync"] = false;
+
+            _pipeline.Add(source, convert, encoder, parse, rtp, sink);
+
+            if (!Element.Link(source, convert, encoder, parse, rtp, sink))
+                throw new Exception("Failed to link pipeline elements");
+
+            _logger.LogInformation("[{Device}] Pipeline built successfully", _deviceName);
+        }
+
+        private static string? FindAvailableEncoder()
+        {
+            // Preference order — first available wins
+            foreach (string factory in new[] { "x264enc", "openh264enc", "nvh264enc", "vtenc_h264" })
             {
-                _logger.LogError("Failed to set pipeline to Playing for {Device}", _deviceName);
-                return;
+                var test = ElementFactory.Make(factory, "test-enc");
+                if (test != null)
+                {
+                    test.Dispose();
+                    return factory;
+                }
             }
+            return null;
+        }
 
+        private void ConfigureEncoder(Element enc, string factory)
+        {
+            switch (factory)
+            {
+                case "x264enc":
+                    enc["tune"] = (uint)4;   // zerolatency
+                    enc["speed-preset"] = (uint)1;   // ultrafast
+                    enc["bitrate"] = (uint)1200;
+                    enc["key-int-max"] = (uint)30;
+                    break;
+
+                case "openh264enc":
+                    enc["bitrate"] = (uint)(1200 * 1000); // openh264enc uses bps not kbps
+                    enc["gop-size"] = 30;
+                    enc["complexity"] = 0; // low
+                    break;
+
+                case "nvh264enc":   // NVIDIA NVENC
+                    enc["bitrate"] = (uint)1200;
+                    enc["preset"] = 1;    // low-latency
+                    enc["zerolatency"] = true;
+                    break;
+
+                case "vtenc_h264":  // Apple VideoToolbox (macOS)
+                    enc["bitrate"] = (uint)1200;
+                    enc["realtime"] = true;
+                    break;
+
+                default:
+                    _logger.LogWarning("[{Device}] Unknown encoder {Enc} — using default properties",
+                        _deviceName, factory);
+                    break;
+            }
+        }
+
+        // ------------------------------------------------------------------ //
+        //  Bus helpers                                                         //
+        // ------------------------------------------------------------------ //
+
+        private void DrainBusErrors()
+        {
+            if (_pipeline == null) return;
             var bus = _pipeline.Bus;
-            while (!token.IsCancellationRequested)
+            while (true)
             {
                 var msg = bus.TimedPopFiltered(
-                    100 * Gst.Constants.MSECOND,
-                    MessageType.Error | MessageType.Eos | MessageType.StateChanged);
-
-                if (msg == null) continue;
+                    2 * Gst.Constants.SECOND,
+                    MessageType.Error | MessageType.Warning | MessageType.StateChanged);
+                if (msg == null) break;
 
                 switch (msg.Type)
                 {
                     case MessageType.Error:
-                        msg.ParseError(out GLib.GException err, out string debug);
-                        _logger.LogError("GStreamer error on {Device}: {Error} | Debug: {Debug}",
-                            _deviceName, err.Message, debug);
-                        return;
-
-                    case MessageType.Eos:
-                        _logger.LogInformation("EOS received for {Device}", _deviceName);
-                        return;
-
+                        _logger.LogError("[{Device}] Drain error: {Message}",
+                            _deviceName, msg.Structure?.ToString() ?? "no details");
+                        break;
+                    case MessageType.Warning:
+                        _logger.LogWarning("[{Device}] Drain warning: {Message}",
+                            _deviceName, msg.Structure?.ToString() ?? "no details");
+                        break;
                     case MessageType.StateChanged:
-                        if (msg.Src == _pipeline)
-                        {
-                            msg.ParseStateChanged(out State oldState, out State newState, out _);
-                            _logger.LogDebug("Pipeline state: {Old} → {New}", oldState, newState);
-                        }
+                        msg.ParseStateChanged(out State old, out State now, out State pending);
+                        _logger.LogDebug("[{Device}] Drain state: {Old} → {Now} (pending: {Pending})",
+                            _deviceName, old, now, pending);
                         break;
                 }
             }
         }
-        catch (Exception ex)
+
+        private void OnBusMessage(object? sender, MessageArgs args)
         {
-            _logger.LogError(ex, "Pipeline crashed for {Device}", _deviceName);
+            var msg = args.Message;
+            switch (msg.Type)
+            {
+                case MessageType.Error:
+                    _logger.LogError("[{Device}] GStreamer error: {Message}",
+                        _deviceName, msg.Structure?.ToString() ?? "no details");
+                    TearDownPipeline();
+                    break;
+
+                case MessageType.Warning:
+                    _logger.LogWarning("[{Device}] GStreamer warning: {Message}",
+                        _deviceName, msg.Structure?.ToString() ?? "no details");
+                    break;
+
+                case MessageType.Eos:
+                    _logger.LogInformation("[{Device}] End of stream", _deviceName);
+                    TearDownPipeline();
+                    break;
+
+                case MessageType.StateChanged:
+                    if (msg.Src == _pipeline)
+                    {
+                        msg.ParseStateChanged(out State old, out State now, out State pending);
+                        _logger.LogInformation("[{Device}] Pipeline state: {Old} → {Now} (pending: {Pending})",
+                            _deviceName, old, now, pending);
+                    }
+                    break;
+            }
         }
-        finally
-        {
-            await StopPipelineAsync();
-        }
-    }
+        // ------------------------------------------------------------------ //
+        //  Teardown                                                            //
+        // ------------------------------------------------------------------ //
 
-    private Pipeline? BuildPipeline()
-    {
-
-        // ── Quality settings ─────────────────────────────────────────────────────
-
-
-
-
-    var srcFactory = GStreamerPlatform.VideoSourceFactory(_deviceId);
-        var src = ElementFactory.Make(srcFactory, "src");
-
-        if (src == null)
-        {
-            _logger.LogError("Failed to create '{Factory}'", srcFactory);
-            return null;
-        }
-
-        // v4l2src uses a device path string, MF/KS use an integer index
-        if (srcFactory == "v4l2src")
-            src["device"] = "/dev/video0"; // override per-device if needed
-        else
-            src["device-index"] = 0;
-
-        _logger.LogInformation("Opening camera via {Factory}", srcFactory);
-
-        var capsFilter = ElementFactory.Make("capsfilter", "capsfilter");
-        var convert = ElementFactory.Make("videoconvert", "convert");
-        var enc = ElementFactory.Make("x264enc", "enc");
-        var parse = ElementFactory.Make("h264parse", "parse");
-        var rtp = ElementFactory.Make("rtph264pay", "rtp");
-        var sink = ElementFactory.Make("udpsink", "sink");
-
-        if (capsFilter == null) { _logger.LogError("Failed to create 'capsfilter'"); return null; }
-        if (convert == null) { _logger.LogError("Failed to create 'videoconvert'"); return null; }
-        if (enc == null) { _logger.LogError("Failed to create 'x264enc'"); return null; }
-        if (parse == null) { _logger.LogError("Failed to create 'h264parse'"); return null; }
-        if (rtp == null) { _logger.LogError("Failed to create 'rtph264pay'"); return null; }
-        if (sink == null) { _logger.LogError("Failed to create 'udpsink'"); return null; }
-
-        //capsFilter["caps"] = Caps.FromString("video/x-raw");
-
-        //enc["bitrate"] = (uint)800;
-        //enc["speed-preset"] = X264_PRESET_ULTRAFAST;
-        //enc["tune"] = X264_TUNE_ZEROLATENCY;
-        //enc["key-int-max"] = (uint)30;
-
-        //rtp["config-interval"] = -1;
-        //rtp["pt"] = 96;
-        //rtp["mtu"] = (uint)1400;
-
-        // Constrain capture to explicit resolution + framerate.
-        // The driver picks arbitrarily if left as "video/x-raw" with no constraints.
-        capsFilter["caps"] = Caps.FromString(
-            "video/x-raw,width=1280,height=720,framerate=30/1");
-
-        enc["bitrate"] = (uint)4000;            // was 800 — 5× more bits = far less blocking
-        enc["speed-preset"] = X264_PRESET_VERYFAST;  // was ultrafast — better quality at mild CPU cost
-        enc["tune"] = X264_TUNE_ZEROLATENCY; // keep — prevents B-frames, keeps latency low
-        enc["key-int-max"] = (uint)30;              // IDR every second at 30fps — fine for live
-
-        rtp["config-interval"] = -1;
-        rtp["pt"] = 96;
-        rtp["mtu"] = (uint)60000;  // was 1400; large MTU safe on loopback/LAN, fewer UDP fragments
-
-
-        parse["config-interval"] = -1;
-
-
-
-        sink["host"] = _host;
-        sink["port"] = _port;
-        sink["sync"] = false;
-
-        var pipeline = new Pipeline("webcam-pipeline");
-        pipeline.Add(src, capsFilter, convert, enc, parse, rtp, sink);
-
-        if (!Element.Link(src, capsFilter, convert, enc, parse, rtp, sink))
-        {
-            _logger.LogError("Failed to link pipeline");
-            return null;
-        }
-
-        return pipeline;
-    }
-    public async SysTask StopAsync()
-    {
-        await _semaphore.WaitAsync();
-        try { _cts?.Cancel(); }
-        finally { _semaphore.Release(); }
-
-        if (_pipelineTask != null)
-            await _pipelineTask;
-    }
-
-    private async SysTask StopPipelineAsync()
-    {
-        await _semaphore.WaitAsync();
-        try
+        private void TearDownPipeline()
         {
             if (_pipeline == null) return;
             _pipeline.SetState(State.Null);
             _pipeline.Dispose();
             _pipeline = null;
-            _pipelineTask = null;
         }
-        finally
-        {
-            _semaphore.Release();
-        }
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        await StopAsync();
-        _cts?.Dispose();
-        _semaphore.Dispose();
     }
 }

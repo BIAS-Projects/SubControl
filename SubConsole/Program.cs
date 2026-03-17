@@ -30,25 +30,25 @@ await Host.CreateDefaultBuilder(args)
 
         // Register as singleton so other services can inject it and subscribe to FrameReceived
         // Port 5001 = first camera (DeviceMonitorService starts at 5000 and increments)
-        services.AddSingleton<WebcamReceiverService>(provider =>
-        {
-            var logger = provider.GetRequiredService<ILogger<WebcamReceiverService>>();
-            var service = new WebcamReceiverService(logger, host: "0.0.0.0", port: 5001);
+        //services.AddSingleton<WebcamReceiverService>(provider =>
+        //{
+        //    var logger = provider.GetRequiredService<ILogger<WebcamReceiverService>>();
+        //    var service = new WebcamReceiverService(logger, host: "0.0.0.0", port: 5001);
 
-            long frameCount = 0;
-            service.FrameReceived += frame =>
-            {
-                var count = Interlocked.Increment(ref frameCount);
-                if (count % 30 == 0)
-                {
-                    var (r, g, b) = frame.GetPixel(frame.Width / 2, frame.Height / 2);
-                    Console.WriteLine($"[Frame {count}] {frame.Width}x{frame.Height} | Centre pixel RGB({r},{g},{b})");
-                }
-            };
+        //    long frameCount = 0;
+        //    service.FrameReceived += frame =>
+        //    {
+        //        var count = Interlocked.Increment(ref frameCount);
+        //        if (count % 30 == 0)
+        //        {
+        //            var (r, g, b) = frame.GetPixel(frame.Width / 2, frame.Height / 2);
+        //            Console.WriteLine($"[Frame {count}] {frame.Width}x{frame.Height} | Centre pixel RGB({r},{g},{b})");
+        //        }
+        //    };
 
-            return service;
-        });
-        services.AddHostedService(provider => provider.GetRequiredService<WebcamReceiverService>());
+        //    return service;
+        //});
+        //services.AddHostedService(provider => provider.GetRequiredService<WebcamReceiverService>());
 
         services.AddHostedService(provider => provider.GetRequiredService<TcpHostService>());
         //services.AddHostedService(provider => provider.GetRequiredService<CommPortService>());

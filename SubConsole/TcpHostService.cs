@@ -39,10 +39,10 @@ public class TcpHostService : BackgroundService
 
         var devices = await UsbDeviceEnumerator.GetUsbDevicesAsync();
 
-        //foreach (var d in devices)
-        //{
-        //    Console.WriteLine($"{d.Description}  VID:{d.VendorId} PID:{d.ProductId}");
-        //}
+        foreach (var d in devices)
+        {
+            Console.WriteLine($"{d.Description}  VID:{d.VendorId} PID:{d.ProductId}");
+        }
 
 
         //await _webcamManager.StartWebcamAsync("/dev/video0", "0.0.0.0", 5000);
