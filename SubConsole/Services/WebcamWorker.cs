@@ -32,6 +32,13 @@ namespace SubConsole.Services
         // restart loop can apply a longer back-off before retrying.
         private volatile bool _deviceBusy;
 
+        // Count consecutive not-negotiated (-4) failures.  If this reaches the
+        // threshold the device is fundamentally incompatible with all tried caps
+        // (e.g. FLIR on MF with no thermal hint) — give up immediately rather
+        // than cycling to MaxRestarts.
+        private int _consecutiveNotNegotiated;
+        private const int MaxNotNegotiatedBeforeGiveUp = 3;
+
         // Process-wide semaphore: only one camera probes at a time.
         // Concurrent probe pipelines open multiple devices simultaneously and
         // cause KS/MF driver contention that makes all probes fail.
@@ -159,6 +166,7 @@ namespace SubConsole.Services
                     }
 
                     _logger.LogInformation("[{Device}] Pipeline is PLAYING - monitoring bus", _deviceName);
+                    _consecutiveNotNegotiated = 0; // successfully started — reset counter
 
                     var bus = _pipeline.Bus!;
                     bus.AddSignalWatch();
@@ -196,6 +204,22 @@ namespace SubConsole.Services
                             "[{Device}] Device error (-5) — clearing caps cache, waiting for MF release",
                             _deviceName);
                         _cachedCaps = null;
+                        _consecutiveNotNegotiated = 0;
+                    }
+
+                    // not-negotiated (-4) means the device rejected the caps entirely.
+                    // After MaxNotNegotiatedBeforeGiveUp consecutive failures there is
+                    // no point retrying — the caps will never be accepted (e.g. FLIR on
+                    // MF without a thermal hint).  Give up cleanly.
+                    if (_consecutiveNotNegotiated >= MaxNotNegotiatedBeforeGiveUp)
+                    {
+                        _logger.LogError(
+                            "[{Device}] {Count} consecutive not-negotiated failures — " +
+                            "device cannot stream with available caps. " +
+                            "If this is a thermal camera, ensure it enumerates on KS first " +
+                            "so the native caps can be discovered.",
+                            _deviceName, _consecutiveNotNegotiated);
+                        break;
                     }
 
                     // Exponential back-off capped at 5 s; add MF settle time when device errored.
@@ -740,6 +764,9 @@ namespace SubConsole.Services
                             _logger.LogError("[{Device}] Drain error: {Message}", _deviceName, detail);
                             if (detail.Contains("flow-return=(int)-5"))
                                 _deviceBusy = true;
+                            if (detail.Contains("flow-return=(int)-4") ||
+                                detail.Contains("not-negotiated"))
+                                _consecutiveNotNegotiated++;
                             break;
                         }
                     case MessageType.Warning:

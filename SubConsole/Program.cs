@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using SubConsole;
 using SubConsole.Services;
+using SubControlMAUI.Services;
 using System.Runtime.InteropServices;
 
 // Only set GStreamer path on Windows — on Linux it's installed system-wide
@@ -56,6 +57,8 @@ await Host.CreateDefaultBuilder(args)
         //services.AddHostedService(provider => provider.GetRequiredService<WebcamManagerService>());
 
         services.AddHostedService<DeviceMonitorService>();
+
+        services.AddSingleton<SQLiteService>();
     })
     .RunConsoleAsync();
 

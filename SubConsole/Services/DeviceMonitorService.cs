@@ -30,6 +30,18 @@ public class DeviceMonitorService : BackgroundService
     // display name → caps string discovered by KS probe, used as hint for MF replacement worker
     private readonly ConcurrentDictionary<string, (string caps, bool isGray)> _nameToCapsHint = new();
 
+    // Known thermal/speciality cameras that cannot stream on MF.
+    // Keyed by display-name substring (case-insensitive).  The value is the
+    // caps string to use directly, bypassing all probing.
+    // Add entries here for any camera whose MF source advertises generic caps
+    // it cannot actually stream (thermal cameras, machine-vision cameras, etc.)
+    private static readonly (string nameSubstring, string caps, bool isGray)[] KnownThermalDevices =
+    {
+        ("FLIR",  "video/x-raw,format=GRAY16_LE,width=320,height=256,framerate=15/2",  true),
+        ("Lepton","video/x-raw,format=GRAY16_LE,width=160,height=120,framerate=9/1",   true),
+        ("Seek",  "video/x-raw,format=GRAY16_LE,width=206,height=156,framerate=15/2",  true),
+    };
+
     private static readonly bool IsWindows =
         System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
             System.Runtime.InteropServices.OSPlatform.Windows);
@@ -162,6 +174,22 @@ public class DeviceMonitorService : BackgroundService
             return;
         }
 
+        // Pre-populate caps hint for known thermal/speciality cameras so they
+        // skip probing entirely, whether they arrive on KS or MF.
+        if (!_nameToCapsHint.ContainsKey(name))
+        {
+            foreach (var (substr, caps, isGray) in KnownThermalDevices)
+            {
+                if (name.Contains(substr, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    _nameToCapsHint[name] = (caps, isGray);
+                    _logger.LogInformation(
+                        "Pre-populated thermal caps hint for {Name}: {Caps}", name, caps);
+                    break;
+                }
+            }
+        }
+
         if (IsWindows)
             HandleWindowsProviderDedup(device, id, name);
         else
@@ -210,16 +238,47 @@ public class DeviceMonitorService : BackgroundService
                         _logger.LogInformation("MF arrived for {Name} — replacing KS worker", name);
                         _devicePorts.TryGetValue(existingId, out int existingPort);
 
-                        // Capture KS worker's successfully probed caps NOW, before
-                        // stopping it.  These become the hint for the MF worker so it
-                        // can skip probing entirely (MF thermal/speciality devices
-                        // often advertise generic caps they can't actually stream).
-                        var (ksHintCaps, ksHintIsGray) = _webcamManager.GetCachedCaps(existingId);
+                        // Wait for the KS worker to finish probing so _cachedCaps is
+                        // populated before we read it.  The probe holds _probeLock; we
+                        // poll until the worker has a cached result or times out.
+                        string? ksHintCaps = null;
+                        bool ksHintIsGray = false;
+                        var hintDeadline = System.DateTime.UtcNow.AddSeconds(30);
+                        while (System.DateTime.UtcNow < hintDeadline)
+                        {
+                            var (c, g) = _webcamManager.GetCachedCaps(existingId);
+                            if (c != null) { ksHintCaps = c; ksHintIsGray = g; break; }
+                            await SysTask.Delay(200);
+                        }
+
                         if (ksHintCaps != null)
                         {
                             _nameToCapsHint[name] = (ksHintCaps, ksHintIsGray);
                             _logger.LogInformation(
                                 "Stored KS caps hint for {Name}: {Caps}", name, ksHintCaps);
+                        }
+                        else
+                        {
+                            _logger.LogWarning(
+                                "KS worker for {Name} has no cached caps after 30 s — MF upgrade skipped",
+                                name);
+                            // KS is streaming fine with no caps yet (unlikely) or failed.
+                            // Leave KS running rather than replacing with a broken MF worker.
+                            return;
+                        }
+
+                        // Never upgrade thermal/gray devices to MF.  The FLIR (and
+                        // similar) MF source advertises generic webcam caps it cannot
+                        // actually stream; the KS driver exposes the correct native caps.
+                        // Detect this by checking whether the KS hint uses a gray or
+                        // non-standard format, or a non-standard resolution (height ≠
+                        // 240/360/480/600/720/1080) that indicates a speciality sensor.
+                        if (IsThermalOrSpecialityCaps(ksHintCaps))
+                        {
+                            _logger.LogInformation(
+                                "KS caps hint for {Name} indicates thermal/speciality device ({Caps}) — keeping KS, skipping MF upgrade",
+                                name, ksHintCaps);
+                            return;
                         }
 
                         // Remove KS tracking before stopping so no further events
@@ -261,7 +320,11 @@ public class DeviceMonitorService : BackgroundService
                     }
 
                     // No existing entry — fresh MF registration (no KS running)
-                    RegisterAndStart(device, id, name);
+                    // Pass any pre-populated hint (thermal table or prior KS probe)
+                    _nameToCapsHint.TryGetValue(name, out var freshHint);
+                    RegisterAndStartOnPort(device, id, name,
+                        Interlocked.Increment(ref _nextPort),
+                        freshHint.caps, freshHint.isGray);
                 }
                 finally
                 {
@@ -375,7 +438,9 @@ public class DeviceMonitorService : BackgroundService
     private void RegisterAndStart(Device device, string id, string name)
     {
         int port = Interlocked.Increment(ref _nextPort);
-        RegisterAndStartOnPort(device, id, name, port);
+        // Pass any pre-populated hint (e.g. thermal device table or prior KS probe)
+        _nameToCapsHint.TryGetValue(name, out var hint);
+        RegisterAndStartOnPort(device, id, name, port, hint.caps, hint.isGray);
     }
 
     private void RegisterAndStartOnPort(Device device, string id, string name, int port,
@@ -420,6 +485,25 @@ public class DeviceMonitorService : BackgroundService
     // ------------------------------------------------------------------ //
     //  Helpers                                                             //
     // ------------------------------------------------------------------ //
+
+    /// <summary>
+    /// Returns true when the caps string indicates a thermal, infrared, or
+    /// speciality sensor that should stay on KS rather than be upgraded to MF.
+    /// Detection criteria:
+    ///   - Gray/thermal pixel format (GRAY16_LE, GRAY8, GRAY16_BE)
+    ///   - Non-standard sensor resolution height (512, 256, 288 — FLIR, Lepton, etc.)
+    ///   - Sub-10 fps fractional framerate (e.g. 15/2 = 7.5 fps)
+    /// </summary>
+    private static bool IsThermalOrSpecialityCaps(string caps)
+    {
+        if (caps.Contains("GRAY16_LE") || caps.Contains("GRAY16_BE") || caps.Contains("GRAY8"))
+            return true;
+        if (caps.Contains(",height=512") || caps.Contains(",height=256") || caps.Contains(",height=288"))
+            return true;
+        if (caps.Contains("framerate=15/2") || caps.Contains("framerate=9/1"))
+            return true;
+        return false;
+    }
 
     private static bool IsVideoSource(Device device)
     {
