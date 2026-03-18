@@ -25,8 +25,10 @@ public class DeviceMonitorService : BackgroundService
     private readonly ConcurrentDictionary<string, int> _devicePorts = new();
     // display name → registered id  (used for KS/MF dedup on Windows)
     private readonly ConcurrentDictionary<string, string> _nameToId = new();
-    // display names currently being upgraded KS→MF (guard against double-start)
-    private readonly ConcurrentHashSet _upgrading = new();
+    // display name → semaphore serialising concurrent MF arrival events for the same camera
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _nameUpgradeLocks = new();
+    // display name → caps string discovered by KS probe, used as hint for MF replacement worker
+    private readonly ConcurrentDictionary<string, (string caps, bool isGray)> _nameToCapsHint = new();
 
     private static readonly bool IsWindows =
         System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
@@ -57,6 +59,9 @@ public class DeviceMonitorService : BackgroundService
         };
         thread.Start();
 
+        // Gst.Application.Init() must be called ONCE per process — do it here,
+        // before any GStreamer objects are created, and never again.
+        // (WebcamWorker.RunPipelineAsync must NOT call it.)
         Gst.Application.Init();
 
         _monitor = new DeviceMonitor();
@@ -80,7 +85,7 @@ public class DeviceMonitorService : BackgroundService
         SafeEnumerateExistingDevices();
 
         try { await SysTask.Delay(System.Threading.Timeout.Infinite, stoppingToken); }
-        catch (TaskCanceledException) { }
+        catch (System.Threading.Tasks.TaskCanceledException) { }
     }
 
     public override async SysTask StopAsync(CancellationToken cancellationToken)
@@ -97,8 +102,11 @@ public class DeviceMonitorService : BackgroundService
             _monitor?.Dispose();
             _mainLoop?.Quit();
 
-            foreach (var id in _devices.Keys)
-                await _webcamManager.StopWebcamAsync(id);
+            // Stop all webcam workers in parallel, not sequentially
+            var stopTasks = _devices.Keys
+                .Select(id => _webcamManager.StopWebcamAsync(id))
+                .ToArray();
+            await SysTask.WhenAll(stopTasks);
         }
         catch (System.Exception ex)
         {
@@ -169,64 +177,111 @@ public class DeviceMonitorService : BackgroundService
         bool isMF = id.Contains("mfdevice", System.StringComparison.OrdinalIgnoreCase);
         bool isKS = id.Contains("ksdevice", System.StringComparison.OrdinalIgnoreCase);
 
-        // MF device arrived — always register it, stopping any existing KS worker first
+        // MF device arrived — always prefer it over KS
         if (isMF)
         {
-            if (_nameToId.TryGetValue(name, out var existingId))
+            // Serialize concurrent MF arrivals for the same camera name.
+            // On Windows, GStreamer can fire multiple mfdeviceX events for the
+            // same physical device.  Without serialisation the duplicate guard
+            // below races and two workers end up owning the same MF session.
+            var upgradeLock = _nameUpgradeLocks.GetOrAdd(name, _ => new SemaphoreSlim(1, 1));
+
+            _ = SysTask.Run(async () =>
             {
-                bool existingIsMF = existingId.Contains("mfdevice",
-                    System.StringComparison.OrdinalIgnoreCase);
-
-                if (existingIsMF)
+                await upgradeLock.WaitAsync();
+                try
                 {
-                    // MF already running for this camera — duplicate event, ignore
-                    _logger.LogDebug("MF already registered for {Name} — ignoring duplicate", name);
-                    return;
+                    // Re-check inside the lock — another MF event may have already
+                    // registered this camera while we were waiting.
+                    if (_nameToId.TryGetValue(name, out var existingId))
+                    {
+                        bool existingIsMF = existingId.Contains("mfdevice",
+                            System.StringComparison.OrdinalIgnoreCase);
+
+                        if (existingIsMF)
+                        {
+                            _logger.LogDebug(
+                                "MF already registered for {Name} ({ExistingId}) — ignoring duplicate {NewId}",
+                                name, existingId, id);
+                            return;
+                        }
+
+                        // KS is running — stop and fully dispose before starting MF.
+                        _logger.LogInformation("MF arrived for {Name} — replacing KS worker", name);
+                        _devicePorts.TryGetValue(existingId, out int existingPort);
+
+                        // Capture KS worker's successfully probed caps NOW, before
+                        // stopping it.  These become the hint for the MF worker so it
+                        // can skip probing entirely (MF thermal/speciality devices
+                        // often advertise generic caps they can't actually stream).
+                        var (ksHintCaps, ksHintIsGray) = _webcamManager.GetCachedCaps(existingId);
+                        if (ksHintCaps != null)
+                        {
+                            _nameToCapsHint[name] = (ksHintCaps, ksHintIsGray);
+                            _logger.LogInformation(
+                                "Stored KS caps hint for {Name}: {Caps}", name, ksHintCaps);
+                        }
+
+                        // Remove KS tracking before stopping so no further events
+                        // can race and re-register it.
+                        _devices.TryRemove(existingId, out _);
+                        _nameToId.TryRemove(name, out _);
+                        _devicePorts.TryRemove(existingId, out _);
+
+                        // Pre-register the MF id NOW (inside the lock, before the
+                        // async stop) so any further MF arrival events for the same
+                        // camera name see it and return early from the duplicate guard.
+                        _devices[id] = device;
+                        _nameToId[name] = id;
+                        _devicePorts[id] = existingPort;
+
+                        try
+                        {
+                            await _webcamManager.StopWebcamAsync(existingId);
+                            await SysTask.Delay(1000);
+
+                            // Pass KS caps as hint so MF worker skips probing
+                            _nameToCapsHint.TryGetValue(name, out var hint);
+                            await _webcamManager.StartWebcamAsync(
+                                device, "127.0.0.1", existingPort,
+                                hint.caps, hint.isGray);
+                            _logger.LogInformation(
+                                "Camera connected (MF upgrade): {Name} | ID: {Id} | Port: {Port}",
+                                name, id, existingPort);
+                        }
+                        catch (System.Exception ex)
+                        {
+                            _logger.LogError(ex, "Failed during KS→MF upgrade for {Name}", name);
+                            // Roll back registration so the device can be retried
+                            _devices.TryRemove(id, out _);
+                            _nameToId.TryRemove(name, out _);
+                            _devicePorts.TryRemove(id, out _);
+                        }
+                        return;
+                    }
+
+                    // No existing entry — fresh MF registration (no KS running)
+                    RegisterAndStart(device, id, name);
                 }
-
-                // KS is running — stop it, then register MF
-                _logger.LogInformation("MF arrived for {Name} — stopping KS worker first", name);
-                var oldId = existingId;
-                _devicePorts.TryGetValue(oldId, out int existingPort);
-
-                // Remove KS tracking immediately so no further events re-trigger it
-                _devices.TryRemove(oldId, out _);
-                _nameToId.TryRemove(name, out _);
-                _devicePorts.TryRemove(oldId, out _);
-
-                _ = SysTask.Run(async () =>
+                finally
                 {
-                    try
-                    {
-                        // Stop KS and wait for hardware to fully release
-                        await _webcamManager.StopWebcamAsync(oldId);
-                        await SysTask.Delay(800);
-
-                        // Now start MF on the same port
-                        RegisterAndStartOnPort(device, id, name, existingPort);
-                    }
-                    catch (System.Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed during KS→MF upgrade for {Name}", name);
-                    }
-                });
-                return;
-            }
-
-            // No existing entry — fresh MF registration
-            RegisterAndStart(device, id, name);
+                    upgradeLock.Release();
+                }
+            });
             return;
         }
 
-        // KS device arrived
+        // KS device arrived — wait to see if MF follows.
+        // On Windows, GStreamer's MF provider enumerates asynchronously and
+        // typically arrives 800–1500 ms after KS.  Use a 2 s window so we almost
+        // never fall back to KS unnecessarily.
         if (isKS)
         {
-            // Wait to see if MF arrives within 500ms before committing to KS
             _ = SysTask.Run(async () =>
             {
-                await SysTask.Delay(500);
+                await SysTask.Delay(2000);
 
-                // If MF has already registered by now, skip KS entirely
+                // If MF has already registered for this name, skip KS entirely
                 if (_nameToId.TryGetValue(name, out var laterId) &&
                     laterId.Contains("mfdevice", System.StringComparison.OrdinalIgnoreCase))
                 {
@@ -234,7 +289,8 @@ public class DeviceMonitorService : BackgroundService
                     return;
                 }
 
-                // Check again that nothing registered this id in the meantime
+                // Also skip if any id has been registered for this device path
+                // (covers the case where MF registered under a different name key)
                 if (_devices.ContainsKey(id))
                 {
                     _logger.LogDebug("Device already registered during KS wait for {Name}", name);
@@ -247,7 +303,7 @@ public class DeviceMonitorService : BackgroundService
             return;
         }
 
-        // Neither KS nor MF (unlikely on Windows but handle gracefully)
+        // Neither KS nor MF
         RegisterAndStart(device, id, name);
     }
 
@@ -322,7 +378,8 @@ public class DeviceMonitorService : BackgroundService
         RegisterAndStartOnPort(device, id, name, port);
     }
 
-    private void RegisterAndStartOnPort(Device device, string id, string name, int port)
+    private void RegisterAndStartOnPort(Device device, string id, string name, int port,
+                                        string? capsHint = null, bool capsHintIsGray = false)
     {
         _devices[id] = device;
         _nameToId[name] = id;
@@ -333,7 +390,11 @@ public class DeviceMonitorService : BackgroundService
 
         _ = SysTask.Run(async () =>
         {
-            try { await _webcamManager.StartWebcamAsync(device, "127.0.0.1", port); }
+            try
+            {
+                await _webcamManager.StartWebcamAsync(device, "127.0.0.1", port,
+                    capsHint, capsHintIsGray);
+            }
             catch (System.Exception ex)
             { _logger.LogError(ex, "Failed to start webcam for {Name}", name); }
         });
@@ -371,14 +432,5 @@ public class DeviceMonitorService : BackgroundService
             name.Contains("screen")) return false;
 
         return true;
-    }
-
-    // Minimal thread-safe hash set (ConcurrentDictionary<string,byte> wrapper)
-    private sealed class ConcurrentHashSet
-    {
-        private readonly ConcurrentDictionary<string, byte> _inner = new();
-        public void Add(string key) => _inner.TryAdd(key, 0);
-        public void Remove(string key) => _inner.TryRemove(key, out _);
-        public bool Contains(string key) => _inner.ContainsKey(key);
     }
 }
