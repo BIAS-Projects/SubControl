@@ -1,10 +1,12 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+﻿using Gst;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using SubConsole;
 using SubConsole.Services;
 using SubControlMAUI.Services;
 using System.Runtime.InteropServices;
+using System.Timers;
 
 // Only set GStreamer path on Windows — on Linux it's installed system-wide
 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -28,6 +30,9 @@ await Host.CreateDefaultBuilder(args)
         //services.AddSingleton<CommPortService>();
         services.AddSingleton<SerialPortManagerService>();
         services.AddSingleton<WebcamManagerService>();
+
+       // services.AddSingleton<TCPClientPeriodicMessengerService>();
+
 
         // Register as singleton so other services can inject it and subscribe to FrameReceived
         // Port 5001 = first camera (DeviceMonitorService starts at 5000 and increments)
@@ -54,9 +59,14 @@ await Host.CreateDefaultBuilder(args)
         services.AddHostedService(provider => provider.GetRequiredService<TcpHostService>());
         //services.AddHostedService(provider => provider.GetRequiredService<CommPortService>());
         services.AddHostedService(provider => provider.GetRequiredService<SerialPortManagerService>());
-        //services.AddHostedService(provider => provider.GetRequiredService<WebcamManagerService>());
+        services.AddHostedService(provider => provider.GetRequiredService<WebcamManagerService>());
+
+
+       // services.AddHostedService(provider => provider.GetRequiredService<TCPClientPeriodicMessengerService>());
 
         services.AddHostedService<DeviceMonitorService>();
+
+
 
         services.AddSingleton<SQLiteService>();
     })

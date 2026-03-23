@@ -205,6 +205,46 @@ public class DeviceMonitorService : BackgroundService
         bool isMF = id.Contains("mfdevice", System.StringComparison.OrdinalIgnoreCase);
         bool isKS = id.Contains("ksdevice", System.StringComparison.OrdinalIgnoreCase);
 
+        // Thermal/speciality cameras must use KS, not MF — their MF source
+        // advertises generic webcam caps it cannot actually stream.
+        // If we receive an MF event for one of these, discard it and wait for
+        // KS to arrive (same 2 s window used for normal KS preference).
+        bool isThermal = _nameToCapsHint.ContainsKey(name) &&
+                         IsThermalOrSpecialityCaps(_nameToCapsHint[name].caps);
+
+        if (isMF && isThermal)
+        {
+            _logger.LogInformation(
+                "Thermal device {Name} arrived as MF — discarding MF, waiting for KS",
+                name);
+
+            _ = SysTask.Run(async () =>
+            {
+                await SysTask.Delay(2000);
+
+                // If KS registered in the meantime, nothing more to do
+                if (_nameToId.TryGetValue(name, out var laterId) &&
+                    laterId.Contains("ksdevice", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogDebug("KS arrived for thermal device {Name} — MF discarded correctly", name);
+                    return;
+                }
+
+                // KS never arrived — this machine may not have a KS driver for
+                // this camera.  Fall back to MF as a last resort so the camera
+                // at least attempts to stream (it may fail, but the
+                // not-negotiated give-up logic will stop the loop cleanly).
+                if (!_devices.ContainsKey(id) && !_nameToId.ContainsKey(name))
+                {
+                    _logger.LogWarning(
+                        "No KS arrived for thermal device {Name} after 2 s — falling back to MF",
+                        name);
+                    RegisterAndStart(device, id, name);
+                }
+            });
+            return;
+        }
+
         // MF device arrived — always prefer it over KS
         if (isMF)
         {
@@ -338,8 +378,18 @@ public class DeviceMonitorService : BackgroundService
         // On Windows, GStreamer's MF provider enumerates asynchronously and
         // typically arrives 800–1500 ms after KS.  Use a 2 s window so we almost
         // never fall back to KS unnecessarily.
+        // Exception: thermal/speciality cameras always use KS — register immediately.
         if (isKS)
         {
+            if (isThermal)
+            {
+                _logger.LogInformation(
+                    "Thermal device {Name} arrived as KS — registering immediately (no MF wait)",
+                    name);
+                RegisterAndStart(device, id, name);
+                return;
+            }
+
             _ = SysTask.Run(async () =>
             {
                 await SysTask.Delay(2000);

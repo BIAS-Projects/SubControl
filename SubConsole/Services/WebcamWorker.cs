@@ -39,10 +39,16 @@ namespace SubConsole.Services
         private int _consecutiveNotNegotiated;
         private const int MaxNotNegotiatedBeforeGiveUp = 3;
 
-        // Process-wide semaphore: only one camera probes at a time.
-        // Concurrent probe pipelines open multiple devices simultaneously and
-        // cause KS/MF driver contention that makes all probes fail.
-        private static readonly SemaphoreSlim _probeLock = new(1, 1);
+        // Process-wide semaphore serialising camera probes.
+        // On Windows, KS and MF drivers often have exclusive-access constraints
+        // so only one camera may probe at a time.
+        // On Linux, v4l2 devices support concurrent opens so we allow up to 3
+        // simultaneous probes to reduce startup time with multiple cameras.
+        private static readonly SemaphoreSlim _probeLock = new(
+            System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
+                System.Runtime.InteropServices.OSPlatform.Windows) ? 1 : 3,
+            System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
+                System.Runtime.InteropServices.OSPlatform.Windows) ? 1 : 3);
 
         // Unique suffix per worker instance so pipeline/element names never
         // collide when multiple cameras probe or stream concurrently.
@@ -53,7 +59,10 @@ namespace SubConsole.Services
         // How long (ms) to wait after tearing down any pipeline before
         // re-opening the same MF device.  Media Foundation needs ~300–500 ms
         // to fully release an exclusive capture session on Windows.
-        private const int MfReleaseSettleMs = 600;
+        // On Linux (v4l2) there is no exclusive session, so this is 0.
+        private static readonly int MfReleaseSettleMs =
+            System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
+                System.Runtime.InteropServices.OSPlatform.Windows) ? 600 : 0;
 
         // Optional caps hint supplied by DeviceMonitorService when upgrading a
         // KS worker to MF — the KS probe already found working caps for this
@@ -61,8 +70,22 @@ namespace SubConsole.Services
         private readonly string? _capsHint;
         private readonly bool _capsHintNeedsGrayConvert;
 
+        // SQLite service for persisting/loading confirmed caps across restarts.
+        // Null when running in a context where persistence isn't available.
+        private readonly SubControlMAUI.Services.SQLiteService? _db;
+
+        // Provider type string ("MF", "KS", or "Unknown") derived from the
+        // device path.  Used as part of the DB key so KS and MF caps are stored
+        // separately — they are not interchangeable.
+        private readonly string _providerType;
+
+        // True once the pipeline has confirmed PLAYING at least once this session,
+        // used to avoid writing a success record before streaming is proven.
+        private bool _hasStreamed;
+
         public WebcamWorker(Gst.Device device, string host, int port, ILogger logger,
-                            string? capsHint = null, bool capsHintNeedsGrayConvert = false)
+                            string? capsHint = null, bool capsHintNeedsGrayConvert = false,
+                            SubControlMAUI.Services.SQLiteService? db = null)
         {
             _device = device;
             _deviceName = device.DisplayName ?? "Unknown";
@@ -71,8 +94,12 @@ namespace SubConsole.Services
             _logger = logger;
             _capsHint = capsHint;
             _capsHintNeedsGrayConvert = capsHintNeedsGrayConvert;
+            _db = db;
+            _providerType = SubControlMAUI.Services.SQLiteService
+                                            .ProviderTypeFromDevicePath(device.PathString ?? "");
         }
 
+        public Gst.Device Device => _device;
         public string DeviceName => _deviceName;
         public string? CachedCaps => _cachedCaps;
         public bool CachedNeedsGrayConvert => _cachedNeedsGrayConvert;
@@ -168,6 +195,19 @@ namespace SubConsole.Services
                     _logger.LogInformation("[{Device}] Pipeline is PLAYING - monitoring bus", _deviceName);
                     _consecutiveNotNegotiated = 0; // successfully started — reset counter
 
+                    // Persist confirmed-working caps to the database on first success
+                    // this session so future startups skip the probe phase entirely.
+                    if (_db != null && _cachedCaps != null && !_hasStreamed)
+                    {
+                        _hasStreamed = true;
+                        _ = _db.RecordCameraSuccessAsync(
+                                    _deviceName, _providerType, _cachedCaps, _cachedNeedsGrayConvert)
+                                .ContinueWith(t => _logger.LogDebug(
+                                    "[{Device}] Caps persisted to database ({Provider})",
+                                    _deviceName, _providerType),
+                                    TaskContinuationOptions.OnlyOnRanToCompletion);
+                    }
+
                     var bus = _pipeline.Bus!;
                     bus.AddSignalWatch();
                     bus.Message += OnBusMessage;
@@ -204,21 +244,30 @@ namespace SubConsole.Services
                             "[{Device}] Device error (-5) — clearing caps cache, waiting for MF release",
                             _deviceName);
                         _cachedCaps = null;
+                        _hasStreamed = false;
                         _consecutiveNotNegotiated = 0;
+                        // Record the failure so the DB entry is flagged as stale
+                        if (_db != null)
+                            _ = _db.RecordCameraFailureAsync(_deviceName, _providerType);
                     }
 
                     // not-negotiated (-4) means the device rejected the caps entirely.
                     // After MaxNotNegotiatedBeforeGiveUp consecutive failures there is
                     // no point retrying — the caps will never be accepted (e.g. FLIR on
-                    // MF without a thermal hint).  Give up cleanly.
+                    // MF without a compatible driver).  Persist the permanently-unsupported
+                    // flag so future runs skip this (device, provider) combination entirely.
                     if (_consecutiveNotNegotiated >= MaxNotNegotiatedBeforeGiveUp)
                     {
                         _logger.LogError(
                             "[{Device}] {Count} consecutive not-negotiated failures — " +
-                            "device cannot stream with available caps. " +
+                            "device cannot stream on provider {Provider}. " +
                             "If this is a thermal camera, ensure it enumerates on KS first " +
                             "so the native caps can be discovered.",
-                            _deviceName, _consecutiveNotNegotiated);
+                            _deviceName, _consecutiveNotNegotiated, _providerType);
+
+                        if (_db != null)
+                            _ = _db.MarkPermanentlyUnsupportedAsync(_deviceName, _providerType);
+
                         break;
                     }
 
@@ -276,6 +325,28 @@ namespace SubConsole.Services
             }
             else
             {
+                // Check the database first — if we've seen this camera before and
+                // its caps were working, skip probing entirely.
+                if (_db != null)
+                {
+                    var saved = await _db.GetCameraConfigAsync(_deviceName, _providerType);
+                    if (saved != null)
+                    {
+                        _logger.LogInformation(
+                            "[{Device}] Loaded caps from database ({Provider}, success count: {Count}): {Caps}",
+                            _deviceName, _providerType, saved.SuccessCount, saved.Caps);
+                        capsString = saved.Caps;
+                        needsGrayConvert = saved.NeedsGrayConvert;
+                        _cachedCaps = capsString;
+                        _cachedNeedsGrayConvert = needsGrayConvert;
+
+                        _logger.LogInformation("[{Device}] Negotiated caps: {Caps}", _deviceName, capsString);
+
+                        await SysTask.Delay(MfReleaseSettleMs, token);
+                        goto buildPipeline;
+                    }
+                }
+
                 // Serialise probing: only one camera probes at a time to prevent
                 // concurrent KS/MF device opens from causing mutual interference.
                 await _probeLock.WaitAsync(token);
@@ -310,6 +381,8 @@ namespace SubConsole.Services
             _logger.LogDebug("[{Device}] Waiting {Ms}ms for MF device release after probe",
                 _deviceName, MfReleaseSettleMs);
             await SysTask.Delay(MfReleaseSettleMs, token);
+
+        buildPipeline:
 
             // ----------------------------------------------------------------
             _pipeline = new Pipeline($"webcam-{_deviceName}-{_instanceId}");

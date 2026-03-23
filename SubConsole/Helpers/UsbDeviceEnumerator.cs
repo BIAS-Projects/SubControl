@@ -122,61 +122,62 @@ namespace SubConsole.Helpers
 
         private static void ParseVidPid(string deviceId, UsbDeviceInfo device)
         {
-            if (string.IsNullOrEmpty(deviceId))
-                return;
+            if (string.IsNullOrEmpty(deviceId)) return;
 
-            var parts = deviceId.Split('\\');
-
-            foreach (var part in parts)
+            // USB\VID_0403&PID_6011&MI_03\SERIALNUMBER
+            foreach (var segment in deviceId.Split('\\'))
             {
-                if (part.StartsWith("VID_", StringComparison.OrdinalIgnoreCase))
-                    device.VendorId = part.Substring(4);
-
-                if (part.StartsWith("PID_", StringComparison.OrdinalIgnoreCase))
-                    device.ProductId = part.Substring(4);
-            }
-        }
-
-
-
-public static class GStreamerDeviceScanner
-    {
-        private static readonly SemaphoreSlim _lock = new(1, 1);
-
-        public static async Task<List<string>> GetVideoDevicesAsync()
-        {
-            await _lock.WaitAsync();
-
-            try
-            {
-                return await System.Threading.Tasks.Task.Run(() =>
+                foreach (var token in segment.Split('&'))
                 {
-                    var devices = new List<string>();
+                    if (token.StartsWith("VID_", StringComparison.OrdinalIgnoreCase))
+                        device.VendorId = token[4..];
 
-                    var monitor = new DeviceMonitor();
-                    monitor.AddFilter("Video/Source", null);
-                    monitor.Start();
-
-                    foreach (var device in monitor.Devices)
-                    {
-                        var props = device.Properties;
-
-                        if (props != null && props.HasField("device.path"))
-                        {
-                            devices.Add(props.GetString("device.path"));
-                        }
-                    }
-
-                    monitor.Stop();
-
-                    return devices;
-                });
-            }
-            finally
-            {
-                _lock.Release();
+                    else if (token.StartsWith("PID_", StringComparison.OrdinalIgnoreCase))
+                        device.ProductId = token[4..];
+                }
             }
         }
+
+
+
+        //public static class GStreamerDeviceScanner
+        //{
+        //    private static readonly SemaphoreSlim _lock = new(1, 1);
+
+        //    public static async Task<List<string>> GetVideoDevicesAsync()
+        //    {
+        //        await _lock.WaitAsync();
+
+        //        try
+        //        {
+        //            return await System.Threading.Tasks.Task.Run(() =>
+        //            {
+        //                var devices = new List<string>();
+
+        //                var monitor = new DeviceMonitor();
+        //                monitor.AddFilter("Video/Source", null);
+        //                monitor.Start();
+
+        //                foreach (var device in monitor.Devices)
+        //                {
+        //                    var props = device.Properties;
+
+        //                    if (props != null && props.HasField("device.path"))
+        //                    {
+        //                        devices.Add(props.GetString("device.path"));
+        //                    }
+        //                }
+
+        //                monitor.Stop();
+
+        //                return devices;
+        //            });
+        //        }
+        //        finally
+        //        {
+        //            _lock.Release();
+        //        }
+        //    }
+        //}
     }
-}
 }

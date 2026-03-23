@@ -8,7 +8,6 @@ using System.Collections.Generic;
 using System.Net;
 using System.Text;
 
-
 namespace SubControlMAUI.ViewModels
 {
     public partial class MainViewModel : BaseViewModel
@@ -93,7 +92,7 @@ namespace SubControlMAUI.ViewModels
                     }
                     else
                     {
-                        Status = Encoding.UTF8.GetString(m.Value);
+                        status = message;
                     }
 
 
@@ -149,7 +148,8 @@ namespace SubControlMAUI.ViewModels
         [RelayCommand]
         async Task Up()
         {
-            Send(_sqliteService.config.CutterUpCommand);
+            //Send(_sqliteService.config.CutterUpCommand);
+            Send("GET USBCOMMPORTS");
         }
         [RelayCommand]
         async Task Down()

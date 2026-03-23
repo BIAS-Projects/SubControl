@@ -1,6 +1,8 @@
 ﻿using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
+using System.IO.Ports;
+using System.Runtime.InteropServices;
 
 namespace SubConsole.Services;
 
@@ -111,6 +113,69 @@ public class SerialPortManagerService : BackgroundService
     //{
     //    SerialPortWorker tomController =  GetPort("COM5");
     //    await tomController.WriteAsync("@\"$PBLUTP,S,PWR,CTRL,OFF,15*67\"", cancellationToken);
-        
+
     //}
+
+
+    // ---------------- LIST AVAILABLE PORTS ----------------
+    private static readonly SemaphoreSlim _portListLock = new(1, 1);
+
+    public static async Task<IReadOnlyList<string>> GetAvailablePortsAsync()
+    {
+        await _portListLock.WaitAsync();
+        try
+        {
+            return await Task.Run(() =>
+            {
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                    return GetWindowsPorts();
+
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                    return GetLinuxPorts();
+
+                return Array.Empty<string>();
+            });
+        }
+        finally
+        {
+            _portListLock.Release();
+        }
+    }
+
+    private static IReadOnlyList<string> GetWindowsPorts()
+    {
+        // SerialPort.GetPortNames() is reliable on Windows
+        return SerialPort.GetPortNames()
+                         .OrderBy(p => p)
+                         .ToArray();
+    }
+
+    private static IReadOnlyList<string> GetLinuxPorts()
+    {
+        // Enumerate tty devices that typically represent serial ports
+        var patterns = new[] { "ttyUSB*", "ttyACM*", "ttyS*", "ttyAMA*" };
+
+        return patterns
+            .SelectMany(pattern => Directory.GetFiles("/dev", pattern))
+            .Where(IsSerialPortAccessible)
+            .OrderBy(p => p)
+            .ToArray();
+    }
+
+    private static bool IsSerialPortAccessible(string path)
+    {
+        try
+        {
+            // Quick open/close to verify the port is accessible and not a
+            // phantom ttyS* entry that exists in /dev but has no hardware
+            using var port = new SerialPort(path);
+            port.Open();
+            port.Close();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 }
