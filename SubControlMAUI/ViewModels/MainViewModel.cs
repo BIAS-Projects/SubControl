@@ -3,10 +3,13 @@ using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using SubControlMAUI.Messages;
 using SubControlMAUI.Services;
+
 using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Text;
+using SubControlMAUI.Models;
+using SubConsole.Models;
 
 namespace SubControlMAUI.ViewModels
 {
@@ -18,6 +21,7 @@ namespace SubControlMAUI.ViewModels
         private readonly IMessenger _messenger;
         private readonly TcpSocketService _tcp;
 
+
         [ObservableProperty]
         [NotifyPropertyChangedFor(nameof(IsNotConnected))]
         bool isConnected = false;
@@ -27,6 +31,8 @@ namespace SubControlMAUI.ViewModels
 
         [ObservableProperty]
         private bool cutterRunning;
+        [ObservableProperty]
+        private List<UsbSerialPortInfo> usbSerialPortInfoList = new List<UsbSerialPortInfo>();
 
 
         public bool CanStart => IsConnected && !CutterRunning;
@@ -79,61 +85,74 @@ namespace SubControlMAUI.ViewModels
             _messenger = messenger;
             _tcp = tcp;
 
-            _messenger.Register<TcpDataReceivedMessage>(this, (r, m) =>
+            _messenger.Register<TcpDataReceivedMessage>(this, (r, msg) =>
             {
-                MainThread.BeginInvokeOnMainThread(() =>
+                MainThread.BeginInvokeOnMainThread(async () =>
                 {
-                    string message = Encoding.UTF8.GetString(m.Value);
-
-                string[] words = message.Split(' ');
-                    if ((words[0] == "CURRENT"))
+                    string message = Encoding.UTF8.GetString(msg.Value);
+                    if (!await HandleTcpReceivedMessage(message))
                     {
-                        CutterCurrent = $"{words[1]} {_currentUnit}";
+                        Status = "Error processing Command: " + message;
                     }
                     else
                     {
-                        status = message;
+                        Status = "Success processing Command: " + message;
                     }
 
 
-
                 });
 
             });
 
-            _messenger.Register<TcpSendRequestMessage>(this, (r, m) =>
+            _messenger.Register<TcpSendRequestMessage>(this, (r, msg) =>
             {
                 MainThread.BeginInvokeOnMainThread(() =>
                 {
-                    Status = Encoding.UTF8.GetString(m.Value);
+                    Status = Encoding.UTF8.GetString(msg.Value);
                 });
 
             });
 
-            _messenger.Register<TcpStatusMessage>(this, (r, m) =>
+            _messenger.Register<TcpStatusMessage>(this, (r, msg) =>
             {
                 MainThread.BeginInvokeOnMainThread(() =>
                 {
-                    Status = m.Value;
+                    Status = msg.Value;
                 });
 
             });
 
-            _messenger.Register<TcpErrorMessage>(this, (r, m) =>
+            _messenger.Register<TcpErrorMessage>(this, (r, msg) =>
             {
                 MainThread.BeginInvokeOnMainThread(() =>
                 {
-                    Status = m.Value.Message;
+                    Status = msg.Value.Message;
                 });
 
             });
 
-            _messenger.Register<TcpIsConnected>(this, (r, m) =>
+
+         
+            _messenger.Register<TcpAckTimeoutMessage>(this, (r, msg) =>
+            {
+                
+                MainThread.BeginInvokeOnMainThread(() =>
+                    Status = $"No response to: {msg.Command}");
+            });
+
+            _messenger.Register<TcpNackMessage>(this, (r, msg) =>
+            {
+                MainThread.BeginInvokeOnMainThread(() =>
+                    Status = $"Server rejected '{msg.Command}': {msg.Reason}");
+            });
+
+
+            _messenger.Register<TcpIsConnected>(this, (r, msg) =>
             {
                 
                 MainThread.BeginInvokeOnMainThread(() =>
                 {
-                    IsConnected = m.Value;
+                    IsConnected = msg.Value;
                     if(!IsConnected)
                     {
                         CutterRunning = false;
@@ -299,8 +318,46 @@ namespace SubControlMAUI.ViewModels
         }
 
 
+        public async Task<bool> HandleTcpReceivedMessage(string message)
+        {
+            if (string.IsNullOrEmpty(message))
+            { return false; }
+            var command = message.Split(TcpProtocol.CommandSeparatorChar);
+            if (command.Length <= 1)
+            { return false; }
+            switch (command[0])
+            {
+                case "GET USBCOMMPORTS":
+                    usbSerialPortInfoList.Clear();
+                    for (int i = 1; i < command.Length; i++)
+                    {
+                        usbSerialPortInfoList.Add(new UsbSerialPortInfo
+                        {
+                            PortName = command[i++],
+                            VendorId = command[i++],
+                            ProductId = command[i++],
+                            SerialNumber = command[i++],
+                            Description = command[i++],
+                            DeviceId = command[i++]
+                        });
+                    }
+                    return true;
 
 
+                case "GET FEATURES":
+                    // TODO: return feature flags
+                    return true;
+
+                case "START TOM CAM":
+                    return true;
+
+                case "STOP TOM":
+                    // TODO: implement TOM shutdown sequence
+                    return true;
+
+                default: return false;
+            }
+        }
 
     }
 }

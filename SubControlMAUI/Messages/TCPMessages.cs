@@ -32,4 +32,10 @@ namespace SubControlMAUI.Messages
         public TcpIsConnected(bool value) : base(value) { }
     }
 
+    // Fired when the server doesn't ACK within 5 s
+    public record TcpAckTimeoutMessage(string MessageId, string Command);
+
+    // Fired when the server explicitly rejects a command
+    public record TcpNackMessage(string MessageId, string Command, string Reason);
+
 }
