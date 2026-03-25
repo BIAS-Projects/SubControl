@@ -1,6 +1,8 @@
 ﻿using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using SubConsole.Models;
 using System.Collections.Concurrent;
+using System.Formats.Tar;
 using System.IO.Ports;
 using System.Runtime.InteropServices;
 
@@ -40,12 +42,12 @@ public class SerialPortManagerService : BackgroundService
 
     // ---------------- OPEN PORT ----------------
 
-    public async Task<bool> OpenPortAsync(string port, int baudRate)
+    public async Task<OperationResult> OpenPortAsync(string port, int baudRate)
     {
         if (_ports.ContainsKey(port))
         {
             _logger.LogWarning("Port {port} already open", port);
-            return false;
+            return OperationResult.Failure($"Port {port} already open");
         }
 
         try
@@ -53,32 +55,34 @@ public class SerialPortManagerService : BackgroundService
             SerialPortWorker worker = new SerialPortWorker(port, baudRate, _logger);
 
             if (!_ports.TryAdd(port, worker))
-                return false;
+                return OperationResult.Failure($"Failed to add {port} to ports dictionary");
 
             await worker.StartAsync(_appToken);
 
             _logger.LogInformation("Opened port {port}", port);
 
-            return true;
+            return OperationResult.Success();
         }
         catch (Exception ex)
         {
             _logger.LogError($"Error opening {port} : {ex.Message}");
-            return false;
+            return OperationResult.Failure($"Error opening {port} : {ex.Message}");
         }
 
     }
 
     // ---------------- CLOSE PORT ----------------
 
-    public async Task ClosePortAsync(string port)
+    public async Task<OperationResult> ClosePortAsync(string port)
     {
         if (_ports.TryRemove(port, out var worker))
         {
             await worker.StopAsync();
-
+            
             _logger.LogInformation("Closed port {port}", port);
+            return OperationResult.Success();
         }
+        return OperationResult.Failure($"Failed to remove {port} from ports dictionary");
     }
 
     // ---------------- GET PORT ----------------

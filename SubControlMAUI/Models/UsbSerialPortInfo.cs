@@ -1,4 +1,5 @@
-﻿// Models/UsbSerialPortInfo.cs
+﻿using System.Text.Json;
+
 namespace SubConsole.Models;
 
 public record UsbSerialPortInfo
@@ -9,4 +10,6 @@ public record UsbSerialPortInfo
     public string SerialNumber { get; init; } = "";
     public string Description { get; init; } = "";
     public string DeviceId { get; init; } = "";
+
+    public override string ToString() => JsonSerializer.Serialize(this);
 }

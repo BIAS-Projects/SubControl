@@ -1,10 +1,12 @@
-﻿using SubConsole.Models;
+﻿using Microsoft.Extensions.Logging;
+using SubConsole.Models;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text.RegularExpressions;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -19,6 +21,20 @@ public static class UsbSerialPortMapper
     private static readonly SemaphoreSlim _lock = new(1, 1);
 
     // ---------------- PUBLIC API ----------------
+
+
+
+
+//    // On startup or hardware change notification:
+//    await UsbPortRegistry.Instance.RefreshAsync();
+
+//// Read from any thread:
+//if (UsbPortRegistry.Instance.TryGetPort("COM3", out var info))
+//    Console.WriteLine(info.Description);
+
+//// React to plug/unplug:
+//UsbPortRegistry.Instance.PortChanged += (_, e) =>
+//    logger.LogInformation("{Kind}: {Port}", e.Kind, e.Port.PortName);
 
     public static async Task<IReadOnlyList<UsbSerialPortInfo>> GetUsbSerialPortsAsync()
     {
@@ -42,6 +58,15 @@ public static class UsbSerialPortMapper
         }
     }
 
+    public static async Task<string> GetUsbSerialPortsAsJsonAsync()
+    {
+        var ports = await GetUsbSerialPortsAsync();
+        return JsonSerializer.Serialize(ports, new JsonSerializerOptions
+        {
+            WriteIndented = true
+        });
+    }
+
     // ---------------- WINDOWS ----------------
 
     private static IReadOnlyList<UsbSerialPortInfo> GetWindowsUsbSerialPorts()
@@ -50,11 +75,7 @@ public static class UsbSerialPortMapper
 
         try
         {
-            // Use reflection to load Microsoft.Win32.Registry so we don't need
-            // #if WINDOWS — the RuntimeInformation guard above ensures we only
-            // reach this on Windows at runtime
             var hklm = Microsoft.Win32.Registry.LocalMachine;
-
             var usbEnumKey = hklm.OpenSubKey(@"SYSTEM\CurrentControlSet\Enum\USB");
 
             if (usbEnumKey == null)
@@ -182,7 +203,6 @@ public static class UsbSerialPortMapper
         {
             if (token.StartsWith("VID_", StringComparison.OrdinalIgnoreCase))
                 info = info with { VendorId = token[4..] };
-
             else if (token.StartsWith("PID_", StringComparison.OrdinalIgnoreCase))
                 info = info with { ProductId = token[4..] };
         }
@@ -197,16 +217,15 @@ public static class UsbSerialPortMapper
         {
             if (token.StartsWith("VID_", StringComparison.OrdinalIgnoreCase))
                 info = info with { VendorId = token[4..] };
-
             else if (token.StartsWith("PID_", StringComparison.OrdinalIgnoreCase))
                 info = info with { ProductId = token[4..] };
-
             else if (!token.Contains('_') && !string.IsNullOrWhiteSpace(token))
                 info = info with { SerialNumber = token };
         }
 
         return info;
     }
+
     // ---------------- LINUX ----------------
 
     private static IReadOnlyList<UsbSerialPortInfo> GetLinuxUsbSerialPorts()
@@ -228,13 +247,11 @@ public static class UsbSerialPortMapper
             {
                 var ttyName = Path.GetFileName(ttyPath);
 
-                // Only care about USB serial device types
                 if (!ttyName.StartsWith("ttyUSB", StringComparison.Ordinal) &&
                     !ttyName.StartsWith("ttyACM", StringComparison.Ordinal) &&
                     !ttyName.StartsWith("ttyAMA", StringComparison.Ordinal))
                     continue;
 
-                // Resolve the sysfs symlink to get the real device path
                 var realPath = ResolveSysfsPath(ttyPath);
                 if (realPath == null)
                 {
@@ -243,8 +260,6 @@ public static class UsbSerialPortMapper
                     continue;
                 }
 
-                // Walk up the sysfs tree to find the USB device node
-                // (the directory containing idVendor / idProduct)
                 var usbDevicePath = FindUsbDeviceNode(realPath);
                 if (usbDevicePath == null)
                 {
@@ -280,10 +295,6 @@ public static class UsbSerialPortMapper
         return results;
     }
 
-    /// <summary>
-    /// Resolves the sysfs symlink for a tty entry to its real absolute path.
-    /// e.g. /sys/class/tty/ttyUSB0 → /sys/devices/pci.../ttyUSB0
-    /// </summary>
     private static string? ResolveSysfsPath(string ttyPath)
     {
         try
@@ -302,10 +313,6 @@ public static class UsbSerialPortMapper
         }
     }
 
-    /// <summary>
-    /// Walks up the sysfs directory tree from a tty device node until it finds
-    /// a directory containing "idVendor", which marks the USB device node.
-    /// </summary>
     private static string? FindUsbDeviceNode(string startPath)
     {
         var current = new DirectoryInfo(startPath);
@@ -321,10 +328,6 @@ public static class UsbSerialPortMapper
         return null;
     }
 
-    /// <summary>
-    /// Reads a single-line value from a sysfs attribute file, returning empty
-    /// string if the file does not exist or cannot be read.
-    /// </summary>
     private static string ReadSysfsFile(string basePath, string fileName)
     {
         try
@@ -339,4 +342,165 @@ public static class UsbSerialPortMapper
             return "";
         }
     }
+}
+
+// ================================================================
+//  UsbPortRegistry — thread-safe, singleton, cross-platform
+// ================================================================
+
+/// <summary>
+/// Describes the nature of a change raised by <see cref="UsbPortRegistry.PortChanged"/>.
+/// </summary>
+public enum PortChangeKind { Added, Removed, Updated }
+
+/// <summary>
+/// Carries details about a single port change event.
+/// </summary>
+public sealed class PortChangedEventArgs(
+    PortChangeKind kind,
+    UsbSerialPortInfo port) : EventArgs
+{
+    public PortChangeKind Kind { get; } = kind;
+    public UsbSerialPortInfo Port { get; } = port;
+}
+
+/// <summary>
+/// A thread-safe, process-wide registry of discovered USB serial ports.
+///
+/// Usage:
+///   // Populate / refresh (typically on startup or after a hardware change):
+///   await UsbPortRegistry.Instance.RefreshAsync();
+///
+///   // Read from any thread / service:
+///   var ports = UsbPortRegistry.Instance.Ports;
+///   if (ports.TryGetValue("COM3", out var info)) { ... }
+///
+///   // Subscribe to live changes:
+///   UsbPortRegistry.Instance.PortChanged += (_, e) =>
+///       Console.WriteLine($"{e.Kind}: {e.Port.PortName}");
+/// </summary>
+public sealed class UsbPortRegistry
+{
+    // ---- Singleton ----
+
+    public static UsbPortRegistry Instance { get; } = new();
+
+    private UsbPortRegistry() { }
+
+    // ---- Storage ----
+
+    // Internal mutable store — all mutations happen under _refreshLock.
+    // ConcurrentDictionary gives lock-free reads on the hot path.
+    private readonly ConcurrentDictionary<string, UsbSerialPortInfo> _store =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    // Public read-only view — zero allocation, safe from any thread.
+    public IReadOnlyDictionary<string, UsbSerialPortInfo> Ports => _store;
+
+    // ---- Change event ----
+
+    /// <summary>
+    /// Raised on the thread that calls <see cref="RefreshAsync"/> whenever a port
+    /// is added, removed, or its metadata changes between two scans.
+    /// Subscribers must be thread-safe or marshal to their own context.
+    /// </summary>
+    public event EventHandler<PortChangedEventArgs>? PortChanged;
+
+    // ---- Refresh guard (prevents concurrent scans) ----
+
+    private readonly SemaphoreSlim _refreshLock = new(1, 1);
+
+    // ---- Public API ----
+
+    /// <summary>
+    /// Rescans the host OS for USB serial ports and atomically updates the
+    /// registry.  Safe to call from multiple threads — concurrent callers
+    /// will queue behind a single semaphore so only one scan runs at a time.
+    /// </summary>
+    public async Task RefreshAsync(CancellationToken cancellationToken = default)
+    {
+        await _refreshLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var discovered = await UsbSerialPortMapper
+                .GetUsbSerialPortsAsync()
+                .ConfigureAwait(false);
+
+            ApplySnapshot(discovered);
+        }
+        finally
+        {
+            _refreshLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Convenience wrapper: returns a snapshot of <see cref="Ports"/> as an
+    /// <see cref="IReadOnlyList{T}"/> without triggering a rescan.
+    /// </summary>
+    public IReadOnlyList<UsbSerialPortInfo> GetSnapshot() =>
+        _store.Values.ToArray();
+
+    /// <summary>
+    /// Returns <c>true</c> if a port with the given name is currently known.
+    /// Comparison is case-insensitive (COM3 == com3, /dev/ttyUSB0 matches exactly).
+    /// </summary>
+    public bool TryGetPort(string portName, out UsbSerialPortInfo info) =>
+        _store.TryGetValue(portName, out info!);
+
+    // ---- Private helpers ----
+
+    /// <summary>
+    /// Merges a freshly scanned list into the registry, firing events for
+    /// every add / remove / update.  Called under <see cref="_refreshLock"/>.
+    /// </summary>
+    private void ApplySnapshot(IReadOnlyList<UsbSerialPortInfo> discovered)
+    {
+        var incoming = discovered.ToDictionary(
+            p => p.PortName,
+            p => p,
+            StringComparer.OrdinalIgnoreCase);
+
+        // --- Detect removals ---
+        foreach (var key in _store.Keys)
+        {
+            if (!incoming.ContainsKey(key) && _store.TryRemove(key, out var removed))
+                RaisePortChanged(PortChangeKind.Removed, removed);
+        }
+
+        // --- Detect additions and updates ---
+        foreach (var (key, newInfo) in incoming)
+        {
+            _store.AddOrUpdate(
+                key,
+                // add branch
+                addKey =>
+                {
+                    RaisePortChanged(PortChangeKind.Added, newInfo);
+                    return newInfo;
+                },
+                // update branch — only raise event if something actually changed
+                (updateKey, existing) =>
+                {
+                    if (!PortInfoEquals(existing, newInfo))
+                        RaisePortChanged(PortChangeKind.Updated, newInfo);
+                    return newInfo;
+                });
+        }
+    }
+
+    private void RaisePortChanged(PortChangeKind kind, UsbSerialPortInfo port) =>
+        PortChanged?.Invoke(this, new PortChangedEventArgs(kind, port));
+
+    /// <summary>
+    /// Value-equality check so we avoid spurious <see cref="PortChangeKind.Updated"/>
+    /// events when nothing actually changed between two scans.
+    /// </summary>
+    private static bool PortInfoEquals(UsbSerialPortInfo a, UsbSerialPortInfo b) =>
+        string.Equals(a.PortName, b.PortName, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(a.VendorId, b.VendorId, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(a.ProductId, b.ProductId, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(a.SerialNumber, b.SerialNumber, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(a.Description, b.Description, StringComparison.Ordinal) &&
+        string.Equals(a.DeviceId, b.DeviceId, StringComparison.Ordinal);
 }

@@ -1,10 +1,12 @@
 ﻿using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.VisualBasic;
 using SubConsole.Helpers;
 using SubConsole.Models;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection.Metadata.Ecma335;
 using System.Text;
 
 namespace SubConsole.Services;
@@ -19,8 +21,8 @@ public class TcpHostService : BackgroundService
 
     private readonly ConcurrentDictionary<TcpClient, ClientState> _clients = new();
 
-    public List<string> CommPorts { get; set; } = new();
-    public string CamerasOnCommand { get; set; } = @"$PBLUTP,S,PWR,CTRL,ON,15*29";
+    //public List<string> CommPorts { get; set; } = new();
+    //public string CamerasOnCommand { get; set; } = @"$PBLUTP,S,PWR,CTRL,ON,15*29";
 
     public TcpHostService(ILogger<TcpHostService> logger,
                           SerialPortManagerService serial,
@@ -167,14 +169,26 @@ public class TcpHostService : BackgroundService
     {
         try
         {
-            string result = await HandleTCPCommand(client, command, token);
+
+            var result = await HandleTCPCommand(client, command, token);
 
             // Always ACK first so the client's timeout is satisfied immediately
             await SendAsync(client, $"{TcpProtocol.ACK}{TcpProtocol.SEP}{id}{TcpProtocol.EOM}", token);
 
             // Send data payload as a separate frame if there is one
-            if (!string.IsNullOrEmpty(result) && result != TcpProtocol.SuccessString)
-                await SendAsync(client, $"{id}{TcpProtocol.SEP}{result}{TcpProtocol.EOM}", token);
+            if (!string.IsNullOrEmpty(result.Value) && result.Value != TcpProtocol.SuccessString)
+                await SendAsync(client, $"{id}{TcpProtocol.SEP}{result.Value}{TcpProtocol.EOM}", token);
+
+
+
+            //string result = await HandleTCPCommand(client, command, token);
+
+            //// Always ACK first so the client's timeout is satisfied immediately
+            //await SendAsync(client, $"{TcpProtocol.ACK}{TcpProtocol.SEP}{id}{TcpProtocol.EOM}", token);
+
+            //// Send data payload as a separate frame if there is one
+            //if (!string.IsNullOrEmpty(result) && result != TcpProtocol.SuccessString)
+            //    await SendAsync(client, $"{id}{TcpProtocol.SEP}{result}{TcpProtocol.EOM}", token);
         }
         catch (Exception ex)
         {
@@ -200,7 +214,7 @@ public class TcpHostService : BackgroundService
     // or a non-empty string that will be forwarded as a data frame to the client.
     // Throw an exception to send a NACK instead.
 
-    private async Task<string> HandleTCPCommand(TcpClient client,
+    private async Task<OperationResultWithValue<string>> HandleTCPCommand(TcpClient client,
                                                  string command,
                                                  CancellationToken token)
     {
@@ -209,22 +223,40 @@ public class TcpHostService : BackgroundService
         switch (command)
         {
             case "GET USBCOMMPORTS":
-                return command + TcpProtocol.CommandSeparatorChar + await BuildUSBCommPortList();
+                var usbCommPortList = await BuildUSBCommPortList();
+                return OperationResultWithValue<string>.Success(command + TcpProtocol.CommandSeparatorChar + usbCommPortList.Value );
 
             case "GET FEATURES":
                 // TODO: return feature flags
-                return command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString;
 
-            case "START TOM CAM":
-                await TOMStartAllSystems(client, token);
-                return command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString;
+                return OperationResultWithValue<string>.Success(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString);
 
-            case "STOP TOM":
-                // TODO: implement TOM shutdown sequence
-                return command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString;
+            case "START TOM ALL":
+                var startResult = await TOMStartAllSystems(client, token);
+                if (startResult.IsSuccess)
+                {
+                    return OperationResultWithValue<string>.Success(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString);
+                }
+                else
+                {
+                    return OperationResultWithValue<string>.Success(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString);
+                }
 
+
+            case "STOP TOM ALL":
+                var stopResult = await TOMStopAllSystems(client, token);
+                if (stopResult.IsSuccess)
+                {
+                    return OperationResultWithValue<string>.Success(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString);
+                }
+                else
+                {
+                    return OperationResultWithValue<string>.Success(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString);
+                }
             default:
                 _logger.LogWarning("Unknown command received: '{Command}'", command);
+                return OperationResultWithValue<string>.Failure($"Unknown command: '{command}'");
+ 
                 throw new InvalidOperationException($"Unknown command: '{command}'");
         }
     }
@@ -246,20 +278,44 @@ public class TcpHostService : BackgroundService
 
     // ── RS-232 COMMAND HANDLER (called externally / from tests) ───────────────
 
-    public async Task HandleRS232Command(string portName, string command, string data)
+    public async Task<OperationResult> HandleRS232Command(string portName, int baudRate, string command, string data)
     {
-        if (command == "OPEN")
-            await _serialManager.OpenPortAsync(portName, 115200);
-
-        if (command == "CLOSE")
-            await _serialManager.ClosePortAsync(portName);
-
-        if (command.StartsWith("SEND"))
+        switch (command)
         {
-            var serialPort = _serialManager.GetPort(portName);
-            if (serialPort != null)
-                await serialPort.WriteAsync(data + "\n\r", CancellationToken.None);
+            case "OPEN":
+                var result = await _serialManager.OpenPortAsync(portName, baudRate);
+                if (result.IsSuccess)
+                // if (await _serialManager.OpenPortAsync(portName, 115200))
+                {
+                    return OperationResult.Success();
+                }
+                else
+                {
+                    return OperationResult.Failure($"Write to {portName} timed out");
+                }
+
+            case "CLOSE":
+                return (await _serialManager.ClosePortAsync(portName));
+
+            case "SEND":
+                var serialPort = _serialManager.GetPort(portName);
+                if (serialPort != null)
+                {
+                    return (await serialPort.WriteAsync(data + "\n\r", CancellationToken.None));
+
+                }
+                else
+                {
+                    return OperationResult.Failure($"Serial port {portName} is null");
+                }
+
+            default:
+                _logger.LogWarning($"Unknown command received: {command}", command);
+                return OperationResult.Failure($"Unknown command received: {command}");
+                //  throw new InvalidOperationException($"Unknown command: '{command}'");
         }
+
+
     }
 
     // ── SEND HELPERS ──────────────────────────────────────────────────────────
@@ -302,43 +358,79 @@ public class TcpHostService : BackgroundService
     /// Builds a newline-separated list of USB serial ports and returns it as a
     /// string so DispatchAndAckAsync can forward it to the client as a data frame.
     /// </summary>
-    private static async Task<string> BuildUSBCommPortList()
-    {
-        var usbCommPorts = await UsbSerialPortMapper.GetUsbSerialPortsAsync();
-        string result = string.Empty;
-        if (!usbCommPorts.Any())
-            return string.Empty;
-        foreach (var usbPort in usbCommPorts)
-        {
-            result += "{";
-            result += $"{usbPort.PortName},";
-            result += $"{usbPort.VendorId},";
-            result += $"{usbPort.ProductId},";
-            result += $"{usbPort.SerialNumber},";
-            result += $"{usbPort.Description},";
-            result += $"{usbPort.DeviceId},";
-            result += "}";
-        }
+    /// 
 
-        return string.Join("\r\n", usbCommPorts.Select(p => p.ToString()));
+    private static async Task<OperationResultWithValue<string>> BuildUSBCommPortList()
+    {
+      //  var usbCommPorts = await UsbSerialPortMapper.GetUsbSerialPortsAsync();
+        var usbCommPorts = await UsbSerialPortMapper.GetUsbSerialPortsAsJsonAsync();
+
+        if (!usbCommPorts.Any())
+            return OperationResultWithValue<string>.Failure($"No ports found");
+        else
+            return OperationResultWithValue<string>.Success(usbCommPorts);
+
+      //  return string.Join("\r\n", usbCommPorts.Select(p => p.ToString()));
+
     }
+
 
     /// <summary>
-    /// Sends the camera-on command to TOM via the relevant serial port and
-    /// optionally performs any other startup sequencing.
-    /// Returns the list of active cameras for the caller to forward if needed.
+    /// Sends the camera-on command to TOM via the relevant serial port 
     /// </summary>
-    private async Task<List<string>> TOMStartAllSystems(TcpClient client, CancellationToken token)
+    private async Task<OperationResult> TOMStartAllSystems(TcpClient client, CancellationToken token)
     {
+        var result = await HandleRS232Command(TOM.CommandPort, TOM.TomBaudCommandBaudRate, "OPEN","");
         // Send turn-cameras-on message to TOM over the appropriate serial port.
-        // Replace "COM5" with the dynamically-resolved TOM port when that mapping
-        // is available via UsbSerialPortMapper.
-        await HandleRS232Command("COM5", "SEND", CamerasOnCommand);
-
-        // TODO: wait for TOM to confirm cameras are live, then return the
-        //       camera list so the client can begin receiving streams.
-        return new List<string>();
+        //
+        if (!result.IsSuccess)
+        {
+            return result;
+        }
+        result = await HandleRS232Command(TOM.CommandPort, TOM.TomBaudCommandBaudRate, "SEND", TOM.TurnOnAllSystemsCommand);
+        if (!result.IsSuccess)
+        {
+            return result;
+        }
+        result = await HandleRS232Command(TOM.CommandPort, TOM.TomBaudCommandBaudRate, "CLOSE", "");
+        return result;
     }
+
+
+    /// <summary>
+    /// Sends the camera-on command to TOM via the relevant serial port 
+    /// </summary>
+    private async Task<OperationResult> TOMStopAllSystems(TcpClient client, CancellationToken token)
+    {
+        var result = await HandleRS232Command(TOM.CommandPort, TOM.TomBaudCommandBaudRate, "OPEN", "");
+        // Send turn-cameras-on message to TOM over the appropriate serial port.
+        //
+        if (!result.IsSuccess)
+        {
+            return result;
+        }
+        result = await HandleRS232Command(TOM.CommandPort, TOM.TomBaudCommandBaudRate, "SEND", TOM.TurnOffAllSystemsCommand);
+        if (!result.IsSuccess)
+        {
+            return result;
+        }
+        result = await HandleRS232Command(TOM.CommandPort, TOM.TomBaudCommandBaudRate, "CLOSE", "");
+        return result;
+    }
+
+
+    private async Task<OperationResult> FindTOMControlPort(CancellationToken token)
+    {
+
+        return OperationResult.Failure($"Not implemented");
+        //send a test message to the comm port
+
+        //if the test message passes return the comm port
+
+        //if the test message fails try and find the comm port if its found else were update the stored settings
+    }
+
+
 
     // ── PRIVATE TYPES ─────────────────────────────────────────────────────────
 

@@ -1,7 +1,9 @@
-﻿using System.IO.Ports;
+﻿using Microsoft.Extensions.Logging;
+using SubConsole.Models;
+using System.IO.Ports;
 using System.Text;
 using System.Threading.Channels;
-using Microsoft.Extensions.Logging;
+using static SQLite.SQLite3;
 
 namespace SubConsole.Services;
 
@@ -116,17 +118,42 @@ public class SerialPortWorker
 
     // ---------------- WRITE ----------------
 
-    public async Task WriteAsync(string text, CancellationToken token)
+    public async Task<OperationResult> WriteAsync(string text, CancellationToken token)
     {
         if (_port == null || !_port.IsOpen)
-            return;
+            return OperationResult.Failure("Port is not open");
 
-        var bytes = Encoding.UTF8.GetBytes(text);
-
-        await _port.BaseStream.WriteAsync(bytes, token);
-        Console.WriteLine($"Wrote {text} to {_portName}");
+        try
+        {
+            var bytes = Encoding.UTF8.GetBytes(text);
+            await _port.BaseStream.WriteAsync(bytes, token);
+            Console.WriteLine($"Wrote {text} to {_portName}");
+            return OperationResult.Success();
+        }
+        catch (OperationCanceledException)
+        {
+            // Caller cancelled — not really an error, but write didn't complete
+            return OperationResult.Failure("OperationCancelledException");
+        }
+        catch (TimeoutException)
+        {
+            // The port's WriteTimeout elapsed
+           // Console.WriteLine($"Write to {_portName} timed out");
+            return OperationResult.Failure($"Write to {_portName} timed out");
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Port was closed between the IsOpen check and the write
+          //  Console.WriteLine($"Port {_portName} was closed: {ex.Message}");
+            return OperationResult.Failure($"Port {_portName} was closed: {ex.Message}");
+        }
+        catch (IOException ex)
+        {
+            // Device was physically disconnected mid-write
+           // Console.WriteLine($"IO error writing to {_portName}: {ex.Message}");
+            return OperationResult.Failure($"IO error writing to {_portName}: {ex.Message}");
+        }
     }
-
     // ---------------- STOP ----------------
 
     public async Task StopAsync()
@@ -134,10 +161,10 @@ public class SerialPortWorker
         try
         {
             // Optional: send STOP or safe command
-            if (_port?.IsOpen == true)
-            {
-                await WriteAsync("$PBLUTP,S,PWR,CTRL,OFF,15*67\r\n", CancellationToken.None);
-            }
+            //if (_port?.IsOpen == true)
+            //{
+            //    await WriteAsync("$PBLUTP,S,PWR,CTRL,OFF,15*67\r\n", CancellationToken.None);
+            //}
 
 
             _cts.Cancel();

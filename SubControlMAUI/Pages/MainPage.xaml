@@ -52,23 +52,23 @@
 
         <Button 
             IsEnabled="{Binding IsConnected}"
-            Text="Up"
-            Command="{Binding UpCommand}"
+            Text="GetUSBPorts"
+            Command="{Binding GetUSBPortsCommand}"
             Grid.Row="2"
             Grid.ColumnSpan="2"
             Margin="10"
             Loaded="Button_Loaded"/>
         <Button 
             IsEnabled="{Binding IsConnected}"
-            Text="Left"
-            Command="{Binding LeftCommand}"
+            Text="StartTOM"
+            Command="{Binding StartTOMCommand}"
             Grid.Row="3"
             Grid.Column="0"
             Margin="10"/>
         <Button 
             IsEnabled="{Binding IsConnected}"
-            Text="Right"
-            Command="{Binding RightCommand}"
+            Text="StopTOM"
+            Command="{Binding StopTOMCommand}"
             Grid.Row="3"
             Grid.Column="1"
             Margin="10"/>

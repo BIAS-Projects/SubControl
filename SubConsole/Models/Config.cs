@@ -15,6 +15,9 @@ namespace SubControl.Model
         [PrimaryKey]
         public int Id { get; set; } = 0;
         [Required]
+        public string TOMControlPort { get; set; } = "COM5";
+
+        [Required]
         public string IPAddress { get; set; } = "192.168.0.1";
         [Required]
         public string Port { get; set; } = "8080";

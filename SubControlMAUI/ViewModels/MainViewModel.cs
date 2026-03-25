@@ -1,15 +1,17 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
+using Microsoft.Extensions.Logging;
+using Microsoft.Maui.Layouts;
+using SubConsole.Models;
 using SubControlMAUI.Messages;
+using SubControlMAUI.Models;
 using SubControlMAUI.Services;
-
 using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Text;
-using SubControlMAUI.Models;
-using SubConsole.Models;
+using System.Text.Json;
 
 namespace SubControlMAUI.ViewModels
 {
@@ -17,6 +19,7 @@ namespace SubControlMAUI.ViewModels
     {
         SQLiteService _sqliteService;
         IAlertService _alertService;
+        ILogger<MainViewModel> _logger;
 
         private readonly IMessenger _messenger;
         private readonly TcpSocketService _tcp;
@@ -76,11 +79,12 @@ namespace SubControlMAUI.ViewModels
         [ObservableProperty]
         private string cutterCurrent = $"0 {_currentUnit}";
 
-        public MainViewModel(SQLiteService sqliteService, IAlertService alertService, IMessenger messenger, TcpSocketService tcp)
+        public MainViewModel(SQLiteService sqliteService, IAlertService alertService, IMessenger messenger, TcpSocketService tcp, ILogger<MainViewModel> logger)
         {
             Title = "Cutter";
             _sqliteService = sqliteService;
             _alertService = alertService;
+            _logger = logger;
 
             _messenger = messenger;
             _tcp = tcp;
@@ -124,9 +128,11 @@ namespace SubControlMAUI.ViewModels
 
             _messenger.Register<TcpErrorMessage>(this, (r, msg) =>
             {
+                _logger?.LogError($"TcpErrorMessage : {msg}", msg);
                 MainThread.BeginInvokeOnMainThread(() =>
                 {
                     Status = msg.Value.Message;
+                    
                 });
 
             });
@@ -165,21 +171,21 @@ namespace SubControlMAUI.ViewModels
         }
 
         [RelayCommand]
-        async Task Up()
+        async Task GetUSBPorts()
         {
             //Send(_sqliteService.config.CutterUpCommand);
             Send("GET USBCOMMPORTS");
         }
         [RelayCommand]
-        async Task Down()
+        async Task StartTOM()
         {
-            Send(_sqliteService.config.CutterDownCommand);
+            Send("START TOM ALL");
         }
 
         [RelayCommand]
-        async Task Left()
+        async Task StopTOM()
         {
-            Send(_sqliteService.config.CutterLeftCommand);
+            Send("STOP TOM ALL");
         }
         [RelayCommand]
         async Task Right()
@@ -328,35 +334,62 @@ namespace SubControlMAUI.ViewModels
             switch (command[0])
             {
                 case "GET USBCOMMPORTS":
-                    usbSerialPortInfoList.Clear();
-                    for (int i = 1; i < command.Length; i++)
+                    try
                     {
-                        usbSerialPortInfoList.Add(new UsbSerialPortInfo
+                        UsbSerialPortInfoList.Clear();
+                        int index = message.IndexOf(',');
+
+                        if (index == -1)
                         {
-                            PortName = command[i++],
-                            VendorId = command[i++],
-                            ProductId = command[i++],
-                            SerialNumber = command[i++],
-                            Description = command[i++],
-                            DeviceId = command[i++]
-                        });
+                            return false;
+                        }
+                        string result = message.Substring(++index);
+                        
+                        var ports = JsonSerializer.Deserialize<List<UsbSerialPortInfo>>(result);
+                        return true;
                     }
-                    return true;
+                    catch(Exception ex)
+                    {
+                        _logger?.LogError($"Command : {command} Message: {message} ", command, message);
+                        return false;
+
+                    }
 
 
                 case "GET FEATURES":
                     // TODO: return feature flags
                     return true;
 
-                case "START TOM CAM":
+                case "START TOM ALL":
                     return true;
 
-                case "STOP TOM":
+                case "STOP TOM ALL":
                     // TODO: implement TOM shutdown sequence
                     return true;
 
                 default: return false;
             }
+        }
+
+        private static IEnumerable<string> ParseTemplates(string source)
+        {
+            if (source is null)
+            {
+                throw new ArgumentNullException(nameof(source)); //Or an empty enumerable.
+            }
+            var result = new List<string>();
+            int currentIdx = 0;
+            while ((currentIdx = source.IndexOf('{', currentIdx)) > -1)
+            {
+                int closingIdx = source.IndexOf('}', currentIdx);
+                if (closingIdx < 0)
+                {
+                    throw new InvalidOperationException($"Parsing failed, no closing brace for the opening brace found at: {currentIdx}");
+                }
+                result.Add(source.Substring(currentIdx, closingIdx - currentIdx + 1));
+                currentIdx = closingIdx;
+            }
+            return result;
         }
 
     }
