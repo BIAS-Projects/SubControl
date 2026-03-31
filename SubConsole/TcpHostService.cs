@@ -8,6 +8,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Reflection.Metadata.Ecma335;
 using System.Text;
+using System.Xml.XPath;
 
 namespace SubConsole.Services;
 
@@ -154,7 +155,7 @@ public class TcpHostService : BackgroundService
     // ── DISPATCH + ACK/NACK ───────────────────────────────────────────────────
     //
     // Every inbound frame gets exactly one reply:
-    //   ACK|<id><EOM>          – command accepted and completed
+    //   ACK|<id><EOM>          – command accepted
     //   NACK|<id>|<reason><EOM> – command failed
     //
     // If the command also produces a data payload the result is sent as a
@@ -179,6 +180,7 @@ public class TcpHostService : BackgroundService
             if (!string.IsNullOrEmpty(result.Value) && result.Value != TcpProtocol.SuccessString)
                 await SendAsync(client, $"{id}{TcpProtocol.SEP}{result.Value}{TcpProtocol.EOM}", token);
 
+     //       if(!result.IsSuccess)
 
 
             //string result = await HandleTCPCommand(client, command, token);
@@ -223,13 +225,13 @@ public class TcpHostService : BackgroundService
         switch (command)
         {
             case "GET USBCOMMPORTS":
-                var usbCommPortList = await BuildUSBCommPortList();
-                return OperationResultWithValue<string>.Success(command + TcpProtocol.CommandSeparatorChar + usbCommPortList.Value );
+                return await BuildUSBCommPortList();
+            //    return OperationResultWithValue<string>.Success(command + TcpProtocol.CommandSeparatorChar + usbCommPortList.Value );
 
             case "GET FEATURES":
                 // TODO: return feature flags
 
-                return OperationResultWithValue<string>.Success(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString);
+                return OperationResultWithValue<string>.Failure($"Unknown command: '{command}'");
 
             case "START TOM ALL":
                 var startResult = await TOMStartAllSystems(client, token);
@@ -239,7 +241,8 @@ public class TcpHostService : BackgroundService
                 }
                 else
                 {
-                    return OperationResultWithValue<string>.Success(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString);
+                  //  return OperationResultWithValue<string>.Failure(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.NACK);
+                    return OperationResultWithValue<string>.Failure($"Unknown command: '{command}'");
                 }
 
 
@@ -251,7 +254,7 @@ public class TcpHostService : BackgroundService
                 }
                 else
                 {
-                    return OperationResultWithValue<string>.Success(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString);
+                    return OperationResultWithValue<string>.Failure(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString);
                 }
             default:
                 _logger.LogWarning("Unknown command received: '{Command}'", command);
