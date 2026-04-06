@@ -4,6 +4,8 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using SubConsole;
 using SubConsole.Services;
+using SubConsole.Services.Serial;
+using SubConsole.Services.Serial.Factories;
 using SubControlMAUI.Services;
 using System.Runtime.InteropServices;
 using System.Timers;
@@ -31,7 +33,10 @@ await Host.CreateDefaultBuilder(args)
         services.AddSingleton<SerialPortManagerService>();
         services.AddSingleton<WebcamManagerService>();
 
-       // services.AddSingleton<TCPClientPeriodicMessengerService>();
+        services.AddSingleton<ISerialWorkerFactory, SerialWorkerFactory>();
+
+
+        // services.AddSingleton<TCPClientPeriodicMessengerService>();
 
 
         // Register as singleton so other services can inject it and subscribe to FrameReceived
@@ -62,7 +67,8 @@ await Host.CreateDefaultBuilder(args)
         services.AddHostedService(provider => provider.GetRequiredService<WebcamManagerService>());
 
 
-       // services.AddHostedService(provider => provider.GetRequiredService<TCPClientPeriodicMessengerService>());
+
+        // services.AddHostedService(provider => provider.GetRequiredService<TCPClientPeriodicMessengerService>());
 
         services.AddHostedService<DeviceMonitorService>();
 

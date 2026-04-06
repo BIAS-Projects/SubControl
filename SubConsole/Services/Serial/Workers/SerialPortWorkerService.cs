@@ -5,9 +5,9 @@ using System.Text;
 using System.Threading.Channels;
 using static SQLite.SQLite3;
 
-namespace SubConsole.Services;
+namespace SubConsole.Services.Serial.Workers;
 
-public class SerialPortWorker
+public class SerialPortWorker : ISerialWorker
 {
     private readonly string _portName;
     private readonly int _baudRate;

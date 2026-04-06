@@ -3,6 +3,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.VisualBasic;
 using SubConsole.Helpers;
 using SubConsole.Models;
+using SubConsole.Services.Serial;
+using SubConsole.Services.Serial.Workers;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
@@ -18,6 +20,12 @@ public class TcpHostService : BackgroundService
     private readonly TcpListener _listener;
     private readonly SerialPortManagerService _serialManager;
     private readonly WebcamManagerService _webcamManager;
+
+    public enum SerialWorkerType
+    {
+        Text,
+        Flir
+    }
 
 
     private readonly ConcurrentDictionary<TcpClient, ClientState> _clients = new();
@@ -65,7 +73,11 @@ public class TcpHostService : BackgroundService
                 {
                     var port = _serialManager.GetPort(portName);
                     if (port == null) continue;
-                    _ = Task.Run(() => ConsumePort(portName, port, stoppingToken), stoppingToken);
+
+                    if (port is SerialPortWorker textPort)
+                    {
+                        _ = Task.Run(() => ConsumePort(portName, textPort, stoppingToken), stoppingToken);
+                    }
                 }
 
                 var client = await _listener.AcceptTcpClientAsync(stoppingToken);
@@ -286,7 +298,8 @@ public class TcpHostService : BackgroundService
         switch (command)
         {
             case "OPEN":
-                var result = await _serialManager.OpenPortAsync(portName, baudRate);
+                var result = await _serialManager.OpenPortAsync(portName, baudRate, SerialWorkerType.Text);
+                //or await _serialManager.OpenPortAsync(portName, baudRate, SerialWorkerType.Text);
                 if (result.IsSuccess)
                 // if (await _serialManager.OpenPortAsync(portName, 115200))
                 {

@@ -1,26 +1,34 @@
 ﻿using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using SubConsole.Models;
+using SubConsole.Services.Serial.Factories;
+using SubConsole.Services.Serial.Workers;
 using System.Collections.Concurrent;
 using System.Formats.Tar;
 using System.IO.Ports;
 using System.Runtime.InteropServices;
+using static SubConsole.Services.TcpHostService;
 
-namespace SubConsole.Services;
+namespace SubConsole.Services.Serial;
 
 public class SerialPortManagerService : BackgroundService
 {
     private readonly ILogger<SerialPortManagerService> _logger;
 
-    private readonly ConcurrentDictionary<string, SerialPortWorker> _ports = new();
+    //  private readonly ConcurrentDictionary<string, SerialPortWorker> _ports = new();
+    private readonly ConcurrentDictionary<string, ISerialWorker> _ports = new();
+    private readonly ISerialWorkerFactory _factory;
 
     private CancellationToken _appToken;
 
     public IEnumerable<string> OpenPorts => _ports.Keys;
 
-    public SerialPortManagerService(ILogger<SerialPortManagerService> logger)
+    public SerialPortManagerService(
+        ILogger<SerialPortManagerService> logger,
+        ISerialWorkerFactory factory)
     {
         _logger = logger;
+        _factory = factory;
     }
 
     // ---------------- BACKGROUND SERVICE ----------------
@@ -42,34 +50,57 @@ public class SerialPortManagerService : BackgroundService
 
     // ---------------- OPEN PORT ----------------
 
-    public async Task<OperationResult> OpenPortAsync(string port, int baudRate)
+
+    public async Task<OperationResult> OpenPortAsync(string port, int baudRate, SerialWorkerType type)
     {
         if (_ports.ContainsKey(port))
-        {
-            _logger.LogWarning("Port {port} already open", port);
             return OperationResult.Failure($"Port {port} already open");
-        }
 
         try
         {
-            SerialPortWorker worker = new SerialPortWorker(port, baudRate, _logger);
+            var worker = _factory.Create(port, baudRate, type);
 
             if (!_ports.TryAdd(port, worker))
-                return OperationResult.Failure($"Failed to add {port} to ports dictionary");
+                return OperationResult.Failure($"Failed to add {port}");
 
             await worker.StartAsync(_appToken);
-
-            _logger.LogInformation("Opened port {port}", port);
 
             return OperationResult.Success();
         }
         catch (Exception ex)
         {
-            _logger.LogError($"Error opening {port} : {ex.Message}");
-            return OperationResult.Failure($"Error opening {port} : {ex.Message}");
+            return OperationResult.Failure(ex.Message);
         }
-
     }
+
+    //public async Task<OperationResult> OpenPortAsync(string port, int baudRate)
+    //{
+    //    if (_ports.ContainsKey(port))
+    //    {
+    //        _logger.LogWarning("Port {port} already open", port);
+    //        return OperationResult.Failure($"Port {port} already open");
+    //    }
+
+    //    try
+    //    {
+    //        SerialPortWorker worker = new SerialPortWorker(port, baudRate, _logger);
+
+    //        if (!_ports.TryAdd(port, worker))
+    //            return OperationResult.Failure($"Failed to add {port} to ports dictionary");
+
+    //        await worker.StartAsync(_appToken);
+
+    //        _logger.LogInformation("Opened port {port}", port);
+
+    //        return OperationResult.Success();
+    //    }
+    //    catch (Exception ex)
+    //    {
+    //        _logger.LogError($"Error opening {port} : {ex.Message}");
+    //        return OperationResult.Failure($"Error opening {port} : {ex.Message}");
+    //    }
+
+    //}
 
     // ---------------- CLOSE PORT ----------------
 
@@ -87,7 +118,7 @@ public class SerialPortManagerService : BackgroundService
 
     // ---------------- GET PORT ----------------
 
-    public SerialPortWorker? GetPort(string port)
+    public ISerialWorker? GetPort(string port)
     {
         _ports.TryGetValue(port, out var worker);
         return worker;
