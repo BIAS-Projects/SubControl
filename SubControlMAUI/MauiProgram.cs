@@ -12,6 +12,9 @@ namespace SubControlMAUI
     {
         public static MauiApp CreateMauiApp()
         {
+            // Call this FIRST before any FFmpeg service is registered or resolved
+            RtspFrameDecoder.InitialiseFfmpeg();
+
             var builder = MauiApp.CreateBuilder();
             builder
                 .UseMauiApp<App>()
@@ -56,8 +59,6 @@ namespace SubControlMAUI
             builder.Services.AddSingleton<PeriscopePage>();
             builder.Services.AddSingleton<PeriscopeViewModel>();
 
-            builder.Services.AddSingleton<CameraPage>();
-            builder.Services.AddSingleton<CameraViewModel>();
 
             builder.Services.AddSingleton<SQLiteService>();
 
@@ -65,6 +66,8 @@ namespace SubControlMAUI
 
             builder.Services.AddSingleton<TcpSocketService>();
             builder.Services.AddSingleton<IMessenger>(WeakReferenceMessenger.Default);
+
+            builder.Services.AddSingleton<IRtspFrameDecoder, RtspFrameDecoder>();
 
             return builder.Build();
         }

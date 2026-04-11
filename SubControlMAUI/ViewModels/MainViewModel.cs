@@ -25,10 +25,6 @@ namespace SubControlMAUI.ViewModels
         private readonly IMessenger _messenger;
         private readonly TcpSocketService _tcp;
 
-        [ObservableProperty]
-        private CameraStream? _activeStream;
-
-        public ObservableCollection<CameraStream> AvailableStreams { get; } = new();
 
         [ObservableProperty]
         [NotifyPropertyChangedFor(nameof(IsNotConnected))]
@@ -59,21 +55,21 @@ namespace SubControlMAUI.ViewModels
             OnPropertyChanged(nameof(CanStop));
         }
 
-        private double _sliderValue;
-        public double SliderValue
-        {
-            get => _sliderValue;
-            set
-            {
-                if (_sliderValue == value)
-                    return;
+        //private double _sliderValue;
+        //public double SliderValue
+        //{
+        //    get => _sliderValue;
+        //    set
+        //    {
+        //        if (_sliderValue == value)
+        //            return;
 
-                _sliderValue = value;
-                OnPropertyChanged();
+        //        _sliderValue = value;
+        //        OnPropertyChanged();
 
-                OnSliderValueChanged(value);
-            }
-        }
+        //        OnSliderValueChanged(value);
+        //    }
+        //}
 
         [ObservableProperty]
         private string status = "Disconnected";
@@ -81,12 +77,12 @@ namespace SubControlMAUI.ViewModels
         //[ObservableProperty]
         //private int cutterSpeed = 50;
 
-        [ObservableProperty]
-        private string cutterCurrent = $"0 {_currentUnit}";
+        //[ObservableProperty]
+        //private string cutterCurrent = $"0 {_currentUnit}";
 
         public MainViewModel(SQLiteService sqliteService, IAlertService alertService, IMessenger messenger, TcpSocketService tcp, ILogger<MainViewModel> logger)
         {
-            Title = "Cutter";
+            Title = "Main Page";
             _sqliteService = sqliteService;
             _alertService = alertService;
             _logger = logger;
@@ -94,15 +90,9 @@ namespace SubControlMAUI.ViewModels
             _messenger = messenger;
             _tcp = tcp;
 
-            // Initialize the 3 specific ports
-            AvailableStreams.Add(new CameraStream("Cam1", "127.0.0.1", 5001));
-            AvailableStreams.Add(new CameraStream("Cam2", "127.0.0.1", 5002));
-            AvailableStreams.Add(new CameraStream("Cam3", "127.0.0.1", 5003));
 
-            // Default to the first one
-            ActiveStream = AvailableStreams[0];
 
-            Task.Run(async () => await StartAllStreams());
+
 
 
 
@@ -312,51 +302,34 @@ namespace SubControlMAUI.ViewModels
 
 
 
-        [RelayCommand]
-        public async Task CutterOn()
-        {
-            IsBusy = true;
-            CutterRunning = true;
-            Status = "Cutter Started";
+        //[RelayCommand]
+        //public async Task CutterOn()
+        //{
+        //    IsBusy = true;
+        //    CutterRunning = true;
+        //    Status = "Cutter Started";
 
-            _messenger.Send(new TcpSendRequestMessage(Encoding.UTF8.GetBytes("START")));
-            string speed = Math.Round(SliderValue).ToString();
-            _messenger.Send(new TcpSendRequestMessage(Encoding.UTF8.GetBytes($"SPEED {speed}")));
-            IsBusy = false;
-        }
-
-
-        [RelayCommand]
-        public async Task CutterOff()
-        {
-            IsBusy = true;
-            CutterRunning = false;
-            Status = "Connected";
-            _messenger.Send(new TcpSendRequestMessage(Encoding.UTF8.GetBytes("STOP")));
-            IsBusy = false;
-        }
+        //    _messenger.Send(new TcpSendRequestMessage(Encoding.UTF8.GetBytes("START")));
+        //    string speed = Math.Round(SliderValue).ToString();
+        //    _messenger.Send(new TcpSendRequestMessage(Encoding.UTF8.GetBytes($"SPEED {speed}")));
+        //    IsBusy = false;
+        //}
 
 
-        [RelayCommand]
-        private async Task StartAllStreams()
-        {
+        //[RelayCommand]
+        //public async Task CutterOff()
+        //{
+        //    IsBusy = true;
+        //    CutterRunning = false;
+        //    Status = "Connected";
+        //    _messenger.Send(new TcpSendRequestMessage(Encoding.UTF8.GetBytes("STOP")));
+        //    IsBusy = false;
+        //}
 
 
 
-            foreach (var stream in AvailableStreams)
-            {
-                // This ensures the background FFmpeg workers for 5001, 5002, and 5003 
-                // are ALL running and decoding, even if they aren't being displayed.
-                await stream.StartAsync();
-            }
-        }
 
-        [RelayCommand]
-        private void SwitchStream(CameraStream selectedStream)
-        {
-            if (selectedStream != null)
-                ActiveStream = selectedStream;
-        }
+
 
         private void OnSliderValueChanged(double value)
         {
@@ -438,13 +411,7 @@ namespace SubControlMAUI.ViewModels
             return result;
         }
 
-        public async ValueTask DisposeAsync()
-        {
-            foreach (var stream in AvailableStreams)
-            {
-                await stream.DisposeAsync();
-            }
-        }
+
 
     }
 }

@@ -96,9 +96,6 @@
 	</ItemGroup>
 
 	<ItemGroup>
-	  <MauiXaml Update="Pages\CameraPage.xaml">
-	    <Generator>MSBuild:Compile</Generator>
-	  </MauiXaml>
 	  <MauiXaml Update="Pages\Comms.xaml">
 	    <Generator>MSBuild:Compile</Generator>
 	  </MauiXaml>

@@ -2,7 +2,7 @@
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              xmlns:viewModel="clr-namespace:SubControlMAUI.ViewModels"
-             xmlns:controls="clr-namespace:SubControlMAUI.Controls"
+             xmlns:skia="clr-namespace:SkiaSharp.Views.Maui.Controls;assembly=SkiaSharp.Views.Maui.Controls"
              x:Class="SubControlMAUI.Pages.MainPage"
              x:DataType="viewModel:MainViewModel"
              Title="{Binding Title}">
@@ -14,15 +14,15 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="6*"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="6*"/>
 
         </Grid.RowDefinitions>
 
 
         
         <Label 
-            Text="{Binding Status}"
+            Text="{Binding CommStatus}"
             Grid.Row="0"
             Grid.ColumnSpan="2"
             HorizontalOptions="Center"
@@ -30,6 +30,8 @@
             FontSize="Medium"
             Margin="10"/>
 
+        
+        
 
         <HorizontalStackLayout Grid.Row="1" Grid.ColumnSpan="2" HorizontalOptions="Center" Spacing="10" Padding="10">
             <Button 
@@ -61,84 +63,111 @@
            IsEnabled="{Binding IsConnected}"
            Text="List Video Ports"
            Command="{Binding GetVideoPortsCommand}"/>
-        </HorizontalStackLayout>
+            
+            <Label 
 
-
-
- 
-
-        <controls:VideoView  
-            Stream="{Binding ActiveStream}"
-            BackgroundColor="Black"
-            VerticalOptions="Fill"
-            HorizontalOptions="Fill"
-            Grid.ColumnSpan="2"
-            Grid.Row="2"/>
-
-
-
-
-        <HorizontalStackLayout Grid.Row="3" Grid.ColumnSpan="2" HorizontalOptions="Center" Spacing="10" Padding="10">
-            <Button Text="Port 5001" Command="{Binding SwitchStreamCommand}" 
-                    CommandParameter="{Binding AvailableStreams[0]}" />
-            <Button Text="Port 5002" Command="{Binding SwitchStreamCommand}" 
-                    CommandParameter="{Binding AvailableStreams[1]}" />
-            <Button Text="Port 5003" Command="{Binding SwitchStreamCommand}" 
-                    CommandParameter="{Binding AvailableStreams[2]}" />
-            <Button Text="Start All" Command="{Binding StartAllStreamsCommand}" BackgroundColor="Green" />
-        </HorizontalStackLayout>
-
-
-
-        <!--<Button 
-            IsEnabled="{Binding IsConnected}"
-            Text="GetUSBPorts"
-            Command="{Binding GetUSBPortsCommand}"
-            Grid.Row="2"
-            Grid.ColumnSpan="2"
-            Margin="10"
-            Loaded="Button_Loaded"/>-->
-        <!--<Button 
-            IsEnabled="{Binding IsConnected}"
-            Text="Down"
-            Command="{Binding DownCommand}"
-            Grid.Row="4"
-            Grid.ColumnSpan="2"
-            Margin="10"/>
-
-        <Button 
-            IsEnabled="{Binding CanStart}"
-            Text="Cutter On"
-            Command="{Binding CutterOnCommand}"
-            Grid.Row="5"
-            Grid.Column="0"
-            Margin="10"/>
-        <Button 
-            IsEnabled="{Binding CanStop}"
-            Text="Cutter Off"
-            Command="{Binding CutterOffCommand}"
-            Grid.Row="5"
-            Grid.Column="1"
-            Margin="10"/>
-        <Slider 
-
-            Minimum="0"
-            Maximum="100"
-            Value="{Binding SliderValue, Mode=TwoWay}"
-            Grid.Row="6"
-            Grid.ColumnSpan="2"
-            Margin="10"/>
-
-        <Label 
-            Text="{Binding CutterCurrent}"
-            Grid.Row="7"
+            Text="{Binding StatusLabel}"
+            Grid.Row="0"
             Grid.ColumnSpan="2"
             HorizontalOptions="Center"
             VerticalOptions="Center"
             FontSize="Medium"
-            Margin="10"/>-->
+            Margin="10"/>
 
-        <ActivityIndicator IsRunning="{Binding IsBusy}"
+        </HorizontalStackLayout>
+
+
+        <HorizontalStackLayout Grid.Row="2" Grid.ColumnSpan="2" HorizontalOptions="Center">
+            <!-- URL row -->
+            <Grid ColumnDefinitions="*, Auto" ColumnSpacing="8">
+                <Entry x:Name="UrlEntry"
+                   Grid.Column="0"
+                   Text="rtsp://localhost:8554/webcam"
+                   Placeholder="rtsp://..."
+                   PlaceholderColor="#666"
+                   TextColor="White"
+                   BackgroundColor="#2d2d2d"
+                   ReturnType="Done"
+                   Completed="OnUrlCompleted"/>
+
+                <Button x:Name="ConnectBtn"
+                    Grid.Column="1"
+                    Text="Connect"
+                    BackgroundColor="#0078d4"
+                    TextColor="White"
+                    CornerRadius="6"
+                    Padding="16,0"
+                    Clicked="OnConnectClicked"/>
+            </Grid>
+
+            <!-- Status + controls row -->
+            <Grid ColumnDefinitions="*, Auto" ColumnSpacing="8">
+
+                <Label x:Name="StatusLabel"
+                   Grid.Column="0"
+                   Text="Disconnected"
+                   TextColor="#888"
+                   VerticalOptions="Center"
+                   FontSize="13"/>
+
+                <HorizontalStackLayout Grid.Column="1" Spacing="8">
+
+                    <Label x:Name="FpsLabel"
+                       Text="-- fps"
+                       TextColor="#888"
+                       VerticalOptions="Center"
+                       FontSize="13"
+                       WidthRequest="60"/>
+
+                    <Button x:Name="StopBtn"
+                        Text="⏹"
+                        FontSize="18"
+                        BackgroundColor="#333"
+                        TextColor="White"
+                        CornerRadius="6"
+                        WidthRequest="48"
+                        HeightRequest="40"
+                        Padding="0"
+                        IsEnabled="False"
+                        Clicked="OnStopClicked"/>
+
+                    <Button x:Name="SnapBtn"
+                        Text="📷"
+                        FontSize="18"
+                        BackgroundColor="#333"
+                        TextColor="White"
+                        CornerRadius="6"
+                        WidthRequest="48"
+                        HeightRequest="40"
+                        Padding="0"
+                        IsEnabled="False"
+                        Clicked="OnSnapClicked"/>
+                </HorizontalStackLayout>
+            </Grid>
+
+        </HorizontalStackLayout>
+
+
+        <!-- SkiaSharp canvas — redraws on every decoded frame -->
+        <skia:SKCanvasView x:Name="CanvasView"
+                           Grid.Row="3"
+                           Grid.ColumnSpan="2"
+                           PaintSurface="OnPaintSurface"
+                           BackgroundColor="Black"
+                           HorizontalOptions="Fill"
+                           VerticalOptions="Fill"/>
+
+
+
+
+
+
+
+
+
+
+        <ActivityIndicator x:Name="Spinner"
+                           IsRunning="{Binding IsBusy}"
                            IsVisible="{Binding IsBusy}"
                            Grid.ColumnSpan="2"
                            Grid.RowSpan="5"
