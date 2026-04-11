@@ -1,0 +1,34 @@
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:viewModels="clr-namespace:SubControlMAUI.ViewModels"
+             xmlns:controls="clr-namespace:SubControlMAUI.Controls"
+             x:Class="SubControlMAUI.Pages.CameraPage"
+             x:DataType="viewModels:CameraViewModel"
+             Title="Security Monitor">
+
+    <Grid RowDefinitions="*, Auto" ColumnDefinitions="*">
+
+
+
+
+        <controls:VideoView  
+            Stream="{Binding ActiveStream}"
+            BackgroundColor="Black"
+            VerticalOptions="Fill"
+            HorizontalOptions="Fill" />
+
+
+
+
+        <HorizontalStackLayout Grid.Row="1" HorizontalOptions="Center" Spacing="10" Padding="10">
+            <Button Text="Port 5001" Command="{Binding SwitchStreamCommand}" 
+                    CommandParameter="{Binding AvailableStreams[0]}" />
+            <Button Text="Port 5002" Command="{Binding SwitchStreamCommand}" 
+                    CommandParameter="{Binding AvailableStreams[1]}" />
+            <Button Text="Port 5003" Command="{Binding SwitchStreamCommand}" 
+                    CommandParameter="{Binding AvailableStreams[2]}" />
+            <Button Text="Start All" Command="{Binding StartAllStreamsCommand}" BackgroundColor="Green" />
+        </HorizontalStackLayout>
+
+    </Grid>
+</ContentPage>

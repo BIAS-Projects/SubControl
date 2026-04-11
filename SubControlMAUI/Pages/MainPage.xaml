@@ -2,6 +2,7 @@
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              xmlns:viewModel="clr-namespace:SubControlMAUI.ViewModels"
+             xmlns:controls="clr-namespace:SubControlMAUI.Controls"
              x:Class="SubControlMAUI.Pages.MainPage"
              x:DataType="viewModel:MainViewModel"
              Title="{Binding Title}">
@@ -13,12 +14,9 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="6*"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="*"/>
+
         </Grid.RowDefinitions>
 
 
@@ -32,47 +30,75 @@
             FontSize="Medium"
             Margin="10"/>
 
-        <Button 
-            IsEnabled="{Binding IsNotConnected}"
-            Text="Connect"
-            Command="{Binding ConnectCommand}"
-            Grid.Row="1"
-            Grid.ColumnSpan="0"
-            Margin="10"/>
+
+        <HorizontalStackLayout Grid.Row="1" Grid.ColumnSpan="2" HorizontalOptions="Center" Spacing="10" Padding="10">
+            <Button 
+           IsEnabled="{Binding IsNotConnected}"
+           Text="Connect"
+           Command="{Binding ConnectCommand}"/>
+
+            <Button 
+           IsEnabled="{Binding IsConnected}"
+           Text="Disconnect"
+           Command="{Binding DisconnectCommand}"/>
+
+            <Button 
+           IsEnabled="{Binding IsConnected}"
+           Text="StartTOM"
+           Command="{Binding StartTOMCommand}"/>
+
+            <Button 
+           IsEnabled="{Binding IsConnected}"
+           Text="StopTOM"
+           Command="{Binding StopTOMCommand}"/>
+
+            <Button 
+           IsEnabled="{Binding IsConnected}"
+           Text="List USB Ports"
+           Command="{Binding GetAllUSBPortsCommand}"/>
+
+            <Button 
+           IsEnabled="{Binding IsConnected}"
+           Text="List Video Ports"
+           Command="{Binding GetVideoPortsCommand}"/>
+        </HorizontalStackLayout>
 
 
 
-        <Button 
-            IsEnabled="{Binding IsConnected}"
-            Text="Disconnect"
-            Command="{Binding DisconnectCommand}"
-            Grid.Row="1"
-            Grid.Column="1"
-            Margin="10"/>
+ 
 
-        <Button 
+        <controls:VideoView  
+            Stream="{Binding ActiveStream}"
+            BackgroundColor="Black"
+            VerticalOptions="Fill"
+            HorizontalOptions="Fill"
+            Grid.ColumnSpan="2"
+            Grid.Row="2"/>
+
+
+
+
+        <HorizontalStackLayout Grid.Row="3" Grid.ColumnSpan="2" HorizontalOptions="Center" Spacing="10" Padding="10">
+            <Button Text="Port 5001" Command="{Binding SwitchStreamCommand}" 
+                    CommandParameter="{Binding AvailableStreams[0]}" />
+            <Button Text="Port 5002" Command="{Binding SwitchStreamCommand}" 
+                    CommandParameter="{Binding AvailableStreams[1]}" />
+            <Button Text="Port 5003" Command="{Binding SwitchStreamCommand}" 
+                    CommandParameter="{Binding AvailableStreams[2]}" />
+            <Button Text="Start All" Command="{Binding StartAllStreamsCommand}" BackgroundColor="Green" />
+        </HorizontalStackLayout>
+
+
+
+        <!--<Button 
             IsEnabled="{Binding IsConnected}"
             Text="GetUSBPorts"
             Command="{Binding GetUSBPortsCommand}"
             Grid.Row="2"
             Grid.ColumnSpan="2"
             Margin="10"
-            Loaded="Button_Loaded"/>
-        <Button 
-            IsEnabled="{Binding IsConnected}"
-            Text="StartTOM"
-            Command="{Binding StartTOMCommand}"
-            Grid.Row="3"
-            Grid.Column="0"
-            Margin="10"/>
-        <Button 
-            IsEnabled="{Binding IsConnected}"
-            Text="StopTOM"
-            Command="{Binding StopTOMCommand}"
-            Grid.Row="3"
-            Grid.Column="1"
-            Margin="10"/>
-        <Button 
+            Loaded="Button_Loaded"/>-->
+        <!--<Button 
             IsEnabled="{Binding IsConnected}"
             Text="Down"
             Command="{Binding DownCommand}"
@@ -110,7 +136,7 @@
             HorizontalOptions="Center"
             VerticalOptions="Center"
             FontSize="Medium"
-            Margin="10"/>
+            Margin="10"/>-->
 
         <ActivityIndicator IsRunning="{Binding IsBusy}"
                            IsVisible="{Binding IsBusy}"

@@ -12,6 +12,16 @@ namespace SubControlMAUI.Messages
         public TcpDataReceivedMessage(byte[] value) : base(value) { }
     }
 
+    //public sealed class TcpDataReceivedMessage : ValueChangedMessage<byte[]>
+    //{
+    //    public string OriginatingCommand { get; }
+
+    //    public TcpDataReceivedMessage(byte[] value, string originatingCommand) : base(value)
+    //    {
+    //        OriginatingCommand = originatingCommand;
+    //    }
+    //}
+
     public sealed class TcpStatusMessage : ValueChangedMessage<string>
     {
         public TcpStatusMessage(string value) : base(value) { }

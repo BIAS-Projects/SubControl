@@ -56,6 +56,8 @@ namespace SubControlMAUI
             builder.Services.AddSingleton<PeriscopePage>();
             builder.Services.AddSingleton<PeriscopeViewModel>();
 
+            builder.Services.AddSingleton<CameraPage>();
+            builder.Services.AddSingleton<CameraViewModel>();
 
             builder.Services.AddSingleton<SQLiteService>();
 

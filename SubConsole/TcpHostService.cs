@@ -236,9 +236,13 @@ public class TcpHostService : BackgroundService
 
         switch (command)
         {
-            case "GET USBCOMMPORTS":
-                return await BuildUSBCommPortList();
-            //    return OperationResultWithValue<string>.Success(command + TcpProtocol.CommandSeparatorChar + usbCommPortList.Value );
+            //case "GET USBCOMMPORTS":
+            //    return await BuildUSBCommPortList();
+            ////    return OperationResultWithValue<string>.Success(command + TcpProtocol.CommandSeparatorChar + usbCommPortList.Value );
+
+            //case "GET VIDEOPORTS":
+            //    return await BuildUSBCommPortList();
+            ////    return OperationResultWithValue<string>.Success(command + TcpProtocol.CommandSeparatorChar + usbCommPortList.Value );
 
             case "GET FEATURES":
                 // TODO: return feature flags
@@ -268,6 +272,15 @@ public class TcpHostService : BackgroundService
                 {
                     return OperationResultWithValue<string>.Failure(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString);
                 }
+            case "GET USB PORTS":
+                return await BuildUSBCommPortList(token);
+
+            case "GET VIDEO PORTS":
+                return await BuildVideoStreamList(token);
+
+
+
+
             default:
                 _logger.LogWarning("Unknown command received: '{Command}'", command);
                 return OperationResultWithValue<string>.Failure($"Unknown command: '{command}'");
@@ -376,7 +389,7 @@ public class TcpHostService : BackgroundService
     /// </summary>
     /// 
 
-    private static async Task<OperationResultWithValue<string>> BuildUSBCommPortList()
+    private static async Task<OperationResultWithValue<string>> BuildUSBCommPortList(CancellationToken token)
     {
       //  var usbCommPorts = await UsbSerialPortMapper.GetUsbSerialPortsAsync();
         var usbCommPorts = await UsbSerialPortMapper.GetUsbSerialPortsAsJsonAsync();
@@ -390,6 +403,19 @@ public class TcpHostService : BackgroundService
 
     }
 
+    private async Task<OperationResultWithValue<string>> BuildVideoStreamList(CancellationToken token)
+    {
+
+        var streamInfo = await _webcamManager.GetStreamInfoAsJsonAsync();
+
+        if (!streamInfo.Any())
+            return OperationResultWithValue<string>.Failure($"No streams found");
+        else
+            return OperationResultWithValue<string>.Success(streamInfo);
+
+
+
+    }
 
     /// <summary>
     /// Sends the camera-on command to TOM via the relevant serial port 

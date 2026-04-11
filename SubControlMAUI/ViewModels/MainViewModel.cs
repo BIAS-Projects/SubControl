@@ -9,6 +9,7 @@ using SubControlMAUI.Models;
 using SubControlMAUI.Services;
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -24,6 +25,10 @@ namespace SubControlMAUI.ViewModels
         private readonly IMessenger _messenger;
         private readonly TcpSocketService _tcp;
 
+        [ObservableProperty]
+        private CameraStream? _activeStream;
+
+        public ObservableCollection<CameraStream> AvailableStreams { get; } = new();
 
         [ObservableProperty]
         [NotifyPropertyChangedFor(nameof(IsNotConnected))]
@@ -88,6 +93,19 @@ namespace SubControlMAUI.ViewModels
 
             _messenger = messenger;
             _tcp = tcp;
+
+            // Initialize the 3 specific ports
+            AvailableStreams.Add(new CameraStream("Cam1", "127.0.0.1", 5001));
+            AvailableStreams.Add(new CameraStream("Cam2", "127.0.0.1", 5002));
+            AvailableStreams.Add(new CameraStream("Cam3", "127.0.0.1", 5003));
+
+            // Default to the first one
+            ActiveStream = AvailableStreams[0];
+
+            Task.Run(async () => await StartAllStreams());
+
+
+
 
             _messenger.Register<TcpDataReceivedMessage>(this, (r, msg) =>
             {
@@ -170,12 +188,7 @@ namespace SubControlMAUI.ViewModels
 
         }
 
-        [RelayCommand]
-        async Task GetUSBPorts()
-        {
-            //Send(_sqliteService.config.CutterUpCommand);
-            Send("GET USBCOMMPORTS");
-        }
+
         [RelayCommand]
         async Task StartTOM()
         {
@@ -187,6 +200,18 @@ namespace SubControlMAUI.ViewModels
         {
             Send("STOP TOM ALL");
         }
+        [RelayCommand]
+        async Task GetAllUSBPorts()
+        {
+            Send("GET USB PORTS");
+        }
+
+        [RelayCommand]
+        async Task GetVideoPorts()
+        {
+            Send("GET VIDEO PORTS");
+        }
+
         [RelayCommand]
         async Task Right()
         {
@@ -312,6 +337,27 @@ namespace SubControlMAUI.ViewModels
         }
 
 
+        [RelayCommand]
+        private async Task StartAllStreams()
+        {
+
+
+
+            foreach (var stream in AvailableStreams)
+            {
+                // This ensures the background FFmpeg workers for 5001, 5002, and 5003 
+                // are ALL running and decoding, even if they aren't being displayed.
+                await stream.StartAsync();
+            }
+        }
+
+        [RelayCommand]
+        private void SwitchStream(CameraStream selectedStream)
+        {
+            if (selectedStream != null)
+                ActiveStream = selectedStream;
+        }
+
         private void OnSliderValueChanged(double value)
         {
             if(!IsConnected)
@@ -390,6 +436,14 @@ namespace SubControlMAUI.ViewModels
                 currentIdx = closingIdx;
             }
             return result;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            foreach (var stream in AvailableStreams)
+            {
+                await stream.DisposeAsync();
+            }
         }
 
     }

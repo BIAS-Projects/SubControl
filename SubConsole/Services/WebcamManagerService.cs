@@ -1,7 +1,10 @@
 ﻿using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using SubConsole.Models;
 using System.Collections.Concurrent;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -209,18 +212,37 @@ public class WebcamManagerService : BackgroundService
     /// Useful for sending the stream manifest to a connecting client so it knows
     /// which UDP port to open for each camera.
     /// </summary>
-    public List<string> GetStreamInfo()
+    public async Task<List<string>> GetStreamInfo()
     {
-        return _workers
-            .Values
-            .Select(w =>
-            {
-                _workerPorts.TryGetValue(w.Device.PathString, out int port);
-                return $"{w.DeviceName},{port}";
-            })
-            .OrderBy(s => s)
-            .ToList();
+
+        return await Task.Run(() =>
+        {
+            return _workers
+                .Values
+                .Select(w =>
+                {
+                    _workerPorts.TryGetValue(w.Device.PathString, out int port);
+                    return $"{w.DeviceName},{port}";
+                })
+                .OrderBy(s => s)
+                .ToList();
+        });
+
+
+
     }
+
+
+    public async Task<string> GetStreamInfoAsJsonAsync()
+    {
+        var ports = await GetStreamInfo();
+        return JsonSerializer.Serialize(ports, new JsonSerializerOptions
+        {
+            WriteIndented = true
+        });
+    }
+
+
 
     /// <summary>Returns the caps string cached by a running worker, or null.</summary>
     public (string? caps, bool isGray) GetCachedCaps(string deviceId)
