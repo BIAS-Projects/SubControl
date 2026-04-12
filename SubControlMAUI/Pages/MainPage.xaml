@@ -82,7 +82,7 @@
             <Grid ColumnDefinitions="*, Auto" ColumnSpacing="8">
                 <Entry x:Name="UrlEntry"
                    Grid.Column="0"
-                   Text="rtsp://localhost:8554/webcam"
+                   Text="rtsp://localhost:8554/usbcamera"
                    Placeholder="rtsp://..."
                    PlaceholderColor="#666"
                    TextColor="White"
@@ -142,6 +142,32 @@
                         Padding="0"
                         IsEnabled="False"
                         Clicked="OnSnapClicked"/>
+
+                    <Button x:Name="FLIR_WHITEHOT"
+                        Text="WHITEHOT"
+                        FontSize="18"
+                        BackgroundColor="#333"
+                        TextColor="White"
+                        CornerRadius="6"
+                        WidthRequest="90"
+                        HeightRequest="40"
+                        Padding="0"
+                        IsEnabled="True"
+                        Command="{Binding FLIRWhitehotCommand}"/>
+
+                    <Button x:Name="FLIR_RAINBOW"
+                        Text="RAINBOW"
+                        FontSize="18"
+                        BackgroundColor="#333"
+                        TextColor="White"
+                        CornerRadius="6"
+                        WidthRequest="90"
+                        HeightRequest="40"
+                        Padding="0"
+                        IsEnabled="True"
+                        Command="{Binding FLIRRainbowCommand}"/>
+
+
                 </HorizontalStackLayout>
             </Grid>
 

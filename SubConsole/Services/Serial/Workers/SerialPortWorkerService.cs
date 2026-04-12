@@ -37,7 +37,7 @@ public class SerialPortWorker : ISerialWorker
 
     // ---------------- START ----------------
 
-    public async Task StartAsync(CancellationToken parentToken)
+    public async Task<OperationResult> StartAsync(CancellationToken parentToken)
     {
         _port = new SerialPort(_portName, _baudRate)
         {
@@ -57,7 +57,7 @@ public class SerialPortWorker : ISerialWorker
 
         _readerTask = Task.Run(() => ReadLoop(linked.Token), linked.Token);
 
-        await Task.CompletedTask;
+        return OperationResult.Success();
     }
 
     // ---------------- READ LOOP ----------------
@@ -186,6 +186,7 @@ public class SerialPortWorker : ISerialWorker
             _port = null;
 
             _channel.Writer.TryComplete();
+
 
             _logger.LogInformation("Serial {port} closed", _portName);
         }

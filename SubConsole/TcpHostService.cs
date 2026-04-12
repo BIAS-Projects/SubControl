@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.VisualBasic;
 using SubConsole.Helpers;
 using SubConsole.Models;
+using SubConsole.Serial;
 using SubConsole.Services.Serial;
 using SubConsole.Services.Serial.Workers;
 using System.Collections.Concurrent;
@@ -19,7 +20,7 @@ public class TcpHostService : BackgroundService
     private readonly ILogger<TcpHostService> _logger;
     private readonly TcpListener _listener;
     private readonly SerialPortManagerService _serialManager;
-    private readonly WebcamManagerService _webcamManager;
+ //   private readonly WebcamManagerService _webcamManager;
 
     public enum SerialWorkerType
     {
@@ -34,13 +35,12 @@ public class TcpHostService : BackgroundService
     //public string CamerasOnCommand { get; set; } = @"$PBLUTP,S,PWR,CTRL,ON,15*29";
 
     public TcpHostService(ILogger<TcpHostService> logger,
-                          SerialPortManagerService serial,
-                          WebcamManagerService webcamManager)
+                          SerialPortManagerService serial)
     {
         _logger = logger;
         _listener = new TcpListener(IPAddress.Any, 9000);
         _serialManager = serial;
-        _webcamManager = webcamManager;
+   //     _webcamManager = webcamManager;
     }
 
     // ── BACKGROUND SERVICE ENTRY POINT ───────────────────────────────────────
@@ -96,8 +96,8 @@ public class TcpHostService : BackgroundService
                     if (remoteEp.Address.IsIPv4MappedToIPv6)
                         clientIp = remoteEp.Address.MapToIPv4().ToString();
 
-                    _logger.LogInformation("Redirecting video streams to client IP {IP}", clientIp);
-                    _ = Task.Run(() => _webcamManager.RedirectStreamsAsync(clientIp), stoppingToken);
+                    //_logger.LogInformation("Redirecting video streams to client IP {IP}", clientIp);
+                    //_ = Task.Run(() => _webcamManager.RedirectStreamsAsync(clientIp), stoppingToken);
                 }
 
                 await Task.Delay(2000, stoppingToken);
@@ -275,8 +275,30 @@ public class TcpHostService : BackgroundService
             case "GET USB PORTS":
                 return await BuildUSBCommPortList(token);
 
-            case "GET VIDEO PORTS":
-                return await BuildVideoStreamList(token);
+            case "FLIR WHITEHOT":
+                var flirWhiteHotResult = await FLIRWhitehot(client, token);
+                if (flirWhiteHotResult.IsSuccess)
+                {
+                    return OperationResultWithValue<string>.Success(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString);
+                }
+                else
+                {
+                    return OperationResultWithValue<string>.Failure(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString);
+                }
+            case "FLIR RAINBOW":
+                var flirRainbowResult = await FLIRRainbow(client, token);
+                if (flirRainbowResult.IsSuccess)
+                {
+                    return OperationResultWithValue<string>.Success(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString);
+                }
+                else
+                {
+                    return OperationResultWithValue<string>.Failure(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString);
+                }
+
+
+            //case "GET VIDEO PORTS":
+            //    return await BuildVideoStreamList(token);
 
 
 
@@ -305,6 +327,54 @@ public class TcpHostService : BackgroundService
     }
 
     // ── RS-232 COMMAND HANDLER (called externally / from tests) ───────────────
+
+    //public async Task<OperationResult> HandleFLIRCommand(string portName, int baudRate, string command, string data)
+    //{
+    //    IFLIRSerialWorker serialPort;
+
+    //    switch (command)
+    //    {
+    //        case "OPEN":
+    //            var result = await _serialManager.OpenPortAsync(portName, baudRate, SerialWorkerType.Flir);
+    //            //or await _serialManager.OpenPortAsync(portName, baudRate, SerialWorkerType.Text);
+    //            if (result.IsSuccess)
+    //            // if (await _serialManager.OpenPortAsync(portName, 115200))
+    //            {
+    //                return OperationResult.Success();
+    //            }
+    //            else
+    //            {
+    //                return OperationResult.Failure($"Write to {portName} timed out");
+    //            }
+
+    //        case "CLOSE":
+    //            return (await _serialManager.ClosePortAsync(portName));
+
+    //        case "FLIR WHITEHOT":
+    //            serialPort = (FlirCameraClient)_serialManager.GetPort(portName);
+    //            if (serialPort is null)
+    //            {
+    //                return OperationResult.Failure($"Serial port {portName} is null");
+    //            }
+    //            return (await serialPort.FLIRSetLUTtoWHITEHOT());
+
+    //        case "FLIR RAINBOW":
+    //            serialPort = (FlirCameraClient)_serialManager.GetPort(portName);
+    //            if (serialPort is null)
+    //            {
+    //                return OperationResult.Failure($"Serial port {portName} is null");
+    //            }
+    //            return (await serialPort.WriteAsync(data + "\n\r", CancellationToken.None));
+
+    //        default:
+    //            _logger.LogWarning($"Unknown command received: {command}", command);
+    //            return OperationResult.Failure($"Unknown command received: {command}");
+    //            //  throw new InvalidOperationException($"Unknown command: '{command}'");
+    //    }
+
+
+    //}
+
 
     public async Task<OperationResult> HandleRS232Command(string portName, int baudRate, string command, string data)
     {
@@ -347,6 +417,8 @@ public class TcpHostService : BackgroundService
 
     }
 
+
+
     // ── SEND HELPERS ──────────────────────────────────────────────────────────
 
     public async Task SendAsync(TcpClient client, string message, CancellationToken token)
@@ -365,8 +437,8 @@ public class TcpHostService : BackgroundService
             client.Close();
             _logger.LogInformation("Client disconnected — reverting video streams to localhost");
 
-            if (_clients.IsEmpty)
-                _ = Task.Run(() => _webcamManager.RedirectStreamsAsync("127.0.0.1"));
+            //if (_clients.IsEmpty)
+            //    _ = Task.Run(() => _webcamManager.RedirectStreamsAsync("127.0.0.1"));
         }
     }
 
@@ -403,19 +475,19 @@ public class TcpHostService : BackgroundService
 
     }
 
-    private async Task<OperationResultWithValue<string>> BuildVideoStreamList(CancellationToken token)
-    {
+    //private async Task<OperationResultWithValue<string>> BuildVideoStreamList(CancellationToken token)
+    //{
 
-        var streamInfo = await _webcamManager.GetStreamInfoAsJsonAsync();
+    //    var streamInfo = await _webcamManager.GetStreamInfoAsJsonAsync();
 
-        if (!streamInfo.Any())
-            return OperationResultWithValue<string>.Failure($"No streams found");
-        else
-            return OperationResultWithValue<string>.Success(streamInfo);
+    //    if (!streamInfo.Any())
+    //        return OperationResultWithValue<string>.Failure($"No streams found");
+    //    else
+    //        return OperationResultWithValue<string>.Success(streamInfo);
 
 
 
-    }
+    //}
 
     /// <summary>
     /// Sends the camera-on command to TOM via the relevant serial port 
@@ -460,6 +532,71 @@ public class TcpHostService : BackgroundService
         return result;
     }
 
+
+    /// <summary>
+    /// Sends the camera-on command to TOM via the relevant serial port 
+    /// </summary>
+    //private async Task<OperationResult> ProcessFLIRCommand (string command, TcpClient client, CancellationToken token)
+    //{
+    //    var result = await HandleFLIRCommand(FLIR.CommandPort, FLIR.FLIRBaudCommandBaudRate, "OPEN", "");
+    //    // Send turn-cameras-on message to TOM over the appropriate serial port.
+    //    //
+    //    if (!result.IsSuccess)
+    //    {
+    //        return result;
+    //    }
+    ////    result = await HandleFLIRCommand(FLIR.CommandPort, FLIR.TomBaudCommandBaudRate, "SEND", FLIR.TurnOffAllSystemsCommand);
+    //    if (!result.IsSuccess)
+    //    {
+    //        return result;
+    //    }
+    //    result = await HandleFLIRCommand(FLIR.CommandPort, FLIR.FLIRBaudCommandBaudRate, "CLOSE", "");
+    //    return result;
+    //}
+
+
+
+
+    /// <summary>
+    /// Sends the camera-on command to TOM via the relevant serial port 
+    /// </summary>
+    private async Task<OperationResult> FLIRWhitehot(TcpClient client, CancellationToken token)
+    {
+      //  IFLIRSerialWorker worker;
+        OperationResult result;
+        IFLIRSerialWorker serialWorker = (IFLIRSerialWorker)_serialManager.GetPort(FLIR.CommandPort);
+        if (serialWorker == null)
+        {
+            result = await _serialManager.OpenPortAsync(FLIR.CommandPort, FLIR.FLIRBaudCommandBaudRate, SerialWorkerType.Flir);
+            if (!result.IsSuccess)
+            {
+                return result;
+            }
+            serialWorker = (IFLIRSerialWorker)_serialManager.GetPort(FLIR.CommandPort);
+        }
+
+        return await serialWorker.FLIRSetLUTtoWHITEHOT();
+
+
+    }
+
+    private async Task<OperationResult> FLIRRainbow(TcpClient client, CancellationToken token)
+    {
+        OperationResult result;
+        IFLIRSerialWorker serialWorker = (IFLIRSerialWorker)_serialManager.GetPort(FLIR.CommandPort);
+        if (serialWorker == null)
+        {
+            result = await _serialManager.OpenPortAsync(FLIR.CommandPort, FLIR.FLIRBaudCommandBaudRate, SerialWorkerType.Flir);
+            if (!result.IsSuccess)
+            {
+                return result;
+            }
+            serialWorker = (IFLIRSerialWorker)_serialManager.GetPort(FLIR.CommandPort);
+        }
+
+        return await serialWorker.FLIRSetLUTtoRAINBOW();
+
+    }
 
     private async Task<OperationResult> FindTOMControlPort(CancellationToken token)
     {

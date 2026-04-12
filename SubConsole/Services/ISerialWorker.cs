@@ -9,7 +9,7 @@ namespace SubConsole.Services
     {
         bool IsOpen { get; }
 
-        Task StartAsync(CancellationToken token);
+        Task<OperationResult> StartAsync(CancellationToken token);
         Task StopAsync();
 
         Task<OperationResult> WriteAsync(string data, CancellationToken token);

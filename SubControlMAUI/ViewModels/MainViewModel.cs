@@ -190,6 +190,19 @@ namespace SubControlMAUI.ViewModels
         {
             Send("STOP TOM ALL");
         }
+
+        [RelayCommand]
+        async Task FLIRWhitehot()
+        {
+            Send("FLIR WHITEHOT");
+        }
+
+        [RelayCommand]
+        async Task FLIRRainbow()
+        {
+            Send("FLIR RAINBOW");
+        }
+
         [RelayCommand]
         async Task GetAllUSBPorts()
         {

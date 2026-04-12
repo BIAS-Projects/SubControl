@@ -31,7 +31,7 @@ namespace SubControlMAUI.Services
 
                 Database = new SQLiteAsyncConnection(dbPath, Constants.Flags);
                 await Database.CreateTableAsync<Config>();
-                await Database.CreateTableAsync<CameraConfig>();
+        //        await Database.CreateTableAsync<CameraConfig>();
             }
             catch (Exception ex)
             {
@@ -45,7 +45,7 @@ namespace SubControlMAUI.Services
             {
                 await Init();
                 await Database.DropTableAsync<Config>();
-                await Database.DropTableAsync<CameraConfig>();
+             //   await Database.DropTableAsync<CameraConfig>();
                 return true;
             }
             catch (Exception ex)
@@ -162,55 +162,55 @@ namespace SubControlMAUI.Services
         /// too many consecutive failures, or it has been permanently marked as
         /// unsupported on that provider.
         /// </summary>
-        public async Task<CameraConfig?> GetCameraConfigAsync(string deviceName, string providerType)
-        {
-            try
-            {
-                await Init();
-                var row = await Database.Table<CameraConfig>()
-                    .Where(c => c.DeviceName == deviceName && c.ProviderType == providerType)
-                    .FirstOrDefaultAsync();
+        //public async Task<CameraConfig?> GetCameraConfigAsync(string deviceName, string providerType)
+        //{
+        //    try
+        //    {
+        //        await Init();
+        //        var row = await Database.Table<CameraConfig>()
+        //            .Where(c => c.DeviceName == deviceName && c.ProviderType == providerType)
+        //            .FirstOrDefaultAsync();
 
-                if (row is null)
-                    return null;
+        //        if (row is null)
+        //            return null;
 
-                // Permanently unsupported — tell the caller to skip this device entirely
-                if (row.PermanentlyUnsupported)
-                    return null;
+        //        // Permanently unsupported — tell the caller to skip this device entirely
+        //        if (row.PermanentlyUnsupported)
+        //            return null;
 
-                // Stale caps — too many failures since the last success, force re-probe
-                if (row.ConsecutiveFailures >= 3)
-                    return null;
+        //        // Stale caps — too many failures since the last success, force re-probe
+        //        if (row.ConsecutiveFailures >= 3)
+        //            return null;
 
-                return row;
-            }
-            catch (Exception ex)
-            {
-                LastError = ex.Message;
-                return null;
-            }
-        }
+        //        return row;
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        LastError = ex.Message;
+        //        return null;
+        //    }
+        //}
 
         /// <summary>
         /// Returns true if a camera has been permanently marked as unsupported on
         /// the given provider (e.g. a FLIR camera on MF with no KS driver).
         /// </summary>
-        public async Task<bool> IsPermanentlyUnsupportedAsync(string deviceName, string providerType)
-        {
-            try
-            {
-                await Init();
-                var row = await Database.Table<CameraConfig>()
-                    .Where(c => c.DeviceName == deviceName && c.ProviderType == providerType)
-                    .FirstOrDefaultAsync();
-                return row?.PermanentlyUnsupported ?? false;
-            }
-            catch (Exception ex)
-            {
-                LastError = ex.Message;
-                return false;
-            }
-        }
+        //public async Task<bool> IsPermanentlyUnsupportedAsync(string deviceName, string providerType)
+        //{
+        //    try
+        //    {
+        //        await Init();
+        //        var row = await Database.Table<CameraConfig>()
+        //            .Where(c => c.DeviceName == deviceName && c.ProviderType == providerType)
+        //            .FirstOrDefaultAsync();
+        //        return row?.PermanentlyUnsupported ?? false;
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        LastError = ex.Message;
+        //        return false;
+        //    }
+        //}
 
         // ------------------------------------------------------------------ //
         //  Write — success                                                     //
@@ -221,46 +221,46 @@ namespace SubControlMAUI.Services
         /// new record or updates the existing one, resetting the failure counter
         /// and clearing any permanently-unsupported flag.
         /// </summary>
-        public async Task RecordCameraSuccessAsync(
-            string deviceName, string providerType, string caps, bool needsGrayConvert)
-        {
-            try
-            {
-                await Init();
-                var existing = await Database.Table<CameraConfig>()
-                    .Where(c => c.DeviceName == deviceName && c.ProviderType == providerType)
-                    .FirstOrDefaultAsync();
+        //public async Task RecordCameraSuccessAsync(
+        //    string deviceName, string providerType, string caps, bool needsGrayConvert)
+        //{
+        //    try
+        //    {
+        //        await Init();
+        //        var existing = await Database.Table<CameraConfig>()
+        //            .Where(c => c.DeviceName == deviceName && c.ProviderType == providerType)
+        //            .FirstOrDefaultAsync();
 
-                if (existing is null)
-                {
-                    await Database.InsertAsync(new CameraConfig
-                    {
-                        DeviceName = deviceName,
-                        ProviderType = providerType,
-                        Caps = caps,
-                        NeedsGrayConvert = needsGrayConvert,
-                        LastSuccessUtc = DateTime.UtcNow,
-                        SuccessCount = 1,
-                        ConsecutiveFailures = 0,
-                        PermanentlyUnsupported = false,
-                    });
-                }
-                else
-                {
-                    existing.Caps = caps;
-                    existing.NeedsGrayConvert = needsGrayConvert;
-                    existing.LastSuccessUtc = DateTime.UtcNow;
-                    existing.SuccessCount += 1;
-                    existing.ConsecutiveFailures = 0;
-                    existing.PermanentlyUnsupported = false;
-                    await Database.UpdateAsync(existing);
-                }
-            }
-            catch (Exception ex)
-            {
-                LastError = ex.Message;
-            }
-        }
+        //        if (existing is null)
+        //        {
+        //            await Database.InsertAsync(new CameraConfig
+        //            {
+        //                DeviceName = deviceName,
+        //                ProviderType = providerType,
+        //                Caps = caps,
+        //                NeedsGrayConvert = needsGrayConvert,
+        //                LastSuccessUtc = DateTime.UtcNow,
+        //                SuccessCount = 1,
+        //                ConsecutiveFailures = 0,
+        //                PermanentlyUnsupported = false,
+        //            });
+        //        }
+        //        else
+        //        {
+        //            existing.Caps = caps;
+        //            existing.NeedsGrayConvert = needsGrayConvert;
+        //            existing.LastSuccessUtc = DateTime.UtcNow;
+        //            existing.SuccessCount += 1;
+        //            existing.ConsecutiveFailures = 0;
+        //            existing.PermanentlyUnsupported = false;
+        //            await Database.UpdateAsync(existing);
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        LastError = ex.Message;
+        //    }
+        //}
 
         // ------------------------------------------------------------------ //
         //  Write — failure                                                     //
@@ -271,25 +271,25 @@ namespace SubControlMAUI.Services
         /// Increments the failure counter; when it reaches the threshold the
         /// record is treated as stale and the camera re-probes on next startup.
         /// </summary>
-        public async Task RecordCameraFailureAsync(string deviceName, string providerType)
-        {
-            try
-            {
-                await Init();
-                var existing = await Database.Table<CameraConfig>()
-                    .Where(c => c.DeviceName == deviceName && c.ProviderType == providerType)
-                    .FirstOrDefaultAsync();
+        //public async Task RecordCameraFailureAsync(string deviceName, string providerType)
+        //{
+        //    try
+        //    {
+        //        await Init();
+        //        var existing = await Database.Table<CameraConfig>()
+        //            .Where(c => c.DeviceName == deviceName && c.ProviderType == providerType)
+        //            .FirstOrDefaultAsync();
 
-                if (existing is null) return;
+        //        if (existing is null) return;
 
-                existing.ConsecutiveFailures += 1;
-                await Database.UpdateAsync(existing);
-            }
-            catch (Exception ex)
-            {
-                LastError = ex.Message;
-            }
-        }
+        //        existing.ConsecutiveFailures += 1;
+        //        await Database.UpdateAsync(existing);
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        LastError = ex.Message;
+        //    }
+        //}
 
         /// <summary>
         /// Permanently marks a (device, provider) combination as unable to stream.
@@ -297,79 +297,79 @@ namespace SubControlMAUI.Services
         /// Used when a camera exhausts all retry attempts with a consistent
         /// not-negotiated error (e.g. FLIR on MF with no compatible driver).
         /// </summary>
-        public async Task MarkPermanentlyUnsupportedAsync(string deviceName, string providerType)
-        {
-            try
-            {
-                await Init();
-                var existing = await Database.Table<CameraConfig>()
-                    .Where(c => c.DeviceName == deviceName && c.ProviderType == providerType)
-                    .FirstOrDefaultAsync();
+        //public async Task MarkPermanentlyUnsupportedAsync(string deviceName, string providerType)
+        //{
+        //    try
+        //    {
+        //        await Init();
+        //        var existing = await Database.Table<CameraConfig>()
+        //            .Where(c => c.DeviceName == deviceName && c.ProviderType == providerType)
+        //            .FirstOrDefaultAsync();
 
-                if (existing is null)
-                {
-                    await Database.InsertAsync(new CameraConfig
-                    {
-                        DeviceName = deviceName,
-                        ProviderType = providerType,
-                        Caps = string.Empty,
-                        PermanentlyUnsupported = true,
-                    });
-                }
-                else
-                {
-                    existing.PermanentlyUnsupported = true;
-                    await Database.UpdateAsync(existing);
-                }
-            }
-            catch (Exception ex)
-            {
-                LastError = ex.Message;
-            }
-        }
+        //        if (existing is null)
+        //        {
+        //            await Database.InsertAsync(new CameraConfig
+        //            {
+        //                DeviceName = deviceName,
+        //                ProviderType = providerType,
+        //                Caps = string.Empty,
+        //                PermanentlyUnsupported = true,
+        //            });
+        //        }
+        //        else
+        //        {
+        //            existing.PermanentlyUnsupported = true;
+        //            await Database.UpdateAsync(existing);
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        LastError = ex.Message;
+        //    }
+        //}
 
         // ------------------------------------------------------------------ //
         //  Utility                                                             //
         // ------------------------------------------------------------------ //
 
         /// <summary>Returns all persisted camera configs, for diagnostics / UI.</summary>
-        public async Task<List<CameraConfig>> GetAllCameraConfigsAsync()
-        {
-            try
-            {
-                await Init();
-                return await Database.Table<CameraConfig>().ToListAsync();
-            }
-            catch (Exception ex)
-            {
-                LastError = ex.Message;
-                return new List<CameraConfig>();
-            }
-        }
+        //public async Task<List<CameraConfig>> GetAllCameraConfigsAsync()
+        //{
+        //    try
+        //    {
+        //        await Init();
+        //        return await Database.Table<CameraConfig>().ToListAsync();
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        LastError = ex.Message;
+        //        return new List<CameraConfig>();
+        //    }
+        //}
 
         /// <summary>
         /// Deletes the persisted config for a specific (device, provider) pair,
         /// forcing a full re-probe next time it is detected.  Also clears any
         /// permanently-unsupported flag.
         /// </summary>
-        public async Task<bool> DeleteCameraConfigAsync(string deviceName, string providerType)
-        {
-            try
-            {
-                await Init();
-                var existing = await Database.Table<CameraConfig>()
-                    .Where(c => c.DeviceName == deviceName && c.ProviderType == providerType)
-                    .FirstOrDefaultAsync();
-                if (existing is not null)
-                    await Database.DeleteAsync(existing);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                LastError = ex.Message;
-                return false;
-            }
-        }
+        //public async Task<bool> DeleteCameraConfigAsync(string deviceName, string providerType)
+        //{
+        //    try
+        //    {
+        //        await Init();
+        //        var existing = await Database.Table<CameraConfig>()
+        //            .Where(c => c.DeviceName == deviceName && c.ProviderType == providerType)
+        //            .FirstOrDefaultAsync();
+        //        if (existing is not null)
+        //            await Database.DeleteAsync(existing);
+        //        return true;
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        LastError = ex.Message;
+        //        return false;
+        //    }
+        //}
 
         #endregion
     }
