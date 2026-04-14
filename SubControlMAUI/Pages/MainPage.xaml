@@ -168,6 +168,43 @@
                         Command="{Binding FLIRRainbowCommand}"/>
 
 
+                    <Button x:Name="RotorForward"
+                        Text="◀"
+                        FontSize="18"
+                        BackgroundColor="#333"
+                        TextColor="White"
+                        CornerRadius="6"
+                        WidthRequest="90"
+                        HeightRequest="40"
+                        Padding="0"
+                        IsEnabled="True"
+                        Command="{Binding RotorForwardCommand}"/>
+
+                    <Button x:Name="RotorBack"
+                        Text="▶"
+                        FontSize="18"
+                        BackgroundColor="#333"
+                        TextColor="White"
+                        CornerRadius="6"
+                        WidthRequest="90"
+                        HeightRequest="40"
+                        Padding="0"
+                        IsEnabled="True"
+                        Command="{Binding RotorBackwardCommand}"/>
+
+                    <Button x:Name="RotorStop"
+                        Text="◼"
+                        FontSize="18"
+                        BackgroundColor="#333"
+                        TextColor="White"
+                        CornerRadius="6"
+                        WidthRequest="90"
+                        HeightRequest="40"
+                        Padding="0"
+                        IsEnabled="True"
+                        Command="{Binding RotorStopCommand}"/>
+
+
                 </HorizontalStackLayout>
             </Grid>
 

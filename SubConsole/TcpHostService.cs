@@ -295,8 +295,39 @@ public class TcpHostService : BackgroundService
                 {
                     return OperationResultWithValue<string>.Failure(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString);
                 }
+            case "ROTOR FORWARD":
+                var forwardResult = await RotorForward(client, token);
+                if (forwardResult.IsSuccess)
+                {
+                    return OperationResultWithValue<string>.Success(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString);
+                }
+                else
+                {
+                    return OperationResultWithValue<string>.Failure(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString);
+                }
+            case "ROTOR BACKWARD":
+                var backwardResult = await RotorBackward(client, token);
+                if (backwardResult.IsSuccess)
+                {
+                    return OperationResultWithValue<string>.Success(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString);
+                }
+                else
+                {
+                    return OperationResultWithValue<string>.Failure(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString);
+                }
 
+            case "ROTOR STOP":
+                var stopRotorResult = await RotorStop(client, token);
+                if (stopRotorResult.IsSuccess)
+                {
+                    return OperationResultWithValue<string>.Success(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString);
+                }
+                else
+                {
+                    return OperationResultWithValue<string>.Failure(command + TcpProtocol.CommandSeparatorChar + TcpProtocol.SuccessString);
+                }
 
+            //ROTOR BACKWARD
             //case "GET VIDEO PORTS":
             //    return await BuildVideoStreamList(token);
 
@@ -435,7 +466,7 @@ public class TcpHostService : BackgroundService
         if (_clients.TryRemove(client, out _))
         {
             client.Close();
-            _logger.LogInformation("Client disconnected — reverting video streams to localhost");
+            _logger.LogInformation("Client disconnected ");
 
             //if (_clients.IsEmpty)
             //    _ = Task.Run(() => _webcamManager.RedirectStreamsAsync("127.0.0.1"));
@@ -533,6 +564,59 @@ public class TcpHostService : BackgroundService
     }
 
 
+    private async Task<OperationResult> RotorForward(TcpClient client, CancellationToken token)
+    {
+        var result = await HandleRS232Command(Rotor.CommandPort, Rotor.TomBaudCommandBaudRate, "OPEN", "");
+        // Send turn-cameras-on message to TOM over the appropriate serial port.
+        //
+        if (!result.IsSuccess)
+        {
+            return result;
+        }
+        result = await HandleRS232Command(Rotor.CommandPort, Rotor.TomBaudCommandBaudRate, "SEND", Rotor.PanMotorAForward);
+        if (!result.IsSuccess)
+        {
+            return result;
+        }
+        result = await HandleRS232Command(Rotor.CommandPort, Rotor.TomBaudCommandBaudRate, "CLOSE", "");
+        return result;
+    }
+
+    private async Task<OperationResult> RotorBackward(TcpClient client, CancellationToken token)
+    {
+        var result = await HandleRS232Command(Rotor.CommandPort, Rotor.TomBaudCommandBaudRate, "OPEN", "");
+        // Send turn-cameras-on message to TOM over the appropriate serial port.
+        //
+        if (!result.IsSuccess)
+        {
+            return result;
+        }
+        result = await HandleRS232Command(Rotor.CommandPort, Rotor.TomBaudCommandBaudRate, "SEND", Rotor.PanMotorABackward);
+        if (!result.IsSuccess)
+        {
+            return result;
+        }
+        result = await HandleRS232Command(Rotor.CommandPort, Rotor.TomBaudCommandBaudRate, "CLOSE", "");
+        return result;
+    }
+
+    private async Task<OperationResult> RotorStop(TcpClient client, CancellationToken token)
+    {
+        var result = await HandleRS232Command(Rotor.CommandPort, Rotor.TomBaudCommandBaudRate, "OPEN", "");
+        // Send turn-cameras-on message to TOM over the appropriate serial port.
+        //
+        if (!result.IsSuccess)
+        {
+            return result;
+        }
+        result = await HandleRS232Command(Rotor.CommandPort, Rotor.TomBaudCommandBaudRate, "SEND", Rotor.StopPanMotorA);
+        if (!result.IsSuccess)
+        {
+            return result;
+        }
+        result = await HandleRS232Command(Rotor.CommandPort, Rotor.TomBaudCommandBaudRate, "CLOSE", "");
+        return result;
+    }
     /// <summary>
     /// Sends the camera-on command to TOM via the relevant serial port 
     /// </summary>

@@ -216,6 +216,21 @@ namespace SubControlMAUI.ViewModels
         }
 
         [RelayCommand]
+        async Task RotorForward()
+        {
+            Send("ROTOR FORWARD");
+        }
+        [RelayCommand]
+        async Task RotorBackward()
+        {
+            Send("ROTOR BACKWARD");
+        }
+        [RelayCommand]
+        async Task RotorStop()
+        {
+            Send("ROTOR STOP");
+        }
+        [RelayCommand]
         async Task Right()
         {
             Send(_sqliteService.config.CutterRightCommand);
