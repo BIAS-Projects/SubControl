@@ -22,7 +22,7 @@
 
         
         <Label 
-            Text="{Binding CommStatus}"
+            Text="{Binding Status}"
             Grid.Row="0"
             Grid.ColumnSpan="2"
             HorizontalOptions="Center"
@@ -57,7 +57,7 @@
             <Button 
            IsEnabled="{Binding IsConnected}"
            Text="List USB Ports"
-           Command="{Binding GetAllUSBPortsCommand}"/>
+           Command="{Binding ListDevicesCommand}"/>
 
             <Button 
            IsEnabled="{Binding IsConnected}"
@@ -71,7 +71,7 @@
             Grid.ColumnSpan="2"
             HorizontalOptions="Center"
             VerticalOptions="Center"
-            FontSize="Medium"
+            FontSize="Micro"
             Margin="10"/>
 
         </HorizontalStackLayout>

@@ -1,216 +1,380 @@
-﻿using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using SubConsole.Models;
-using SubConsole.Services.Serial.Factories;
-using SubConsole.Services.Serial.Workers;
+using SubConsole.Services.Serial.Commands;
 using System.Collections.Concurrent;
-using System.Formats.Tar;
-using System.IO.Ports;
-using System.Runtime.InteropServices;
-using static SubConsole.Services.TcpHostService;
+using System.Threading.Channels;
 
 namespace SubConsole.Services.Serial;
 
-public class SerialPortManagerService : BackgroundService
+// ═════════════════════════════════════════════════════════════════════════════
+// Public surface
+// ═════════════════════════════════════════════════════════════════════════════
+
+public enum SerialWorkerType { Text, Flir }
+
+/// <summary>
+/// All operations the command objects may invoke on the manager.
+/// Keeping this as a separate interface makes the service testable without
+/// requiring a real <see cref="SerialPortManagerService"/> instance.
+/// </summary>
+public interface ISerialPortManagerService
+{
+    // ── USB enumeration ───────────────────────────────────────────────────────
+    Task<IReadOnlyList<(DeviceIdentifier Identifier, string PortPath)>> EnumerateUsbDevicesAsync(
+        CancellationToken token = default);
+
+    // ── Registry ──────────────────────────────────────────────────────────────
+    void RegisterDevice(DeviceIdentifier identifier, IEnumerable<string> functionNames);
+    Task<OperationResult> UnregisterDeviceAsync(string deviceKey, CancellationToken token = default);
+    IReadOnlyList<DeviceRegistration> GetRegisteredDevices();
+
+    // ── Port lifecycle ────────────────────────────────────────────────────────
+    Task<OperationResult> OpenPortAsync(
+        string deviceKey, int baudRate, SerialWorkerType type, CancellationToken token = default);
+    Task<OperationResult> ClosePortAsync(string deviceKey, CancellationToken token = default);
+
+    // ── I/O ───────────────────────────────────────────────────────────────────
+    Task<OperationResult> WriteAsync(string functionName, byte[] data, CancellationToken token = default);
+    Task<OperationResult> WriteTextAsync(string functionName, string text, CancellationToken token = default);
+    ChannelReader<SerialMessage> GetMessageReader(IEnumerable<string> functionNames);
+
+    // ── Auto-discovery ────────────────────────────────────────────────────────
+    Task<int> AutoDiscoverAsync(
+        bool autoOpen, int defaultBaudRate, SerialWorkerType defaultType, CancellationToken token = default);
+
+    // ── Command dispatcher ────────────────────────────────────────────────────
+    Task<OperationResult> ExecuteAsync(ISerialCommand command, CancellationToken token = default);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Implementation
+// ═════════════════════════════════════════════════════════════════════════════
+
+public sealed class SerialPortManagerService : BackgroundService, ISerialPortManagerService
 {
     private readonly ILogger<SerialPortManagerService> _logger;
+    private readonly IDeviceRegistry _registry;
+    private readonly IUsbDeviceEnumerator _enumerator;
+    private readonly ISerialWorkerFactory _workerFactory;
 
-    //  private readonly ConcurrentDictionary<string, SerialPortWorker> _ports = new();
-    private readonly ConcurrentDictionary<string, ISerialWorker> _ports = new();
-    private readonly ISerialWorkerFactory _factory;
+    // deviceKey → worker
+    private readonly ConcurrentDictionary<string, ISerialWorker> _workers = new();
+
+    // Broadcast channel — all received messages from all ports flow here.
+    // Filtered views are handed to consumers via GetMessageReader().
+    private readonly Channel<SerialMessage> _broadcastChannel =
+        Channel.CreateUnbounded<SerialMessage>(new UnboundedChannelOptions
+        { SingleWriter = false, SingleReader = false });
 
     private CancellationToken _appToken;
 
-    public IEnumerable<string> OpenPorts => _ports.Keys;
-
     public SerialPortManagerService(
         ILogger<SerialPortManagerService> logger,
-        ISerialWorkerFactory factory)
+        IDeviceRegistry registry,
+        IUsbDeviceEnumerator enumerator,
+        ISerialWorkerFactory workerFactory)
     {
-        _logger = logger;
-        _factory = factory;
+        _logger        = logger;
+        _registry      = registry;
+        _enumerator    = enumerator;
+        _workerFactory = workerFactory;
     }
 
-    // ---------------- BACKGROUND SERVICE ----------------
+    // ── BackgroundService entry point ─────────────────────────────────────────
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("SerialPortManager started");
-
         _appToken = stoppingToken;
+        _logger.LogInformation("SerialPortManagerService started");
 
-        try
-        {
-            await Task.Delay(Timeout.Infinite, stoppingToken);
-        }
-        catch (OperationCanceledException)
-        {
-        }
+        // Fan-in task: reads from every worker's channel and writes to the broadcast.
+        _ = Task.Run(() => BroadcastFanInAsync(stoppingToken), stoppingToken);
+
+        try { await Task.Delay(Timeout.Infinite, stoppingToken); }
+        catch (OperationCanceledException) { }
     }
 
-    // ---------------- OPEN PORT ----------------
+    // ── USB enumeration ───────────────────────────────────────────────────────
 
+    public Task<IReadOnlyList<(DeviceIdentifier Identifier, string PortPath)>>
+        EnumerateUsbDevicesAsync(CancellationToken token = default)
+        => _enumerator.EnumerateAsync(token);
 
-    public async Task<OperationResult> OpenPortAsync(string port, int baudRate, SerialWorkerType type)
+    // ── Registry ──────────────────────────────────────────────────────────────
+
+    public void RegisterDevice(DeviceIdentifier identifier, IEnumerable<string> functionNames)
+        => _registry.Register(identifier, functionNames);
+
+    public async Task<OperationResult> UnregisterDeviceAsync(
+        string deviceKey, CancellationToken token = default)
     {
-        if (_ports.ContainsKey(port))
-            return OperationResult.Failure($"Port {port} already open");
+        var close = await ClosePortAsync(deviceKey, token);
+        if (!close.IsSuccess) return close;
+
+        var reg = _registry.AllRegistrations.FirstOrDefault(r => r.Identifier.Key == deviceKey);
+        if (reg is not null)
+            _registry.Unregister(reg.Identifier);
+
+        return OperationResult.Success();
+    }
+
+    public IReadOnlyList<DeviceRegistration> GetRegisteredDevices()
+        => _registry.AllRegistrations;
+
+    // ── Port lifecycle ────────────────────────────────────────────────────────
+
+    public async Task<OperationResult> OpenPortAsync(
+        string deviceKey, int baudRate, SerialWorkerType type, CancellationToken token = default)
+    {
+        if (_workers.ContainsKey(deviceKey))
+            return OperationResult.Failure($"Port for device '{deviceKey}' is already open");
+
+        var reg = _registry.AllRegistrations.FirstOrDefault(r => r.Identifier.Key == deviceKey);
+        if (reg is null)
+            return OperationResult.Failure($"Device '{deviceKey}' is not registered");
+
+        if (reg.CurrentPortPath is null)
+        {
+            // Attempt to find the device on the OS right now
+            var refreshResult = await RefreshPortPathAsync(deviceKey, token);
+            if (!refreshResult)
+                return OperationResult.Failure(
+                    $"No OS port path found for device '{deviceKey}'");
+        }
+
+        var portPath = reg.CurrentPortPath!;
 
         try
         {
-            var worker = _factory.Create(port, baudRate, type);
+            var worker = _workerFactory.Create(portPath, baudRate, type, _registry);
 
-            if (!_ports.TryAdd(port, worker))
-                return OperationResult.Failure($"Failed to add {port}");
+            if (!_workers.TryAdd(deviceKey, worker))
+                return OperationResult.Failure($"Concurrent open for '{deviceKey}'");
 
-            await worker.StartAsync(_appToken);
+            await worker.StartAsync(CancellationTokenSource
+                .CreateLinkedTokenSource(_appToken, token).Token);
+
+            _logger.LogInformation(
+                "Opened port {Port} for device {Key} as {Type}",
+                portPath, deviceKey, type);
 
             return OperationResult.Success();
         }
         catch (Exception ex)
         {
+            _workers.TryRemove(deviceKey, out _);
+            _logger.LogError(ex, "Failed to open port {Port}", portPath);
             return OperationResult.Failure(ex.Message);
         }
     }
 
-    //public async Task<OperationResult> OpenPortAsync(string port, int baudRate)
-    //{
-    //    if (_ports.ContainsKey(port))
-    //    {
-    //        _logger.LogWarning("Port {port} already open", port);
-    //        return OperationResult.Failure($"Port {port} already open");
-    //    }
-
-    //    try
-    //    {
-    //        SerialPortWorker worker = new SerialPortWorker(port, baudRate, _logger);
-
-    //        if (!_ports.TryAdd(port, worker))
-    //            return OperationResult.Failure($"Failed to add {port} to ports dictionary");
-
-    //        await worker.StartAsync(_appToken);
-
-    //        _logger.LogInformation("Opened port {port}", port);
-
-    //        return OperationResult.Success();
-    //    }
-    //    catch (Exception ex)
-    //    {
-    //        _logger.LogError($"Error opening {port} : {ex.Message}");
-    //        return OperationResult.Failure($"Error opening {port} : {ex.Message}");
-    //    }
-
-    //}
-
-    // ---------------- CLOSE PORT ----------------
-
-    public async Task<OperationResult> ClosePortAsync(string port)
+    public async Task<OperationResult> ClosePortAsync(
+        string deviceKey, CancellationToken token = default)
     {
-        if (_ports.TryRemove(port, out var worker))
+        if (!_workers.TryRemove(deviceKey, out var worker))
+            return OperationResult.Failure($"No open port for device '{deviceKey}'");
+
+        try
         {
             await worker.StopAsync();
-            
-            _logger.LogInformation("Closed port {port}", port);
+            await worker.DisposeAsync();
+            _registry.ClearPortPath(deviceKey);
+
+            _logger.LogInformation("Closed port for device {Key}", deviceKey);
             return OperationResult.Success();
         }
-        return OperationResult.Failure($"Failed to remove {port} from ports dictionary");
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error closing port for device {Key}", deviceKey);
+            return OperationResult.Failure(ex.Message);
+        }
     }
 
-    // ---------------- GET PORT ----------------
+    // ── I/O ───────────────────────────────────────────────────────────────────
 
-    public ISerialWorker? GetPort(string port)
+    public async Task<OperationResult> WriteAsync(
+        string functionName, byte[] data, CancellationToken token = default)
     {
-        _ports.TryGetValue(port, out var worker);
-        return worker;
+        var portPath = _registry.ResolvePortPath(functionName);
+        if (portPath is null)
+            return OperationResult.Failure(
+                $"Function '{functionName}' is not mapped to any device");
+
+        // Reverse-look up the device key from the port path
+        var deviceKey = FindDeviceKeyByPort(portPath);
+        if (deviceKey is null || !_workers.TryGetValue(deviceKey, out var worker))
+            return OperationResult.Failure(
+                $"Port for function '{functionName}' is not open");
+
+        var ok = await worker.WriteAsync(data, token);
+        return ok
+            ? OperationResult.Success()
+            : OperationResult.Failure("Write channel full or closed");
     }
 
-    // ---------------- SHUTDOWN ----------------
+    public async Task<OperationResult> WriteTextAsync(
+        string functionName, string text, CancellationToken token = default)
+    {
+        var portPath = _registry.ResolvePortPath(functionName);
+        if (portPath is null)
+            return OperationResult.Failure(
+                $"Function '{functionName}' is not mapped to any device");
+
+        var deviceKey = FindDeviceKeyByPort(portPath);
+        if (deviceKey is null || !_workers.TryGetValue(deviceKey, out var worker))
+            return OperationResult.Failure(
+                $"Port for function '{functionName}' is not open");
+
+        var ok = await worker.WriteTextAsync(text, token);
+        return ok
+            ? OperationResult.Success()
+            : OperationResult.Failure("Write channel full or closed");
+    }
+
+    /// <summary>
+    /// Returns a <see cref="ChannelReader{T}"/> that yields only messages whose
+    /// <see cref="SerialMessage.FunctionName"/> is in <paramref name="functionNames"/>.
+    /// Each call creates a dedicated filtered channel — the caller owns it.
+    /// </summary>
+    public ChannelReader<SerialMessage> GetMessageReader(IEnumerable<string> functionNames)
+    {
+        var filter = functionNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var filtered = Channel.CreateUnbounded<SerialMessage>(new UnboundedChannelOptions
+        { SingleWriter = true, SingleReader = false });
+
+        // Subscribe this filtered channel to the broadcast
+        _ = Task.Run(async () =>
+        {
+            await foreach (var msg in _broadcastChannel.Reader.ReadAllAsync())
+            {
+                if (filter.Contains(msg.FunctionName))
+                    await filtered.Writer.WriteAsync(msg);
+            }
+            filtered.Writer.TryComplete();
+        });
+
+        return filtered.Reader;
+    }
+
+    // ── Auto-discovery ────────────────────────────────────────────────────────
+
+    public async Task<int> AutoDiscoverAsync(
+        bool autoOpen,
+        int defaultBaudRate,
+        SerialWorkerType defaultType,
+        CancellationToken token = default)
+    {
+        var devices = await _enumerator.EnumerateAsync(token);
+        int opened = 0;
+
+        foreach (var (identifier, portPath) in devices)
+        {
+            // Update the registry with current OS port paths for known devices
+            var existing = _registry.AllRegistrations
+                .FirstOrDefault(r => r.Identifier.Key == identifier.Key);
+
+            if (existing is null)
+            {
+                _logger.LogDebug(
+                    "AutoDiscover: unregistered device {Key} found on {Port}",
+                    identifier.Key, portPath);
+                continue;
+            }
+
+            _registry.SetPortPath(identifier.Key, portPath);
+
+            if (!autoOpen || _workers.ContainsKey(identifier.Key)) continue;
+
+            var result = await OpenPortAsync(identifier.Key, defaultBaudRate, defaultType, token);
+            if (result.IsSuccess) opened++;
+        }
+
+        return opened;
+    }
+
+    // ── Command dispatcher ────────────────────────────────────────────────────
+
+    public Task<OperationResult> ExecuteAsync(ISerialCommand command, CancellationToken token = default)
+        => command.ExecuteAsync(this, token);
+
+    // ── Shutdown ──────────────────────────────────────────────────────────────
 
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
+        _logger.LogInformation("Stopping SerialPortManagerService");
 
-        _logger.LogInformation("Stopping peripherals");
-
-        //await CleanUpPeripherals(cancellationToken);
-
-        _logger.LogInformation("Stopping SerialPortManager");
-
-        var tasks = _ports.Values.Select(worker => worker.StopAsync());
+        var tasks = _workers.Values.Select(async w =>
+        {
+            await w.StopAsync();
+            await w.DisposeAsync();
+        });
 
         await Task.WhenAll(tasks);
-
-        _ports.Clear();
+        _workers.Clear();
+        _broadcastChannel.Writer.TryComplete();
 
         await base.StopAsync(cancellationToken);
     }
 
-    //private async Task CleanUpPeripherals(CancellationToken cancellationToken)
-    //{
-    //    SerialPortWorker tomController =  GetPort("COM5");
-    //    await tomController.WriteAsync("@\"$PBLUTP,S,PWR,CTRL,OFF,15*67\"", cancellationToken);
+    // ── Internal helpers ──────────────────────────────────────────────────────
 
-    //}
-
-
-    // ---------------- LIST AVAILABLE PORTS ----------------
-    private static readonly SemaphoreSlim _portListLock = new(1, 1);
-
-    public static async Task<IReadOnlyList<string>> GetAvailablePortsAsync()
+    /// <summary>
+    /// Fan-in loop: continuously reads from all workers and re-publishes
+    /// to the shared broadcast channel. New workers added at runtime are
+    /// picked up because each worker's reader is consumed independently.
+    /// </summary>
+    private async Task BroadcastFanInAsync(CancellationToken token)
     {
-        await _portListLock.WaitAsync();
-        try
+        // We snapshot and continuously scan active workers.
+        // A dedicated task per worker is spawned when new workers appear.
+        var spawned = new ConcurrentDictionary<string, bool>();
+
+        while (!token.IsCancellationRequested)
         {
-            return await Task.Run(() =>
+            foreach (var (key, worker) in _workers)
             {
-                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                    return GetWindowsPorts();
+                if (spawned.TryAdd(key, true))
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await foreach (var msg in worker.ReceivedMessages.ReadAllAsync(token))
+                            {
+                                await _broadcastChannel.Writer.WriteAsync(msg, token);
+                            }
+                        }
+                        catch (OperationCanceledException) { }
+                        finally { spawned.TryRemove(key, out _); }
+                    }, token);
+                }
+            }
 
-                if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-                    return GetLinuxPorts();
-
-                return Array.Empty<string>();
-            });
-        }
-        finally
-        {
-            _portListLock.Release();
+            await Task.Delay(500, token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
     }
 
-    private static IReadOnlyList<string> GetWindowsPorts()
+    private string? FindDeviceKeyByPort(string portPath)
     {
-        // SerialPort.GetPortNames() is reliable on Windows
-        return SerialPort.GetPortNames()
-                         .OrderBy(p => p)
-                         .ToArray();
+        return _registry.AllRegistrations
+            .FirstOrDefault(r =>
+                string.Equals(r.CurrentPortPath, portPath, StringComparison.OrdinalIgnoreCase))
+            ?.Identifier.Key;
     }
 
-    private static IReadOnlyList<string> GetLinuxPorts()
+    private async Task<bool> RefreshPortPathAsync(string deviceKey, CancellationToken token)
     {
-        // Enumerate tty devices that typically represent serial ports
-        var patterns = new[] { "ttyUSB*", "ttyACM*", "ttyS*", "ttyAMA*" };
+        var reg = _registry.AllRegistrations.FirstOrDefault(r => r.Identifier.Key == deviceKey);
+        if (reg is null) return false;
 
-        return patterns
-            .SelectMany(pattern => Directory.GetFiles("/dev", pattern))
-            .Where(IsSerialPortAccessible)
-            .OrderBy(p => p)
-            .ToArray();
-    }
+        var devices = await _enumerator.EnumerateAsync(token);
+        var match = devices.FirstOrDefault(d => d.Identifier.Key == deviceKey);
 
-    private static bool IsSerialPortAccessible(string path)
-    {
-        try
-        {
-            // Quick open/close to verify the port is accessible and not a
-            // phantom ttyS* entry that exists in /dev but has no hardware
-            using var port = new SerialPort(path);
-            port.Open();
-            port.Close();
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
+        if (match.PortPath is null) return false;
+
+        _registry.SetPortPath(deviceKey, match.PortPath);
+        return true;
     }
 }

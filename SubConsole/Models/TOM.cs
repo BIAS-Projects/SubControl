@@ -4,7 +4,7 @@ using System.Net.NetworkInformation;
 using System.Security.Principal;
 using System.Text;
 
-namespace SubConsole.Models
+namespace SubControlMAUI.Models
 {
 
     //// Turn on TOM

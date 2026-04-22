@@ -8,11 +8,21 @@ namespace SubConsole.Models
 
     //// Turn on TOM
     //await HandleCommand("COM5", "SEND", $"$PBLUTP,S,PWR,CTRL,ON,15*29");
-    public static class TOM
+    public static class TOMCommands
     {
+        public static string Function { get; set; } = "TOM_CONTROLLER";
+
+        public static string CommandType { get; set; } = "WRITE TEXT";
+
         public static string CommandPort { get; set; } = "COM5";
 
+        public static int TomBaudCommandBaudRate { get; set; } = 115200;
+
         public static string TurnOnAllSystemsCommand { get; set; } = $"$PBLUTP,S,PWR,CTRL,ON,15*29";
+
+        public static string TurnOffAllSystemsCommand { get; set; } = $"$PBLUTP,S,PWR,CTRL,OFF,15*67";
+
+        public static string GetStatusCommand { get; set; } = $"$PBLUTP,Q,SYS,INFO*25";
 
         public static string TurnOffCommand { get; set; }
 

@@ -101,14 +101,14 @@ namespace SubControlMAUI.ViewModels
             {
                 MainThread.BeginInvokeOnMainThread(async () =>
                 {
-                    string message = Encoding.UTF8.GetString(msg.Value);
-                    if (!await HandleTcpReceivedMessage(message))
+                 //   string message = Encoding.UTF8.GetString(msg.Value);
+                    if (!await HandleTcpReceivedMessage(msg.Value.Command))
                     {
-                        Status = "Error processing Command: " + message;
+                        Status = "Error processing Command: " + msg.Value.Command;
                     }
                     else
                     {
-                        Status = "Success processing Command: " + message;
+                        Status = "Success processing Command: " + msg.Value.Command;
                     }
 
 
@@ -120,7 +120,8 @@ namespace SubControlMAUI.ViewModels
             {
                 MainThread.BeginInvokeOnMainThread(() =>
                 {
-                    Status = Encoding.UTF8.GetString(msg.Value);
+                //    Status = Encoding.UTF8.GetString(msg.Value);
+                    Status = msg.Value.Command;
                 });
 
             });
@@ -182,58 +183,58 @@ namespace SubControlMAUI.ViewModels
         [RelayCommand]
         async Task StartTOM()
         {
-            Send("START TOM ALL");
+            SendDeviceCommand(TOMCommands.CommandType, TOMCommands.Function, TOMCommands.TurnOnAllSystemsCommand);
         }
 
         [RelayCommand]
         async Task StopTOM()
         {
-            Send("STOP TOM ALL");
+            SendDeviceCommand(TOMCommands.CommandType, TOMCommands.Function, TOMCommands.TurnOffAllSystemsCommand);
         }
 
         [RelayCommand]
         async Task FLIRWhitehot()
         {
-            Send("FLIR WHITEHOT");
+            //   SendDeviceCommand("FLIR WHITEHOT");
         }
 
         [RelayCommand]
         async Task FLIRRainbow()
         {
-            Send("FLIR RAINBOW");
+            //  SendDeviceCommand("FLIR RAINBOW");
         }
 
         [RelayCommand]
-        async Task GetAllUSBPorts()
+        async Task ListDevices()
         {
-            Send("GET USB PORTS");
+            SendDeviceCommand(SystemCommands.ListDevices,"","");
         }
 
         [RelayCommand]
-        async Task GetVideoPorts()
+        async Task ListRegisteredDevices()
         {
-            Send("GET VIDEO PORTS");
+            SendDeviceCommand(SystemCommands.ListRegisterDevcies,"","");
         }
 
         [RelayCommand]
         async Task RotorForward()
         {
-            Send("ROTOR FORWARD");
+           // SendDeviceCommand("ROTOR FORWARD");
         }
         [RelayCommand]
         async Task RotorBackward()
         {
-            Send("ROTOR BACKWARD");
+           // SendDeviceCommand("ROTOR BACKWARD");
         }
         [RelayCommand]
         async Task RotorStop()
         {
-            Send("ROTOR STOP");
+           // SendDeviceCommand("ROTOR STOP");
         }
         [RelayCommand]
         async Task Right()
         {
-            Send(_sqliteService.config.CutterRightCommand);
+            //    SendDeviceCommand(_sqliteService.config.CutterRightCommand);
         }
 
         public async Task ButtonLoaded()
@@ -320,15 +321,35 @@ namespace SubControlMAUI.ViewModels
             IsBusy = false;
         }
 
-        public void Send(string text)
+        public void SendListDevices(string text)
         {
             IsBusy = true;
-            var bytes = System.Text.Encoding.UTF8.GetBytes(text);
-            _messenger.Send(new TcpSendRequestMessage(bytes));
+            //      var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+            //   _messenger.Send(new TcpSendRequestMessage(bytes));
+
+            _messenger.Send(new TcpSendRequestMessage(new TCPMessageBody(
+                CommandType: "LIST DEVICES",
+                Function: "",
+                Command: ""
+            )));
+
             IsBusy = false;
         }
 
+        public void SendDeviceCommand(string commandType, string function, string command)
+        {
+            IsBusy = true;
+            //      var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+            //   _messenger.Send(new TcpSendRequestMessage(bytes));
 
+            _messenger.Send(new TcpSendRequestMessage(new TCPMessageBody(
+                CommandType: commandType,
+                Function: function,
+                Command: command
+            )));
+
+            IsBusy = false;
+        }
 
         //[RelayCommand]
         //public async Task CutterOn()
@@ -359,26 +380,26 @@ namespace SubControlMAUI.ViewModels
 
 
 
-        private void OnSliderValueChanged(double value)
-        {
-            if(!IsConnected)
-                return;
-            //change the speed to a whole interger value
-            string speed = Math.Round(value).ToString();
+        //private void OnSliderValueChanged(double value)
+        //{
+        //    if(!IsConnected)
+        //        return;
+        //    //change the speed to a whole interger value
+        //    string speed = Math.Round(value).ToString();
 
-            _messenger.Send(new TcpSendRequestMessage(Encoding.UTF8.GetBytes($"SPEED {speed}")));
+        //    _messenger.Send(new TcpSendRequestMessage(Encoding.UTF8.GetBytes($"SPEED {speed}")));
 
-        }
+        //}
 
 
         public async Task<bool> HandleTcpReceivedMessage(string message)
         {
             if (string.IsNullOrEmpty(message))
             { return false; }
-            var command = message.Split(TcpProtocol.CommandSeparatorChar);
-            if (command.Length <= 1)
-            { return false; }
-            switch (command[0])
+            //var command = message.Split(TcpProtocol.CommandSeparatorChar);
+            //if (command.Length <= 1)
+            //{ return false; }
+            switch (message)
             {
                 case "GET USBCOMMPORTS":
                     try
@@ -397,7 +418,7 @@ namespace SubControlMAUI.ViewModels
                     }
                     catch(Exception ex)
                     {
-                        _logger?.LogError($"Command : {command} Message: {message} ", command, message);
+                        _logger?.LogError($"Message: {message} ", message);
                         return false;
 
                     }

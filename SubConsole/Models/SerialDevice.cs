@@ -2,6 +2,13 @@
 {
     public class UsbDeviceInfo
     {
+
+        public enum SerialWorkerType
+        {
+            Text,
+            Flir
+        }
+
         public string DeviceId { get; set; } = "";
         public string VendorId { get; set; } = "";
         public string ProductId { get; set; } = "";

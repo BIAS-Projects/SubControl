@@ -1,4 +1,5 @@
 ﻿using SubConsole.Models;
+using SubConsole.Services.Serial;
 using System;
 using System.Collections.Generic;
 using System.Text;

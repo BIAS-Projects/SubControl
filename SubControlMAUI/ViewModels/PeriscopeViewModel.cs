@@ -54,19 +54,21 @@ namespace SubControlMAUI.ViewModels
             {
                 MainThread.BeginInvokeOnMainThread(() =>
                 {
-                    string message = Encoding.UTF8.GetString(m.Value);
-
-                    string[] words = message.Split(' ');
-                    if ((words[0] == "CURRENT"))
-                    {
-                        CutterCurrent = $"{words[1]} {_currentUnit}";
-                    }
-                    else
-                    {
-                        Status = Encoding.UTF8.GetString(m.Value);
-                    }
+                   // string message = Encoding.UTF8.GetString(m.Value);
 
 
+
+                    //string[] words = message.Split(' ');
+                    //if ((words[0] == "CURRENT"))
+                    //{
+                    //    CutterCurrent = $"{words[1]} {_currentUnit}";
+                    //}
+                    //else
+                    //{
+                    //    Status = Encoding.UTF8.GetString(m.Value);
+                    //}
+
+                    Status = m.Value.Command;
 
                 });
 
@@ -76,7 +78,8 @@ namespace SubControlMAUI.ViewModels
             {
                 MainThread.BeginInvokeOnMainThread(() =>
                 {
-                    Status = Encoding.UTF8.GetString(m.Value);
+                 //   Status = Encoding.UTF8.GetString(m.Value);
+                    Status = m.Value.Command;
                 });
 
             });
@@ -157,10 +160,10 @@ namespace SubControlMAUI.ViewModels
 
         public void Send(string text)
         {
-            IsBusy = true;
-            var bytes = System.Text.Encoding.UTF8.GetBytes(text);
-            _messenger.Send(new TcpSendRequestMessage(bytes));
-            IsBusy = false;
+        //    IsBusy = true;
+        //    var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+        //    _messenger.Send(new TcpSendRequestMessage(bytes));
+        //    IsBusy = false;
         }
 
 

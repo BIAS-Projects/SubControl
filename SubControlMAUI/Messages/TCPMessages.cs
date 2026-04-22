@@ -6,10 +6,11 @@ using System.Text;
 namespace SubControlMAUI.Messages
 {
     using CommunityToolkit.Mvvm.Messaging.Messages;
+    using SubControlMAUI.Models;
 
-    public sealed class TcpDataReceivedMessage : ValueChangedMessage<byte[]>
+    public sealed class TcpDataReceivedMessage : ValueChangedMessage<TCPMessageBody>
     {
-        public TcpDataReceivedMessage(byte[] value) : base(value) { }
+        public TcpDataReceivedMessage(TCPMessageBody value) : base(value) { }
     }
 
     //public sealed class TcpDataReceivedMessage : ValueChangedMessage<byte[]>
@@ -32,10 +33,16 @@ namespace SubControlMAUI.Messages
         public TcpErrorMessage(Exception value) : base(value) { }
     }
 
-    public sealed class TcpSendRequestMessage : ValueChangedMessage<byte[]>
+    //public sealed class TcpSendRequestMessage : ValueChangedMessage<string>
+    //{
+    //    public TcpSendRequestMessage(string value) : base(value) { }
+    //}
+
+    public sealed class TcpSendRequestMessage : ValueChangedMessage<TCPMessageBody>
     {
-        public TcpSendRequestMessage(byte[] value) : base(value) { }
+        public TcpSendRequestMessage(TCPMessageBody value) : base(value) { }
     }
+
 
     public sealed class TcpIsConnected : ValueChangedMessage<bool>
     {
