@@ -1,8 +1,11 @@
+using Gst;
 using Microsoft.Extensions.Logging;
 using SubConsole.Models;
 using SubConsole.Services.Serial;
 using SubConsole.Services.Serial.Commands;
+using System.Text;
 using System.Text.Json;
+using static SubConsole.Models.UsbDeviceInfo;
 
 namespace SubConsole.Services.TCP;
 
@@ -58,33 +61,31 @@ public sealed class TcpSerialCommandHandler
     /// Returns a JSON ACK/NACK string sent back on the response channel.
     /// Device replies arrive separately via the push channel.
     /// </summary>
-    public async Task<string> HandleAsync(string frame, CancellationToken token)
+    public async Task<string> HandleAsync(TCPMessageBody<string> message, CancellationToken token)
     {
-        _logger.LogDebug("Handling frame: {Frame}", frame);
+        _logger.LogDebug("Handling frame: {Message}", message);
 
         try
         {
-            var parts = frame.Split('|');
-            var verb  = parts[0].Trim().ToUpperInvariant();
-
-            return verb switch
-            {
-                "LIST DEVICES"    => await HandleListDevicesAsync(token),
-                "LIST REGISTERED" => await HandleListRegisteredAsync(token),
-                "REGISTER"        => await HandleRegisterAsync(parts, token),
-                "UNREGISTER"      => await HandleUnregisterAsync(parts, token),
-                "OPEN"            => await HandleOpenAsync(parts, token),
-                "CLOSE"           => await HandleCloseAsync(parts, token),
-                "WRITE"           => await HandleWriteAsync(parts, token),
-                "WRITE TEXT"      => await HandleWriteTextAsync(parts, token),
-                "DISCOVER"        => await HandleDiscoverAsync(parts, token),
-                "ASSIGN PORT"     => HandleAssignPort(parts),
-                _                 => ErrorResponse($"Unknown command: '{verb}'")
-            };
+              return message.Command switch
+              {
+                  "LIST DEVICES" => await HandleListDevicesAsync(token),
+                  "LIST REGISTERED" => await HandleListRegisteredAsync(token),
+                  "REGISTER" => await HandleRegisterAsync(message, token),
+                  "UNREGISTER" => await HandleUnregisterAsync(message, token),
+                  "OPEN" => await HandleOpenAsync(message, token),
+                  "CLOSE" => await HandleCloseAsync(message, token),
+                  "WRITE" => await HandleWriteAsync(message, token),
+                  "WRITE TEXT" => await HandleWriteTextAsync(message, token),
+                  "DISCOVER" => await HandleDiscoverAsync(message, token),
+                  "ASSIGN PORT" => HandleAssignPort(message),
+                  _ => ErrorResponse($"Unknown command: '{message.Command}'")
+              };
         }
+        
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error handling frame: {Frame}", frame);
+            _logger.LogError(ex, "Error handling frame: {Message}", message);
             return ErrorResponse(ex.Message);
         }
     }
@@ -119,177 +120,236 @@ public sealed class TcpSerialCommandHandler
         {
             key           = r.Identifier.Key,
             description   = r.Identifier.Description,
-            functionNames = r.FunctionNames,
+            functionName = r.FunctionName,
             currentPort   = r.CurrentPortPath
         });
 
         return SuccessResponse(payload);
     }
 
-    private async Task<string> HandleRegisterAsync(string[] parts, CancellationToken token)
+    private async Task<string> HandleRegisterAsync(TCPMessageBody<string> message, CancellationToken token)
     {
-        // REGISTER|deviceKey|FN1,FN2|baudRate|workerType
-        if (parts.Length < 3)
-            return ErrorResponse("REGISTER requires: REGISTER|deviceKey|FunctionNames[|baudRate[|workerType]]");
+        int baudrate;
+        SerialWorkerType serialWorkerType;
+        FunctionToPortEntry entry = JsonSerializer.Deserialize<FunctionToPortEntry>(message.Command);
 
-        var deviceKey     = parts[1].Trim();
-        var functionNames = parts[2].Split(',', StringSplitOptions.RemoveEmptyEntries);
-        var baudRate      = parts.Length >= 4 && int.TryParse(parts[3], out var b) ? b : 115_200;
-        var workerType    = parts.Length >= 5
-            ? Enum.TryParse<SerialWorkerType>(parts[4], true, out var wt) ? wt : SerialWorkerType.Text
-            : SerialWorkerType.Text;
+        if(entry is null)
+        {
+            return ErrorResponse($"HandleRegisterAsync invalid JSON: {message.Command}");
+        }
+        if(String.IsNullOrWhiteSpace(entry.DeviceKey))
+        {
+            return ErrorResponse("HandleRegisterAsync DeviceKey cannot be empty");
+        }
+        if (String.IsNullOrWhiteSpace(entry.FunctionName))
+        {
+            return ErrorResponse("HandleRegisterAsync FunctionName cannot be empty");
+        }
+        if (String.IsNullOrWhiteSpace(entry.BaudRate))
+        {
+            return ErrorResponse("HandleRegisterAsync Baudrate cannot be empty");
+        }
+        if (int.TryParse(entry.BaudRate, out baudrate))
+        {
+            return ErrorResponse("HandleRegisterAsync DeviceKey must be numeric");
+        }
+        if (String.IsNullOrWhiteSpace(entry.WorkerType))
+        {
+            return ErrorResponse("HandleRegisterAsync WorkerType cannot be empty");
+        }
+        if (Enum.TryParse<SerialWorkerType>(entry.WorkerType, out serialWorkerType))
+        {
+            return ErrorResponse("HandleRegisterAsync WorkerType must be a registed type");
+        }
 
-        var devices = await _manager.EnumerateUsbDevicesAsync(token);
-        var found   = devices.FirstOrDefault(d => d.Identifier.Key == deviceKey);
+           var devices = await _manager.EnumerateUsbDevicesAsync(token);
+        var found = devices.FirstOrDefault(d => d.Identifier.Key == entry.DeviceKey);
 
         if (found.Identifier is null)
-            return ErrorResponse($"Device '{deviceKey}' not found in USB enumeration");
+            return ErrorResponse($"Device '{entry.DeviceKey}' not found in USB enumeration");
 
         var result = await _dispatcher.DispatchAsync(new RegisterDeviceCommand
         {
-            Identifier    = found.Identifier,
-            FunctionNames = functionNames,
-            AutoOpen      = true,
-            BaudRate      = baudRate,
-            WorkerType    = workerType
+            Identifier = found.Identifier,
+            FunctionName = entry.FunctionName,
+            AutoOpen = true,
+            BaudRate = baudrate,
+            WorkerType = serialWorkerType
         }, token);
 
         return result.IsSuccess
-            ? SuccessResponse(new { deviceKey, functionNames })
+            ? SuccessResponse(new { entry.DeviceKey, entry.FunctionName })
             : ErrorResponse(result.Message);
     }
 
-    private async Task<string> HandleUnregisterAsync(string[] parts, CancellationToken token)
+
+
+
+    private async Task<string> HandleUnregisterAsync(TCPMessageBody<string> message, CancellationToken token)
     {
-        if (parts.Length < 2)
-            return ErrorResponse("UNREGISTER requires: UNREGISTER|deviceKey");
+
+        FunctionToPortEntry entry = JsonSerializer.Deserialize<FunctionToPortEntry>(message.Command);
+
+        if (entry is null)
+        {
+            return ErrorResponse($"HandleUnregisterAsync invalid JSON: {message.Command}");
+        }
+        if (String.IsNullOrWhiteSpace(entry.DeviceKey))
+        {
+            return ErrorResponse("HandleUnregisterAsync DeviceKey cannot be empty");
+        }
 
         var result = await _dispatcher.DispatchAsync(
-            new UnregisterDeviceCommand { DeviceKey = parts[1].Trim() }, token);
+            new UnregisterDeviceCommand { DeviceKey = entry.DeviceKey }, token);
 
         return result.IsSuccess
-            ? SuccessResponse(new { deviceKey = parts[1].Trim() })
+            ? SuccessResponse(new { deviceKey = entry.DeviceKey })
             : ErrorResponse(result.Message);
     }
 
-    private async Task<string> HandleOpenAsync(string[] parts, CancellationToken token)
+    private async Task<string> HandleOpenAsync(TCPMessageBody<string> message, CancellationToken token)
     {
-        if (parts.Length < 2)
-            return ErrorResponse("OPEN requires: OPEN|deviceKey[|baudRate[|workerType]]");
+        FunctionToPortEntry entry = JsonSerializer.Deserialize<FunctionToPortEntry>(message.Command);
 
-        var deviceKey  = parts[1].Trim();
-        var baudRate   = parts.Length >= 3 && int.TryParse(parts[2], out var b) ? b : 115_200;
-        var workerType = parts.Length >= 4
-            ? Enum.TryParse<SerialWorkerType>(parts[3], true, out var wt) ? wt : SerialWorkerType.Text
-            : SerialWorkerType.Text;
+        if (entry is null)
+        {
+            return ErrorResponse($"HandleUnregisterAsync invalid JSON: {message.Command}");
+        }
+        if (String.IsNullOrWhiteSpace(entry.DeviceKey))
+        {
+            return ErrorResponse("HandleUnregisterAsync DeviceKey cannot be empty");
+        }
+
+
+
+        //if (parts.Length < 2)
+        //    return ErrorResponse("OPEN requires: OPEN|deviceKey[|baudRate[|workerType]]");
+
+        //var deviceKey  = parts[1].Trim();
+        //var baudRate   = parts.Length >= 3 && int.TryParse(parts[2], out var b) ? b : 115_200;
+        //var workerType = parts.Length >= 4
+        //    ? Enum.TryParse<SerialWorkerType>(parts[3], true, out var wt) ? wt : SerialWorkerType.Text
+        //    : SerialWorkerType.Text;
 
         var result = await _dispatcher.DispatchAsync(new OpenPortCommand
         {
-            DeviceKey  = deviceKey,
-            BaudRate   = baudRate,
-            WorkerType = workerType
+            DeviceKey  = entry.DeviceKey,
         }, token);
 
         return result.IsSuccess
-            ? SuccessResponse(new { deviceKey })
+            ? SuccessResponse(new { entry.DeviceKey })
             : ErrorResponse(result.Message);
     }
 
-    private async Task<string> HandleCloseAsync(string[] parts, CancellationToken token)
+    private async Task<string> HandleCloseAsync(TCPMessageBody<string> message, CancellationToken token)
     {
-        if (parts.Length < 2)
-            return ErrorResponse("CLOSE requires: CLOSE|deviceKey");
+        FunctionToPortEntry entry = JsonSerializer.Deserialize<FunctionToPortEntry>(message.Command);
+
+        if (entry is null)
+        {
+            return ErrorResponse($"HandleCloseAsync invalid JSON: {message.Command}");
+        }
+        if (String.IsNullOrWhiteSpace(entry.DeviceKey))
+        {
+            return ErrorResponse("HandleUnregisterAsync DeviceKey cannot be empty");
+        }
+
+        //if (parts.Length < 2)
+        //    return ErrorResponse("CLOSE requires: CLOSE|deviceKey");
 
         var result = await _dispatcher.DispatchAsync(
-            new ClosePortCommand { DeviceKey = parts[1].Trim() }, token);
+            new ClosePortCommand { DeviceKey = entry.DeviceKey }, token);
 
         return result.IsSuccess
-            ? SuccessResponse(new { deviceKey = parts[1].Trim() })
+            ? SuccessResponse(new { deviceKey = entry.DeviceKey })
             : ErrorResponse(result.Message);
     }
 
-    private async Task<string> HandleWriteAsync(string[] parts, CancellationToken token)
+    private async Task<string> HandleWriteAsync(TCPMessageBody<string> message, CancellationToken token)
     {
-        // WRITE|functionName|<base64 bytes>
-        if (parts.Length < 3)
-            return ErrorResponse("WRITE requires: WRITE|functionName|<base64data>");
-
-        var functionName = parts[1].Trim();
-        byte[] data;
-
-        try { data = Convert.FromBase64String(parts[2].Trim()); }
-        catch { return ErrorResponse("Invalid base64 payload — must be base64-encoded"); }
-
+        if (String.IsNullOrWhiteSpace(message.Command))
+        {
+            return ErrorResponse("HandleWriteAsync Message Data cannot be empty");
+        }
         var result = await _dispatcher.DispatchAsync(
-            new WriteCommand { FunctionName = functionName, Data = data }, token);
+            new WriteCommand { FunctionName = message.Function, Data = Encoding.ASCII.GetBytes(message.Data) }, token);
 
         return result.IsSuccess
-            ? SuccessResponse(new { functionName, bytesWritten = data.Length })
+            ? SuccessResponse(new { message.Function, bytesWritten = message.Data.Length })
             : ErrorResponse(result.Message);
     }
 
-    private async Task<string> HandleWriteTextAsync(string[] parts, CancellationToken token)
+    private async Task<string> HandleWriteTextAsync(TCPMessageBody<string> message, CancellationToken token)
     {
-        // WRITE TEXT|functionName|the text payload
-        // Re-join from index 2 onwards so text containing '|' is preserved.
-        if (parts.Length < 3)
-            return ErrorResponse("WRITE TEXT requires: WRITE TEXT|functionName|text");
-
-        var functionName = parts[1].Trim();
-        var text         = string.Join("|", parts[2..]);
 
         var result = await _dispatcher.DispatchAsync(new WriteTextCommand
         {
-            FunctionName  = functionName,
-            Text          = text,
+            FunctionName  = message.Function,
+            Text          = message.Data,
             AppendNewline = true
         }, token);
 
         return result.IsSuccess
-            ? SuccessResponse(new { functionName })
+            ? SuccessResponse(new { message.Function })
             : ErrorResponse(result.Message);
     }
 
-    private async Task<string> HandleDiscoverAsync(string[] parts, CancellationToken token)
+    private async Task<string> HandleDiscoverAsync(TCPMessageBody<string> message, CancellationToken token)
     {
-        var autoOpen   = parts.Length < 2 || parts[1].Trim().ToUpperInvariant() != "NOOPEN";
-        var baudRate   = parts.Length >= 3 && int.TryParse(parts[2], out var b) ? b : 115_200;
-        var workerType = parts.Length >= 4
-            ? Enum.TryParse<SerialWorkerType>(parts[3], true, out var wt) ? wt : SerialWorkerType.Text
-            : SerialWorkerType.Text;
+        SerialWorkerType serialWorkerType;
+        AutoDiscoverCommand command = JsonSerializer.Deserialize<AutoDiscoverCommand>(message.Command);
 
-        var cmd = new AutoDiscoverCommand
+        if (command is null)
         {
-            AutoOpenFound     = autoOpen,
-            DefaultBaudRate   = baudRate,
-            DefaultWorkerType = workerType
-        };
+            return ErrorResponse($"HandleDiscoverAsync invalid JSON: {message.Command}");
+        }
 
-        await _dispatcher.DispatchAsync(cmd, token);
+
+        //var autoOpen   = parts.Length < 2 || parts[1].Trim().ToUpperInvariant() != "NOOPEN";
+        //        var baudRate   = parts.Length >= 3 && int.TryParse(parts[2], out var b) ? b : 115_200;
+        //        var workerType = parts.Length >= 4
+        //            ? Enum.TryParse<SerialWorkerType>(parts[3], true, out var wt) ? wt : SerialWorkerType.Text
+        //            : SerialWorkerType.Text;
+
+        //var cmd = new AutoDiscoverCommand
+        //{
+        //    AutoOpenFound     = autoOpe,
+        //    DefaultBaudRate   = baudRate,
+        //    DefaultWorkerType = workerType
+        //};
+
+        await _dispatcher.DispatchAsync(command, token);
 
         return SuccessResponse(new
         {
-            newPortsOpened = cmd.NewPortsOpened,
+            newPortsOpened = command.NewPortsOpened,
             registered     = _manager.GetRegisteredDevices().Count
         });
     }
 
-    private string HandleAssignPort(string[] parts)
+    private string HandleAssignPort(TCPMessageBody<string> message)
     {
-        // ASSIGN PORT|deviceKey|portPath
-        if (parts.Length < 3)
-            return ErrorResponse("ASSIGN PORT requires: ASSIGN PORT|deviceKey|portPath");
+        DeviceKeyToPortPathEntry command = JsonSerializer.Deserialize<DeviceKeyToPortPathEntry>(message.Command);
 
-        var deviceKey = parts[1].Trim();
-        var portPath  = parts[2].Trim();
+        if (command is null)
+        {
+            return ErrorResponse($"HandleAssignPort invalid JSON: {message.Command}");
+        }
+
+        // ASSIGN PORT|deviceKey|portPath
+        //if (parts.Length < 3)
+        //    return ErrorResponse("ASSIGN PORT requires: ASSIGN PORT|deviceKey|portPath");
+
+        //var deviceKey = parts[1].Trim();
+        //var portPath  = parts[2].Trim();
 
         var reg = _manager.GetRegisteredDevices()
-            .FirstOrDefault(r => r.Identifier.Key == deviceKey);
+            .FirstOrDefault(r => r.Identifier.Key == command.DeviceKey);
 
         if (reg is null)
-            return ErrorResponse($"Device '{deviceKey}' is not registered");
+            return ErrorResponse($"Device '{command.DeviceKey}' is not registered");
 
-        return SuccessResponse(new { deviceKey, portPath });
+        return SuccessResponse(new { command.DeviceKey, command.PortPath });
     }
 
     // ── Response helpers ──────────────────────────────────────────────────────
@@ -300,3 +360,38 @@ public sealed class TcpSerialCommandHandler
     private static string ErrorResponse(string message)
         => JsonSerializer.Serialize(new { ok = false, error = message }, _jsonOptions);
 }
+
+
+
+//private async Task<string> HandleRegisterAsync(string[] parts, CancellationToken token)
+//{
+//    // REGISTER|deviceKey|FN1,FN2|baudRate|workerType
+//    if (parts.Length < 3)
+//        return ErrorResponse("REGISTER requires: REGISTER|deviceKey|FunctionNames[|baudRate[|workerType]]");
+
+//    var deviceKey     = parts[1].Trim();
+//    var functionNames = parts[2].Split(',', StringSplitOptions.RemoveEmptyEntries);
+//    var baudRate      = parts.Length >= 4 && int.TryParse(parts[3], out var b) ? b : 115_200;
+//    var workerType    = parts.Length >= 5
+//        ? Enum.TryParse<SerialWorkerType>(parts[4], true, out var wt) ? wt : SerialWorkerType.Text
+//        : SerialWorkerType.Text;
+
+//    var devices = await _manager.EnumerateUsbDevicesAsync(token);
+//    var found   = devices.FirstOrDefault(d => d.Identifier.Key == deviceKey);
+
+//    if (found.Identifier is null)
+//        return ErrorResponse($"Device '{deviceKey}' not found in USB enumeration");
+
+//    var result = await _dispatcher.DispatchAsync(new RegisterDeviceCommand
+//    {
+//        Identifier    = found.Identifier,
+//        FunctionNames = functionNames,
+//        AutoOpen      = true,
+//        BaudRate      = baudRate,
+//        WorkerType    = workerType
+//    }, token);
+
+//    return result.IsSuccess
+//        ? SuccessResponse(new { deviceKey, functionNames })
+//        : ErrorResponse(result.Message);
+//}

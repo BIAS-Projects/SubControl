@@ -31,8 +31,8 @@ namespace SubConsole.Services.TCP
                 StringComparer.OrdinalIgnoreCase);
         }
 
-        public async Task<OperationResultWithValue<TCPMessageBody>> HandleAsync(
-            TCPMessageBody command,
+        public async Task<OperationResultWithValue<TCPMessageBody<string>>> HandleAsync(
+            TCPMessageBody<string> command,
             CancellationToken token)
         {
             _logger.LogDebug("Handling command: {Command}", command);
@@ -40,7 +40,7 @@ namespace SubConsole.Services.TCP
             if (!_commands.TryGetValue(command.Command, out var cmd))
             {
                 _logger.LogWarning("Unknown command received: '{Command}'", command.Command);
-                return OperationResultWithValue<TCPMessageBody>.Failure($"Unknown command: '{command.Command}'");
+                return OperationResultWithValue<TCPMessageBody<string>>.Failure($"Unknown command: '{command.Command}'");
             }
 
             var semaphore = _locks[command.Command];

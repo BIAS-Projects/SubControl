@@ -4,6 +4,7 @@ using SubConsole.Models;
 using SubConsole.Services.Serial.Commands;
 using System.Collections.Concurrent;
 using System.Threading.Channels;
+using static SubConsole.Models.UsbDeviceInfo;
 
 namespace SubConsole.Services.Serial;
 
@@ -11,7 +12,7 @@ namespace SubConsole.Services.Serial;
 // Public surface
 // ═════════════════════════════════════════════════════════════════════════════
 
-public enum SerialWorkerType { Text, Flir }
+//public enum SerialWorkerType { Text, Flir }
 
 /// <summary>
 /// All operations the command objects may invoke on the manager.
@@ -25,13 +26,13 @@ public interface ISerialPortManagerService
         CancellationToken token = default);
 
     // ── Registry ──────────────────────────────────────────────────────────────
-    void RegisterDevice(DeviceIdentifier identifier, IEnumerable<string> functionNames);
+    void RegisterDevice(DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType type);
     Task<OperationResult> UnregisterDeviceAsync(string deviceKey, CancellationToken token = default);
     IReadOnlyList<DeviceRegistration> GetRegisteredDevices();
 
     // ── Port lifecycle ────────────────────────────────────────────────────────
     Task<OperationResult> OpenPortAsync(
-        string deviceKey, int baudRate, SerialWorkerType type, CancellationToken token = default);
+        string deviceKey,CancellationToken token = default);
     Task<OperationResult> ClosePortAsync(string deviceKey, CancellationToken token = default);
 
     // ── I/O ───────────────────────────────────────────────────────────────────
@@ -103,8 +104,8 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
 
     // ── Registry ──────────────────────────────────────────────────────────────
 
-    public void RegisterDevice(DeviceIdentifier identifier, IEnumerable<string> functionNames)
-        => _registry.Register(identifier, functionNames);
+    public void RegisterDevice(DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType type)
+        => _registry.Register(identifier, functionName, baudRate, type);
 
     public async Task<OperationResult> UnregisterDeviceAsync(
         string deviceKey, CancellationToken token = default)
@@ -125,7 +126,7 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
     // ── Port lifecycle ────────────────────────────────────────────────────────
 
     public async Task<OperationResult> OpenPortAsync(
-        string deviceKey, int baudRate, SerialWorkerType type, CancellationToken token = default)
+        string deviceKey, CancellationToken token = default)
     {
         if (_workers.ContainsKey(deviceKey))
             return OperationResult.Failure($"Port for device '{deviceKey}' is already open");
@@ -143,11 +144,15 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
                     $"No OS port path found for device '{deviceKey}'");
         }
 
+        SerialWorkerType workerType = reg.SerialWorkerType;
+
+        int baudRate = reg.BaudRate;
+
         var portPath = reg.CurrentPortPath!;
 
         try
         {
-            var worker = _workerFactory.Create(portPath, baudRate, type, _registry);
+            var worker = _workerFactory.Create(portPath, baudRate, workerType, _registry);
 
             if (!_workers.TryAdd(deviceKey, worker))
                 return OperationResult.Failure($"Concurrent open for '{deviceKey}'");
@@ -157,7 +162,7 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
 
             _logger.LogInformation(
                 "Opened port {Port} for device {Key} as {Type}",
-                portPath, deviceKey, type);
+                portPath, deviceKey, workerType);
 
             return OperationResult.Success();
         }
@@ -287,7 +292,7 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
 
             if (!autoOpen || _workers.ContainsKey(identifier.Key)) continue;
 
-            var result = await OpenPortAsync(identifier.Key, defaultBaudRate, defaultType, token);
+            var result = await OpenPortAsync(identifier.Key, token);
             if (result.IsSuccess) opened++;
         }
 

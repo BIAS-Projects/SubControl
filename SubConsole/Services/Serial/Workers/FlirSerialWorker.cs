@@ -137,12 +137,12 @@ public sealed class FlirSerialWorker : ISerialWorker
 
     private async Task PublishResultAsync(byte opcode, byte[] result, CancellationToken token)
     {
-        var functions = _registry.GetFunctionNames(PortPath);
-        var fn = functions.Count > 0 ? functions[0] : PortPath;
+        var function = _registry.GetFunctionName(PortPath);
+    //    var fn = functions.Count > 0 ? functions[0] : PortPath;
 
         var message = new SerialMessage
         {
-            FunctionName = fn,
+            FunctionName = function,
             PortPath     = PortPath,
             Payload      = result,
             Text         = $"Op=0x{opcode:X2} Result=0x{result[0]:X2}"

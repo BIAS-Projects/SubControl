@@ -6,15 +6,16 @@ namespace SubControlMAUI.Models
 {
     public static class SystemCommands
     {
-        public static string ListDevices { get; } = "LIST DEVICES";
+        public static string ListDevicesCommand { get; } = "LIST DEVICES";
 
-        public static string ListRegisterDevcies { get;} = "LIST REGISTERED";
+        public static string ListRegisterDevicesCommand { get;} = "LIST REGISTERED";
 
-        public static string RegisterDevice { get; } = "REGISTER";
+        public static string RegisterDeviceCommand { get; } = "REGISTER";
 
-        public static string UnregisterDevice { get; } = "UNREGISTER";
+        public static string UnregisterDeviceCommand { get; } = "UNREGISTER";
 
-        public static string AssignPort { get; } = "ASSIGN PORT";
+        public static string AssignPortCommand { get; } = "ASSIGN PORT";
+
 
 
     }

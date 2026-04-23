@@ -155,12 +155,12 @@ public sealed class SerialPortWorker : ISerialWorker
             var line = current[..nl].TrimEnd('\r');
             _lineBuffer.Remove(0, nl + 1);
 
-            var functionNames = _registry.GetFunctionNames(PortPath);
-            var primaryFunction = functionNames.Count > 0 ? functionNames[0] : PortPath;
+            var functionName = _registry.GetFunctionName(PortPath);
+         //   var primaryFunction = functionNames.Count > 0 ? functionNames[0] : PortPath;
 
             var message = new SerialMessage
             {
-                FunctionName = primaryFunction,
+                FunctionName = functionName,
                 PortPath     = PortPath,
                 Payload      = Encoding.UTF8.GetBytes(line),
                 Text         = line

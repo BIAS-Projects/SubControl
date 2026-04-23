@@ -9,9 +9,9 @@ namespace SubConsole.Services.TCP
     public abstract class TcpCommandBase : ITcpCommand
     {
         public abstract string CommandName { get; }
-        protected abstract Task<OperationResultWithValue<TCPMessageBody>> RunAsync(CancellationToken token);
+        protected abstract Task<OperationResultWithValue<TCPMessageBody<string>>> RunAsync(CancellationToken token);
 
-        public Task<OperationResultWithValue<TCPMessageBody>> ExecuteAsync(CancellationToken token)
+        public Task<OperationResultWithValue<TCPMessageBody<string>>> ExecuteAsync(CancellationToken token)
             => RunAsync(token);
     }
 }

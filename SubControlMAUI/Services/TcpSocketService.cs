@@ -1,4 +1,5 @@
 ﻿using CommunityToolkit.Mvvm.Messaging;
+
 using Microsoft.Extensions.Logging;
 using SubControlMAUI.Messages;
 using SubControlMAUI.Models;
@@ -157,7 +158,7 @@ namespace SubControlMAUI.Services
             var body = sepIdx >= 0 ? frame[(sepIdx + 1)..] : frame;
             try
             {
-                TCPMessageBody messageBody = JsonSerializer.Deserialize<TCPMessageBody>(body);
+                TCPMessageBody<string> messageBody = JsonSerializer.Deserialize<TCPMessageBody<string>>(body);
                 _messenger.Send(new TcpDataReceivedMessage(messageBody));
             }
             catch(Exception ex)
@@ -175,7 +176,7 @@ namespace SubControlMAUI.Services
         //    return await SendCommandAsync(text, callerToken);
         //}
 
-        public async Task<bool> SendCommandAsync(TCPMessageBody messageBody, CancellationToken callerToken = default)
+        public async Task<bool> SendCommandAsync(TCPMessageBody<string> messageBody, CancellationToken callerToken = default)
         {
             if (_socket?.Connected != true)
             {
@@ -188,7 +189,15 @@ namespace SubControlMAUI.Services
             var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             _pendingAcks[id] = tcs;
 
-            string command = $"{messageBody.CommandType}{ TcpProtocol.SEP}{messageBody.Function}{TcpProtocol.SEP}{messageBody.Command} ";
+            var command = JsonSerializer.Serialize<TCPMessageBody<string>>(messageBody);
+
+            if (command == null)
+            {
+                _messenger.Send(new TcpStatusMessage($"Invalid Message {messageBody.ToString()}"));
+                return false;
+            }
+
+          //  string command = $"{messageBody.CommandType}{ TcpProtocol.SEP}{messageBody.Function}{TcpProtocol.SEP}{messageBody.Command} ";
 
             //abc123|WRITE TEXT|TOM_CONTROLLER|$PBLUTP,S,PWR,CTRL,ON,15*29\n
 

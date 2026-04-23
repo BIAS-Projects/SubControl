@@ -1,12 +1,17 @@
+//using Gst;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using SubConsole.Helpers;
 using SubConsole.Models;
 using SubConsole.Services.Serial;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Channels;
+using static SQLite.SQLite3;
 
 namespace SubConsole.Services.TCP;
 
@@ -56,6 +61,23 @@ public sealed class TcpHostService : BackgroundService
         {
             while (!stoppingToken.IsCancellationRequested)
             {
+
+
+                await UsbPortRegistry.Instance.RefreshAsync();
+
+
+                for (int i = 1; i < 10; i++)
+                {
+                    if (UsbPortRegistry.Instance.TryGetPort($"COM{i}", out var info))
+                       Console.WriteLine($"{info.Description} {info.ProductId} {info.PortName} {info.VendorId} {info.SerialNumber}");
+
+ 
+                }
+
+               var result = await _handler.HandleAsync(new TCPMessageBody<string>("", "LIST DEVICES", ""), stoppingToken);
+
+
+
                 var client = await _listener.AcceptTcpClientAsync(stoppingToken);
                 var id     = Guid.NewGuid();
 
@@ -139,7 +161,15 @@ public sealed class TcpHostService : BackgroundService
                 await state.Outgoing.Writer.WriteAsync(
                     $"{TcpProtocol.ACK}{TcpProtocol.SEP}{frame.Id}{TcpProtocol.EOM}", token);
 
-                var result = await _handler.HandleAsync(frame.Command, token);
+                var message = JsonSerializer.Deserialize<TCPMessageBody<string>>(frame.Command);
+
+                if (message == null)
+                {
+                    throw new InvalidOperationException($"Invalid JSON message: {frame.Command}");
+                }
+
+              //  var result = await _handler.HandleAsync(frame.Command, token);
+                var result = await _handler.HandleAsync(message, token);
 
                 await state.Outgoing.Writer.WriteAsync(
                     $"{frame.Id}{TcpProtocol.SEP}{result}{TcpProtocol.EOM}", token);

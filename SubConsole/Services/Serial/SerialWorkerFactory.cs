@@ -4,6 +4,7 @@ using SubConsole.Models;
 using SubConsole.Services.Serial;
 using SubConsole.Services.Serial.Workers;
 using SubConsole.Services.TCP;
+using static SubConsole.Models.UsbDeviceInfo;
 
 namespace SubConsole.Services.Serial;
 

@@ -46,15 +46,15 @@ public sealed class WindowsUsbDeviceEnumerator : IUsbDeviceEnumerator
                 {
                     token.ThrowIfCancellationRequested();
 
-                    var pnpId   = obj["PNPDeviceID"]?.ToString() ?? string.Empty;
-                    var caption = obj["Caption"]?.ToString()      ?? string.Empty;
-                    var mfr     = obj["Manufacturer"]?.ToString() ?? string.Empty;
+                    var pnpId = obj["PNPDeviceID"]?.ToString() ?? string.Empty;
+                    var caption = obj["Caption"]?.ToString() ?? string.Empty;
+                    var mfr = obj["Manufacturer"]?.ToString() ?? string.Empty;
 
                     // Extract VID / PID / SN from the PNP device ID
                     // e.g. USB\VID_0403&PID_6001\A9Z3KF01
                     var vid = ExtractSegment(pnpId, @"VID_([0-9A-Fa-f]{4})");
                     var pid = ExtractSegment(pnpId, @"PID_([0-9A-Fa-f]{4})");
-                    var sn  = ExtractSerialNumber(pnpId);
+                    var sn = ExtractSerialNumber(pnpId);
 
                     if (string.IsNullOrEmpty(vid))
                         continue;
@@ -107,9 +107,9 @@ public sealed class WindowsUsbDeviceEnumerator : IUsbDeviceEnumerator
 
 public sealed class LinuxUsbDeviceEnumerator : IUsbDeviceEnumerator
 {
-    private static readonly string SysUsbBase  = "/sys/bus/usb/devices";
-    private static readonly string ByIdDir     = "/dev/serial/by-id";
-    private static readonly string ByPathDir   = "/dev/serial/by-path";
+    private static readonly string SysUsbBase = "/sys/bus/usb/devices";
+    private static readonly string ByIdDir = "/dev/serial/by-id";
+    private static readonly string ByPathDir = "/dev/serial/by-path";
 
     private readonly ILogger<LinuxUsbDeviceEnumerator> _logger;
 
@@ -163,7 +163,7 @@ public sealed class LinuxUsbDeviceEnumerator : IUsbDeviceEnumerator
 
             // Extract VID / PID from sysfs using the resolved tty name
             var (vid, pid) = ReadVidPidFromSysFs(portPath);
-            var sn  = ExtractSnFromByIdName(name);
+            var sn = ExtractSnFromByIdName(name);
             var mfr = parts.Length >= 2 ? parts[1] : "Unknown";
             var desc = name;
 
@@ -208,10 +208,10 @@ public sealed class LinuxUsbDeviceEnumerator : IUsbDeviceEnumerator
         {
             token.ThrowIfCancellationRequested();
 
-            var vid  = ReadSysFile(devDir, "idVendor");
-            var pid  = ReadSysFile(devDir, "idProduct");
-            var sn   = ReadSysFile(devDir, "serial");
-            var mfr  = ReadSysFile(devDir, "manufacturer");
+            var vid = ReadSysFile(devDir, "idVendor");
+            var pid = ReadSysFile(devDir, "idProduct");
+            var sn = ReadSysFile(devDir, "serial");
+            var mfr = ReadSysFile(devDir, "manufacturer");
             var desc = ReadSysFile(devDir, "product");
 
             if (string.IsNullOrEmpty(vid)) continue;
@@ -238,13 +238,13 @@ public sealed class LinuxUsbDeviceEnumerator : IUsbDeviceEnumerator
         // Breadth-first search for directories named "tty".
         // Cannot yield inside a try/catch (CS1626), so results are collected
         // into a list and yielded after the loop completes.
-        var queue   = new Queue<string>();
+        var queue = new Queue<string>();
         var results = new List<string>();
         queue.Enqueue(baseDir);
 
         while (queue.Count > 0)
         {
-            var dir      = queue.Dequeue();
+            var dir = queue.Dequeue();
             var toEnqueue = new List<string>();
 
             try

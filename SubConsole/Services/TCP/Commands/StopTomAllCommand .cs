@@ -19,10 +19,10 @@ namespace SubConsole.Services.TCP.Commands
 
 
 
-        protected override async Task<OperationResultWithValue<TCPMessageBody>> RunAsync( CancellationToken token)
+        protected override async Task<OperationResultWithValue<TCPMessageBody<string>>> RunAsync( CancellationToken token)
         {
             Console.WriteLine("STOP TOM ALL");
-            return OperationResultWithValue<TCPMessageBody>.Success(null);
+            return OperationResultWithValue<TCPMessageBody<string>>.Success(null);
         }
     }
 }

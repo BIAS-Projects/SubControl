@@ -8,9 +8,9 @@ namespace SubControlMAUI.Messages
     using CommunityToolkit.Mvvm.Messaging.Messages;
     using SubControlMAUI.Models;
 
-    public sealed class TcpDataReceivedMessage : ValueChangedMessage<TCPMessageBody>
+    public sealed class TcpDataReceivedMessage : ValueChangedMessage<TCPMessageBody<string>>
     {
-        public TcpDataReceivedMessage(TCPMessageBody value) : base(value) { }
+        public TcpDataReceivedMessage(TCPMessageBody<string> value) : base(value) { }
     }
 
     //public sealed class TcpDataReceivedMessage : ValueChangedMessage<byte[]>
@@ -38,9 +38,9 @@ namespace SubControlMAUI.Messages
     //    public TcpSendRequestMessage(string value) : base(value) { }
     //}
 
-    public sealed class TcpSendRequestMessage : ValueChangedMessage<TCPMessageBody>
+    public sealed class TcpSendRequestMessage : ValueChangedMessage<TCPMessageBody<string>>
     {
-        public TcpSendRequestMessage(TCPMessageBody value) : base(value) { }
+        public TcpSendRequestMessage(TCPMessageBody<string> value) : base(value) { }
     }
 
 

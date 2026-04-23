@@ -17,7 +17,7 @@ namespace SubConsole.Services.TCP.Commands
         private readonly TcpSerialCommandHandler _service;
         public override string CommandName => "START TOM ALL";
 
-        protected override Task<OperationResultWithValue<TCPMessageBody>> RunAsync(CancellationToken token)
+        protected override Task<OperationResultWithValue<TCPMessageBody<string>>> RunAsync(CancellationToken token)
         {
             throw new NotImplementedException();
         }

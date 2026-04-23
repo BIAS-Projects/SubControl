@@ -183,13 +183,13 @@ namespace SubControlMAUI.ViewModels
         [RelayCommand]
         async Task StartTOM()
         {
-            SendDeviceCommand(TOMCommands.CommandType, TOMCommands.Function, TOMCommands.TurnOnAllSystemsCommand);
+            SendDeviceCommand(FunctionTypes.TomCommand, TOMCommands.WriteCommand, TOMCommands.TurnOnAllSystemsCommand);
         }
 
         [RelayCommand]
         async Task StopTOM()
         {
-            SendDeviceCommand(TOMCommands.CommandType, TOMCommands.Function, TOMCommands.TurnOffAllSystemsCommand);
+            SendDeviceCommand(FunctionTypes.TomCommand, TOMCommands.WriteCommand, TOMCommands.TurnOffAllSystemsCommand);
         }
 
         [RelayCommand]
@@ -207,13 +207,13 @@ namespace SubControlMAUI.ViewModels
         [RelayCommand]
         async Task ListDevices()
         {
-            SendDeviceCommand(SystemCommands.ListDevices,"","");
+            SendDeviceCommand(FunctionTypes.SystemCommand, SystemCommands.ListDevicesCommand, "");
         }
 
         [RelayCommand]
         async Task ListRegisteredDevices()
         {
-            SendDeviceCommand(SystemCommands.ListRegisterDevcies,"","");
+            SendDeviceCommand(FunctionTypes.SystemCommand, SystemCommands.ListRegisterDevicesCommand, "");
         }
 
         [RelayCommand]
@@ -327,25 +327,25 @@ namespace SubControlMAUI.ViewModels
             //      var bytes = System.Text.Encoding.UTF8.GetBytes(text);
             //   _messenger.Send(new TcpSendRequestMessage(bytes));
 
-            _messenger.Send(new TcpSendRequestMessage(new TCPMessageBody(
-                CommandType: "LIST DEVICES",
-                Function: "",
-                Command: ""
+            _messenger.Send(new TcpSendRequestMessage(new TCPMessageBody<string>(
+                Function: "SYSTEM",
+                Command: "LIST DEVICES",
+                Data: ""
             )));
 
             IsBusy = false;
         }
 
-        public void SendDeviceCommand(string commandType, string function, string command)
+        public void SendDeviceCommand(string function, string command, string data)
         {
             IsBusy = true;
             //      var bytes = System.Text.Encoding.UTF8.GetBytes(text);
             //   _messenger.Send(new TcpSendRequestMessage(bytes));
 
-            _messenger.Send(new TcpSendRequestMessage(new TCPMessageBody(
-                CommandType: commandType,
+            _messenger.Send(new TcpSendRequestMessage(new TCPMessageBody<string>(
                 Function: function,
-                Command: command
+                Command: command,
+                Data: data
             )));
 
             IsBusy = false;

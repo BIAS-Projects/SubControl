@@ -1,4 +1,5 @@
 using SubConsole.Models;
+using static SubConsole.Models.UsbDeviceInfo;
 
 namespace SubConsole.Services.Serial.Commands;
 
@@ -67,7 +68,8 @@ public sealed class ListRegisteredDevicesCommand : ISerialCommand
 public sealed class RegisterDeviceCommand : ISerialCommand
 {
     public required DeviceIdentifier  Identifier    { get; init; }
-    public required IEnumerable<string> FunctionNames { get; init; }
+    //public required IEnumerable<string> FunctionNames { get; init; }
+    public required string FunctionName { get; init; }
 
     /// <summary>
     /// When true the manager will also open the serial port immediately
@@ -82,12 +84,12 @@ public sealed class RegisterDeviceCommand : ISerialCommand
         ISerialPortManagerService manager,
         CancellationToken token)
     {
-        manager.RegisterDevice(Identifier, FunctionNames);
+        manager.RegisterDevice(Identifier, FunctionName, BaudRate, WorkerType);
 
         if (!AutoOpen)
             return OperationResult.Success();
 
-        return await manager.OpenPortAsync(Identifier.Key, BaudRate, WorkerType, token);
+        return await manager.OpenPortAsync(Identifier.Key, token);
     }
 }
 
@@ -122,7 +124,7 @@ public sealed class OpenPortCommand : ISerialCommand
     public Task<OperationResult> ExecuteAsync(
         ISerialPortManagerService manager,
         CancellationToken token)
-        => manager.OpenPortAsync(DeviceKey, BaudRate, WorkerType, token);
+        => manager.OpenPortAsync(DeviceKey, token);
 }
 
 /// <summary>

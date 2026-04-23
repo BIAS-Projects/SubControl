@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using SubConsole.Models;
 using System.Collections.Concurrent;
+using static SubConsole.Models.UsbDeviceInfo;
 
 namespace SubConsole.Services.Serial;
 
@@ -17,7 +18,7 @@ public interface IDeviceRegistry
     /// Register a device and associate it with one or more function names.
     /// Call this at startup or when a USB hotplug event is detected.
     /// </summary>
-    void Register(DeviceIdentifier identifier, IEnumerable<string> functionNames);
+    void Register(DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType serialWorker);
 
     /// <summary>Remove a device registration (e.g. on USB unplug).</summary>
     void Unregister(DeviceIdentifier identifier);
@@ -45,7 +46,7 @@ public interface IDeviceRegistry
     /// Return the function names bound to the port that produced a message.
     /// Used when routing received data back to callers.
     /// </summary>
-    IReadOnlyList<string> GetFunctionNames(string portPath);
+    string GetFunctionName(string portPath);
 
     /// <summary>All currently registered devices.</summary>
     IReadOnlyList<DeviceRegistration> AllRegistrations { get; }
@@ -68,19 +69,15 @@ public sealed class DeviceRegistry : IDeviceRegistry
 
     // ── Registration ──────────────────────────────────────────────────────────
 
-    public void Register(DeviceIdentifier identifier, IEnumerable<string> functionNames)
+    public void Register(DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType serialWorker)
     {
-        var fns = functionNames.ToList();
-        var reg = new DeviceRegistration(identifier, fns);
+       // var fns = functionNames.ToList();
+        var reg = new DeviceRegistration(identifier, functionName, baudRate, serialWorker);
 
         _byKey[identifier.Key] = reg;
 
-        foreach (var fn in fns)
-        {
-            _byFunction[fn] = identifier.Key;
-            _logger.LogInformation(
-                "Registered function '{Function}' → device {Key}", fn, identifier.Key);
-        }
+        _logger.LogInformation("Registered function '{Function}' → device {Key}", functionName, identifier.Key);
+
     }
 
     public void Unregister(DeviceIdentifier identifier)
@@ -88,8 +85,8 @@ public sealed class DeviceRegistry : IDeviceRegistry
         if (!_byKey.TryRemove(identifier.Key, out var reg))
             return;
 
-        foreach (var fn in reg.FunctionNames)
-            _byFunction.TryRemove(fn, out _);
+      //  foreach (var fn in reg.FunctionName)
+            _byFunction.TryRemove(reg.FunctionName, out _);
 
         // Remove port mapping if present
         var stalePort = _byPort
@@ -146,14 +143,24 @@ public sealed class DeviceRegistry : IDeviceRegistry
         return reg.CurrentPortPath;
     }
 
-    public IReadOnlyList<string> GetFunctionNames(string portPath)
+    //public IReadOnlyList<string> GetFunctionNames(string portPath)
+    //{
+    //    if (!_byPort.TryGetValue(portPath, out var key))
+    //        return Array.Empty<string>();
+
+    //    return _byKey.TryGetValue(key, out var reg)
+    //        ? reg.FunctionName
+    //        : Array.Empty<string>();
+    //}
+
+    public string GetFunctionName(string portPath)
     {
         if (!_byPort.TryGetValue(portPath, out var key))
-            return Array.Empty<string>();
+            return String.Empty;
 
         return _byKey.TryGetValue(key, out var reg)
-            ? reg.FunctionNames
-            : Array.Empty<string>();
+            ? reg.FunctionName
+            : String.Empty;
     }
 
     public IReadOnlyList<DeviceRegistration> AllRegistrations =>

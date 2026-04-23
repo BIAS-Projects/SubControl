@@ -10,11 +10,12 @@ namespace SubConsole.Models
     //await HandleCommand("COM5", "SEND", $"$PBLUTP,S,PWR,CTRL,ON,15*29");
     public static class TOMCommands
     {
-        public static string Function { get; set; } = "TOM_CONTROLLER";
+        public static string OpenCommand { get; set; } = "OPEN";
+        public static string WriteCommand { get; set; } = "WRITE TEXT";
 
-        public static string CommandType { get; set; } = "WRITE TEXT";
+        public static string CloseCommand { get; set; } = "CLOSE";
 
-        public static string CommandPort { get; set; } = "COM5";
+        //public static string CommandPort { get; set; } = "COM5";
 
         public static int TomBaudCommandBaudRate { get; set; } = 115200;
 

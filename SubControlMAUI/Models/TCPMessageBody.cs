@@ -21,5 +21,5 @@ namespace SubControlMAUI.Models
 
 
     //abc123|WRITE TEXT|TOM_CONTROLLER|$PBLUTP,S,PWR,CTRL,ON,15*29\n
-    public record TCPMessageBody(string CommandType, string Function, string Command);
+    public record TCPMessageBody<T>(string Function, string Command, T? Data);
 }

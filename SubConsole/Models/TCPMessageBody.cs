@@ -4,5 +4,5 @@ using System.Text;
 
 namespace SubConsole.Models
 {
-    public record TCPMessageBody(string MessageID, string Function, string Command, object? Data);
+    public record TCPMessageBody<T>(string Function, string Command, T? Data);
 }

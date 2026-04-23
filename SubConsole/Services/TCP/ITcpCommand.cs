@@ -10,6 +10,6 @@ namespace SubConsole.Services.TCP
     {
         string CommandName { get; }
 
-        Task<OperationResultWithValue<TCPMessageBody>> ExecuteAsync(CancellationToken token);
+        Task<OperationResultWithValue<TCPMessageBody<string>>> ExecuteAsync(CancellationToken token);
     }
 }
