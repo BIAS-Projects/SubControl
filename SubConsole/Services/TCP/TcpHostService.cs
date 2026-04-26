@@ -1,9 +1,11 @@
-//using Gst;
+
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using SubConsole.Helpers;
 using SubConsole.Models;
 using SubConsole.Services.Serial;
+using SubConsole.Services.TCP.Commands;
+using SubControlMAUI.Models;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
@@ -12,6 +14,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Channels;
 using static SQLite.SQLite3;
+using static SubConsole.Models.UsbDeviceInfo;
 
 namespace SubConsole.Services.TCP;
 
@@ -57,6 +60,105 @@ public sealed class TcpHostService : BackgroundService
         _listener.Start();
         _logger.LogInformation("TCP server started on port 9000");
 
+        //TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  
+
+        string key = $"::USB\\VID_CAFE\u0026PID_4001\u0026MI_00\\7\u0026B7F3F1C\u00260\u00260000";
+
+        Console.WriteLine("LIST DEVICES");
+        TCPMessageBody<string> command = new TCPMessageBody<string>("TOM", "LIST DEVICES", "");
+        var result = await _handler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+        Console.WriteLine("LIST REGISTERED");
+        command = new TCPMessageBody<string>("TOM", "LIST REGISTERED", "");
+        result = await _handler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+        Console.WriteLine("REGISTER");
+        FunctionToPortEntry entry = new FunctionToPortEntry()
+        {
+            DeviceKey = key,
+            FunctionName = "TOM Input",
+            BaudRate = "115200",
+            WorkerType = SerialWorkerType.Text.ToString()
+        };
+        var json = JsonSerializer.Serialize<FunctionToPortEntry>(entry);
+        command = new TCPMessageBody<string>("TOM", "REGISTER", json);
+        result = await _handler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+        Console.WriteLine("LIST REGISTERED");
+        command = new TCPMessageBody<string>("TOM", "LIST REGISTERED", "");
+        result = await _handler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+        Console.WriteLine("UNREGISTER");
+        command = new TCPMessageBody<string>("TOM", "UNREGISTER","TOM ");
+        result = await _handler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+        Console.WriteLine("UNREGISTER");
+        command = new TCPMessageBody<string>("TOM", "UNREGISTER", key);
+        result = await _handler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+        Console.WriteLine("LIST REGISTERED");
+        command = new TCPMessageBody<string>("TOM", "LIST REGISTERED", "");
+        result = await _handler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+        Console.WriteLine("REGISTER");
+        //entry = new FunctionToPortEntry()
+        //{
+        //    DeviceKey = "0403:6011:FTDIBUS\\VID_0403+PID_6011+BP04126-01A\\0000:BP04126-01A",
+        //    FunctionName = "TOM Input",
+        //    BaudRate = "115200",
+        //    WorkerType = SerialWorkerType.Text.ToString()
+        //};
+        json = JsonSerializer.Serialize<FunctionToPortEntry>(entry);
+        command = new TCPMessageBody<string>("TOM", "REGISTER", json);
+        result = await _handler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+        Console.WriteLine("OPEN COMM ");
+        command = new TCPMessageBody<string>("TOM", "OPEN", key);
+        result = await _handler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+        Console.WriteLine("OPEN COMM  TWICE");
+        command = new TCPMessageBody<string>("TOM", "OPEN", key);
+        result = await _handler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+        Console.WriteLine("CLOSE COMM ");
+        command = new TCPMessageBody<string>("TOM", "CLOSE", key);
+        result = await _handler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+        Console.WriteLine("CLOSE COMM  TWICE");
+        command = new TCPMessageBody<string>("TOM", "CLOSE", key);
+        result = await _handler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+        Console.WriteLine("WRITE TEXT TO CLOSED PORT");
+        command = new TCPMessageBody<string>("TOM Input", "WRITE TEXT", TOM.TurnOnAllSystemsCommand);
+        result = await _handler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+        Console.WriteLine("OPEN COMM ");
+        command = new TCPMessageBody<string>("TOM", "OPEN", key);
+        result = await _handler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+        Console.WriteLine("WRITE TEXT");
+        command = new TCPMessageBody<string>("TOM Input", "WRITE TEXT", TOM.TurnOnAllSystemsCommand);
+        result = await _handler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+
+
+
+        //TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  
+
         try
         {
             while (!stoppingToken.IsCancellationRequested)
@@ -64,19 +166,6 @@ public sealed class TcpHostService : BackgroundService
 
 
                 await UsbPortRegistry.Instance.RefreshAsync();
-
-
-                for (int i = 1; i < 10; i++)
-                {
-                    if (UsbPortRegistry.Instance.TryGetPort($"COM{i}", out var info))
-                       Console.WriteLine($"{info.Description} {info.ProductId} {info.PortName} {info.VendorId} {info.SerialNumber}");
-
- 
-                }
-
-               var result = await _handler.HandleAsync(new TCPMessageBody<string>("", "LIST DEVICES", ""), stoppingToken);
-
-
 
                 var client = await _listener.AcceptTcpClientAsync(stoppingToken);
                 var id     = Guid.NewGuid();
@@ -93,6 +182,8 @@ public sealed class TcpHostService : BackgroundService
                 _ = Task.Run(() => ReceiveLoop(state, stoppingToken), stoppingToken);
                 _ = Task.Run(() => ProcessLoop(state, stoppingToken), stoppingToken);
                 _ = Task.Run(() => SendLoop(state, stoppingToken),    stoppingToken);
+
+
             }
         }
         catch (OperationCanceledException) { }

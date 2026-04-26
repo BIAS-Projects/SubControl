@@ -36,7 +36,7 @@ public static class UsbSerialPortMapper
 //UsbPortRegistry.Instance.PortChanged += (_, e) =>
 //    logger.LogInformation("{Kind}: {Port}", e.Kind, e.Port.PortName);
 
-    public static async Task<IReadOnlyList<UsbSerialPortInfo>> GetUsbSerialPortsAsync()
+    public static async Task<IReadOnlyList<UsbSerialPortInfo>> GetUsbSerialPortsAsync(CancellationToken token)
     {
         await _lock.WaitAsync();
         try
@@ -44,10 +44,10 @@ public static class UsbSerialPortMapper
             return await Task.Run(() =>
             {
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                    return GetWindowsUsbSerialPorts();
+                    return GetWindowsUsbSerialPorts(token);
 
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-                    return GetLinuxUsbSerialPorts();
+                    return GetLinuxUsbSerialPorts(token);
 
                 return Array.Empty<UsbSerialPortInfo>();
             });
@@ -58,9 +58,12 @@ public static class UsbSerialPortMapper
         }
     }
 
-    public static async Task<string> GetUsbSerialPortsAsJsonAsync()
+
+
+
+    public static async Task<string> GetUsbSerialPortsAsJsonAsync(CancellationToken token)
     {
-        var ports = await GetUsbSerialPortsAsync();
+        var ports = await GetUsbSerialPortsAsync(token);
         return JsonSerializer.Serialize(ports, new JsonSerializerOptions
         {
             WriteIndented = true
@@ -69,7 +72,7 @@ public static class UsbSerialPortMapper
 
     // ---------------- WINDOWS ----------------
 
-    private static IReadOnlyList<UsbSerialPortInfo> GetWindowsUsbSerialPorts()
+    private static IReadOnlyList<UsbSerialPortInfo> GetWindowsUsbSerialPorts(CancellationToken token)
     {
         var results = new List<UsbSerialPortInfo>();
 
@@ -125,7 +128,7 @@ public static class UsbSerialPortMapper
                 }
             }
 
-            results.AddRange(GetFtdiBusSerialPorts());
+            results.AddRange(GetFtdiBusSerialPorts(token));
         }
         catch (Exception ex)
         {
@@ -136,7 +139,7 @@ public static class UsbSerialPortMapper
         return results;
     }
 
-    private static IEnumerable<UsbSerialPortInfo> GetFtdiBusSerialPorts()
+    private static IEnumerable<UsbSerialPortInfo> GetFtdiBusSerialPorts(CancellationToken token)
     {
         var results = new List<UsbSerialPortInfo>();
 
@@ -228,7 +231,7 @@ public static class UsbSerialPortMapper
 
     // ---------------- LINUX ----------------
 
-    private static IReadOnlyList<UsbSerialPortInfo> GetLinuxUsbSerialPorts()
+    private static IReadOnlyList<UsbSerialPortInfo> GetLinuxUsbSerialPorts(CancellationToken token)
     {
         var results = new List<UsbSerialPortInfo>();
 
@@ -423,7 +426,7 @@ public sealed class UsbPortRegistry
         try
         {
             var discovered = await UsbSerialPortMapper
-                .GetUsbSerialPortsAsync()
+                .GetUsbSerialPortsAsync(cancellationToken)
                 .ConfigureAwait(false);
 
             ApplySnapshot(discovered);

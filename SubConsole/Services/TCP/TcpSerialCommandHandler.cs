@@ -99,13 +99,13 @@ public sealed class TcpSerialCommandHandler
 
         var payload = cmd.Result!.Select(d => new
         {
-            key          = d.Identifier.Key,
-            vendorId     = d.Identifier.VendorId,
-            productId    = d.Identifier.ProductId,
-            serialNumber = d.Identifier.SerialNumber,
-            manufacturer = d.Identifier.Manufacturer,
-            description  = d.Identifier.Description,
-            portPath     = d.PortPath
+            key          = d.Key,
+            vendorId     = d.VendorId,
+            productId    = d.ProductId,
+            serialNumber = d.SerialNumber,
+            manufacturer = d.VendorId,
+            description  = d.Description,
+            portPath     = d.PortName
         });
 
         return SuccessResponse(payload);
@@ -131,11 +131,18 @@ public sealed class TcpSerialCommandHandler
     {
         int baudrate;
         SerialWorkerType serialWorkerType;
-        FunctionToPortEntry entry = JsonSerializer.Deserialize<FunctionToPortEntry>(message.Command);
-
+        FunctionToPortEntry entry;
+        try
+        {
+            entry = JsonSerializer.Deserialize<FunctionToPortEntry>(message.Data);
+        }
+        catch (Exception ex)
+        {
+            return ErrorResponse($"HandleRegisterAsync JSON DeserializeException: {message.Data} {ex.Message}");
+        }
         if(entry is null)
         {
-            return ErrorResponse($"HandleRegisterAsync invalid JSON: {message.Command}");
+            return ErrorResponse($"HandleRegisterAsync invalid JSON: {message.Data}");
         }
         if(String.IsNullOrWhiteSpace(entry.DeviceKey))
         {
@@ -149,30 +156,30 @@ public sealed class TcpSerialCommandHandler
         {
             return ErrorResponse("HandleRegisterAsync Baudrate cannot be empty");
         }
-        if (int.TryParse(entry.BaudRate, out baudrate))
+        if (!int.TryParse(entry.BaudRate, out baudrate))
         {
-            return ErrorResponse("HandleRegisterAsync DeviceKey must be numeric");
+            return ErrorResponse("HandleRegisterAsync BaudRate must be numeric");
         }
         if (String.IsNullOrWhiteSpace(entry.WorkerType))
         {
             return ErrorResponse("HandleRegisterAsync WorkerType cannot be empty");
         }
-        if (Enum.TryParse<SerialWorkerType>(entry.WorkerType, out serialWorkerType))
+        if (!Enum.TryParse<SerialWorkerType>(entry.WorkerType, out serialWorkerType))
         {
-            return ErrorResponse("HandleRegisterAsync WorkerType must be a registed type");
+            return ErrorResponse($"HandleRegisterAsync WorkerType must be a registered type: {entry.WorkerType} submitted");
         }
 
            var devices = await _manager.EnumerateUsbDevicesAsync(token);
-        var found = devices.FirstOrDefault(d => d.Identifier.Key == entry.DeviceKey);
+        var found = devices.FirstOrDefault(d => d.Key == entry.DeviceKey);
 
-        if (found.Identifier is null)
-            return ErrorResponse($"Device '{entry.DeviceKey}' not found in USB enumeration");
+        if (found is null)
+            return ErrorResponse($"Device '{entry.DeviceKey}' not found in connected USB Devices");
 
         var result = await _dispatcher.DispatchAsync(new RegisterDeviceCommand
         {
-            Identifier = found.Identifier,
+            Identifier = found,
             FunctionName = entry.FunctionName,
-            AutoOpen = true,
+            AutoOpen = false,
             BaudRate = baudrate,
             WorkerType = serialWorkerType
         }, token);
@@ -188,34 +195,22 @@ public sealed class TcpSerialCommandHandler
     private async Task<string> HandleUnregisterAsync(TCPMessageBody<string> message, CancellationToken token)
     {
 
-        FunctionToPortEntry entry = JsonSerializer.Deserialize<FunctionToPortEntry>(message.Command);
-
-        if (entry is null)
-        {
-            return ErrorResponse($"HandleUnregisterAsync invalid JSON: {message.Command}");
-        }
-        if (String.IsNullOrWhiteSpace(entry.DeviceKey))
+        if (String.IsNullOrWhiteSpace(message.Data))
         {
             return ErrorResponse("HandleUnregisterAsync DeviceKey cannot be empty");
         }
 
         var result = await _dispatcher.DispatchAsync(
-            new UnregisterDeviceCommand { DeviceKey = entry.DeviceKey }, token);
+            new UnregisterDeviceCommand { DeviceKey = message.Data }, token);
 
         return result.IsSuccess
-            ? SuccessResponse(new { deviceKey = entry.DeviceKey })
+            ? SuccessResponse(new { deviceKey = message.Data })
             : ErrorResponse(result.Message);
     }
 
     private async Task<string> HandleOpenAsync(TCPMessageBody<string> message, CancellationToken token)
     {
-        FunctionToPortEntry entry = JsonSerializer.Deserialize<FunctionToPortEntry>(message.Command);
-
-        if (entry is null)
-        {
-            return ErrorResponse($"HandleUnregisterAsync invalid JSON: {message.Command}");
-        }
-        if (String.IsNullOrWhiteSpace(entry.DeviceKey))
+        if (String.IsNullOrWhiteSpace(message.Data))
         {
             return ErrorResponse("HandleUnregisterAsync DeviceKey cannot be empty");
         }
@@ -233,23 +228,18 @@ public sealed class TcpSerialCommandHandler
 
         var result = await _dispatcher.DispatchAsync(new OpenPortCommand
         {
-            DeviceKey  = entry.DeviceKey,
+            DeviceKey  = message.Data,
         }, token);
 
         return result.IsSuccess
-            ? SuccessResponse(new { entry.DeviceKey })
+            ? SuccessResponse(new { message.Data })
             : ErrorResponse(result.Message);
     }
 
     private async Task<string> HandleCloseAsync(TCPMessageBody<string> message, CancellationToken token)
     {
-        FunctionToPortEntry entry = JsonSerializer.Deserialize<FunctionToPortEntry>(message.Command);
 
-        if (entry is null)
-        {
-            return ErrorResponse($"HandleCloseAsync invalid JSON: {message.Command}");
-        }
-        if (String.IsNullOrWhiteSpace(entry.DeviceKey))
+        if (String.IsNullOrWhiteSpace(message.Data))
         {
             return ErrorResponse("HandleUnregisterAsync DeviceKey cannot be empty");
         }
@@ -258,10 +248,10 @@ public sealed class TcpSerialCommandHandler
         //    return ErrorResponse("CLOSE requires: CLOSE|deviceKey");
 
         var result = await _dispatcher.DispatchAsync(
-            new ClosePortCommand { DeviceKey = entry.DeviceKey }, token);
+            new ClosePortCommand { DeviceKey = message.Data }, token);
 
         return result.IsSuccess
-            ? SuccessResponse(new { deviceKey = entry.DeviceKey })
+            ? SuccessResponse(new { deviceKey = message.Data })
             : ErrorResponse(result.Message);
     }
 

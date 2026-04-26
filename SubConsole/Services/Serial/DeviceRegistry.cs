@@ -18,10 +18,11 @@ public interface IDeviceRegistry
     /// Register a device and associate it with one or more function names.
     /// Call this at startup or when a USB hotplug event is detected.
     /// </summary>
-    void Register(DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType serialWorker);
-
+  //  void Register(DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType serialWorker);
+    void Register(UsbSerialPortInfo identifier, string functionName, int baudRate, SerialWorkerType serialWorker);
     /// <summary>Remove a device registration (e.g. on USB unplug).</summary>
-    void Unregister(DeviceIdentifier identifier);
+  //  void Unregister(DeviceIdentifier identifier);
+    void Unregister(UsbSerialPortInfo identifier);
 
     // ── Port path management ──────────────────────────────────────────────────
 
@@ -61,6 +62,7 @@ public sealed class DeviceRegistry : IDeviceRegistry
 
     // functionName → deviceKey  (one function name maps to exactly one device)
     private readonly ConcurrentDictionary<string, string> _byFunction = new(StringComparer.OrdinalIgnoreCase);
+  //  private readonly ConcurrentDictionary<string, DeviceRegistration> _byFunction = new();
 
     // portPath → deviceKey  (updated when a port is opened)
     private readonly ConcurrentDictionary<string, string> _byPort = new(StringComparer.OrdinalIgnoreCase);
@@ -69,18 +71,22 @@ public sealed class DeviceRegistry : IDeviceRegistry
 
     // ── Registration ──────────────────────────────────────────────────────────
 
-    public void Register(DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType serialWorker)
+//    public void Register(DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType serialWorker)
+    public void Register(UsbSerialPortInfo identifier, string functionName, int baudRate, SerialWorkerType serialWorker)
     {
        // var fns = functionNames.ToList();
         var reg = new DeviceRegistration(identifier, functionName, baudRate, serialWorker);
 
         _byKey[identifier.Key] = reg;
 
+        _byFunction[functionName] = identifier.Key;
+
         _logger.LogInformation("Registered function '{Function}' → device {Key}", functionName, identifier.Key);
 
     }
 
-    public void Unregister(DeviceIdentifier identifier)
+ //   public void Unregister(DeviceIdentifier identifier)
+    public void Unregister(UsbSerialPortInfo identifier)
     {
         if (!_byKey.TryRemove(identifier.Key, out var reg))
             return;

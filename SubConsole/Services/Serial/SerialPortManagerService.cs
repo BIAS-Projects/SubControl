@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using SubConsole.Helpers;
 using SubConsole.Models;
 using SubConsole.Services.Serial.Commands;
 using System.Collections.Concurrent;
@@ -22,11 +23,13 @@ namespace SubConsole.Services.Serial;
 public interface ISerialPortManagerService
 {
     // ── USB enumeration ───────────────────────────────────────────────────────
-    Task<IReadOnlyList<(DeviceIdentifier Identifier, string PortPath)>> EnumerateUsbDevicesAsync(
+    Task<IReadOnlyList<UsbSerialPortInfo>> EnumerateUsbDevicesAsync(
         CancellationToken token = default);
 
     // ── Registry ──────────────────────────────────────────────────────────────
-    void RegisterDevice(DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType type);
+    //   void RegisterDevice(DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType type);
+    void RegisterDevice(UsbSerialPortInfo identifier, string functionName, int baudRate, SerialWorkerType type);
+
     Task<OperationResult> UnregisterDeviceAsync(string deviceKey, CancellationToken token = default);
     IReadOnlyList<DeviceRegistration> GetRegisteredDevices();
 
@@ -56,7 +59,7 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
 {
     private readonly ILogger<SerialPortManagerService> _logger;
     private readonly IDeviceRegistry _registry;
-    private readonly IUsbDeviceEnumerator _enumerator;
+    //   private readonly IUsbDeviceEnumerator _enumerator;
     private readonly ISerialWorkerFactory _workerFactory;
 
     // deviceKey → worker
@@ -78,7 +81,7 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
     {
         _logger        = logger;
         _registry      = registry;
-        _enumerator    = enumerator;
+      //  _enumerator    = enumerator;
         _workerFactory = workerFactory;
     }
 
@@ -98,26 +101,35 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
 
     // ── USB enumeration ───────────────────────────────────────────────────────
 
-    public Task<IReadOnlyList<(DeviceIdentifier Identifier, string PortPath)>>
-        EnumerateUsbDevicesAsync(CancellationToken token = default)
-        => _enumerator.EnumerateAsync(token);
+    public async Task<IReadOnlyList<UsbSerialPortInfo>>
+    EnumerateUsbDevicesAsync(CancellationToken token = default)
+    => await UsbSerialPortMapper.GetUsbSerialPortsAsync(token);
+
 
     // ── Registry ──────────────────────────────────────────────────────────────
 
-    public void RegisterDevice(DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType type)
-        => _registry.Register(identifier, functionName, baudRate, type);
+    //public void RegisterDevice(DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType type)
+    //    => _registry.Register(identifier, functionName, baudRate, type);
+
+    public void RegisterDevice(UsbSerialPortInfo identifier, string functionName, int baudRate, SerialWorkerType type)
+    => _registry.Register(identifier, functionName, baudRate, type);
 
     public async Task<OperationResult> UnregisterDeviceAsync(
         string deviceKey, CancellationToken token = default)
     {
         var close = await ClosePortAsync(deviceKey, token);
-        if (!close.IsSuccess) return close;
+     //   if (!close.IsSuccess) return close;
 
         var reg = _registry.AllRegistrations.FirstOrDefault(r => r.Identifier.Key == deviceKey);
         if (reg is not null)
+        {
             _registry.Unregister(reg.Identifier);
-
-        return OperationResult.Success();
+            return OperationResult.Success();
+        }
+        else
+        {
+            return OperationResult.Failure($"Key: {deviceKey} not found in registered device list");
+        }
     }
 
     public IReadOnlyList<DeviceRegistration> GetRegisteredDevices()
@@ -271,10 +283,13 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
         SerialWorkerType defaultType,
         CancellationToken token = default)
     {
-        var devices = await _enumerator.EnumerateAsync(token);
+        //var devices = await _enumerator.EnumerateAsync(token);
+        var devices = await UsbSerialPortMapper.GetUsbSerialPortsAsync(token);
+
+
         int opened = 0;
 
-        foreach (var (identifier, portPath) in devices)
+        foreach (UsbSerialPortInfo identifier in devices)
         {
             // Update the registry with current OS port paths for known devices
             var existing = _registry.AllRegistrations
@@ -284,11 +299,11 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
             {
                 _logger.LogDebug(
                     "AutoDiscover: unregistered device {Key} found on {Port}",
-                    identifier.Key, portPath);
+                    identifier.Key, identifier.PortName);
                 continue;
             }
 
-            _registry.SetPortPath(identifier.Key, portPath);
+            _registry.SetPortPath(identifier.Key, identifier.PortName);
 
             if (!autoOpen || _workers.ContainsKey(identifier.Key)) continue;
 
@@ -374,12 +389,12 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
         var reg = _registry.AllRegistrations.FirstOrDefault(r => r.Identifier.Key == deviceKey);
         if (reg is null) return false;
 
-        var devices = await _enumerator.EnumerateAsync(token);
-        var match = devices.FirstOrDefault(d => d.Identifier.Key == deviceKey);
+        var devices = await UsbSerialPortMapper.GetUsbSerialPortsAsync(token);
+        var match = devices.FirstOrDefault(d => d.Key == deviceKey);
 
-        if (match.PortPath is null) return false;
+        if (match!.PortName is null) return false;
 
-        _registry.SetPortPath(deviceKey, match.PortPath);
+        _registry.SetPortPath(deviceKey, match.PortName);
         return true;
     }
 }

@@ -1,3 +1,4 @@
+using SubConsole.Helpers;
 using SubConsole.Models;
 using static SubConsole.Models.UsbDeviceInfo;
 
@@ -30,13 +31,13 @@ public interface ISerialCommand
 /// </summary>
 public sealed class ListUsbDevicesCommand : ISerialCommand
 {
-    public List<(DeviceIdentifier Identifier, string PortPath)>? Result { get; private set; }
+    public List<UsbSerialPortInfo>? Result { get; private set; }
 
     public async Task<OperationResult> ExecuteAsync(
         ISerialPortManagerService manager,
         CancellationToken token)
     {
-        Result = (await manager.EnumerateUsbDevicesAsync(token)).ToList();
+        Result = (await UsbSerialPortMapper.GetUsbSerialPortsAsync(token)).ToList();
         return OperationResult.Success();
     }
 }
@@ -67,7 +68,7 @@ public sealed class ListRegisteredDevicesCommand : ISerialCommand
 /// </summary>
 public sealed class RegisterDeviceCommand : ISerialCommand
 {
-    public required DeviceIdentifier  Identifier    { get; init; }
+    public required UsbSerialPortInfo Identifier    { get; init; }
     //public required IEnumerable<string> FunctionNames { get; init; }
     public required string FunctionName { get; init; }
 
