@@ -24,12 +24,12 @@ public sealed class SerialPortWorker : ISerialWorker
     // Inbound to the worker (host → device)
     private readonly Channel<byte[]> _sendQueue =
         Channel.CreateBounded<byte[]>(new BoundedChannelOptions(256)
-        { FullMode = BoundedChannelFullMode.DropOldest });
+        { FullMode = BoundedChannelFullMode.Wait });
 
     // Outbound from the worker (device → host)
     private readonly Channel<SerialMessage> _received =
         Channel.CreateBounded<SerialMessage>(new BoundedChannelOptions(1024)
-        { FullMode = BoundedChannelFullMode.DropOldest });
+        { FullMode = BoundedChannelFullMode.Wait });
 
     private readonly StringBuilder _lineBuffer = new();
 
@@ -54,27 +54,33 @@ public sealed class SerialPortWorker : ISerialWorker
 
     // ── Start / Stop ──────────────────────────────────────────────────────────
 
-    public Task StartAsync(CancellationToken appToken)
+    public async Task<OperationResult> StartAsync(CancellationToken appToken)
     {
-        _port = new SerialPort(PortPath, BaudRate)
-        {
-            WriteTimeout  = 2_000,
-            ReadTimeout   = 2_000,
-            Encoding      = Encoding.UTF8,
-            Handshake     = Handshake.None
-        };
+            try
+            {
+                _port = new SerialPort(PortPath, BaudRate)
+                {
+                    WriteTimeout = 2_000,
+                    ReadTimeout = 2_000,
+                    Encoding = Encoding.UTF8,
+                    Handshake = Handshake.None
+                };
 
-        _port.Open();
-        _logger.LogInformation("Opened serial port {Port} @ {Baud}", PortPath, BaudRate);
+                _port.Open();
+                _logger.LogInformation("Opened serial port {Port} @ {Baud}", PortPath, BaudRate);
 
-        var linked = CancellationTokenSource
-            .CreateLinkedTokenSource(appToken, _cts.Token).Token;
+                var linked = CancellationTokenSource
+                    .CreateLinkedTokenSource(appToken, _cts.Token).Token;
 
-        _readerTask = Task.Run(() => ReadLoopAsync(linked), linked);
-        _writerTask = Task.Run(() => WriteLoopAsync(linked), linked);
+                _readerTask = Task.Run(() => ReadLoopAsync(linked), linked);
+             //   _writerTask = Task.Run(() => WriteLoopAsync(linked), linked);
 
-        return Task.CompletedTask;
-    }
+                return OperationResult.Success();
+            }
+            catch (Exception ex) {
+                return OperationResult.Failure($"Error starting serial worker: {ex.Message}");
+            }
+        }
 
     public async Task StopAsync()
     {
@@ -91,12 +97,44 @@ public sealed class SerialPortWorker : ISerialWorker
 
     // ── Write ─────────────────────────────────────────────────────────────────
 
-    public ValueTask<bool> WriteAsync(byte[] data, CancellationToken token = default)
-        => _sendQueue.Writer.TryWrite(data)
-            ? ValueTask.FromResult(true)
-            : new ValueTask<bool>(EnqueueAsync(data, token));
+    public async Task<OperationResult> WriteAsync(byte[] data, CancellationToken token = default)
+    {
+        if (_port is null || !_port.IsOpen)
+        {
+            return OperationResult.Failure($"Serial port {_port} is closed");
+        }
+        try
+        {
+            await _port.BaseStream.WriteAsync(data, token).ConfigureAwait(false);
+            return OperationResult.Success();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Write error on {Port}", PortPath);
+            return OperationResult.Failure($"Serial port {_port} is closed");
+        }
+        catch (OperationCanceledException)
+        {
+            return OperationResult.Failure($"Operation Cancelled");
+        }
+        
 
-    public ValueTask<bool> WriteTextAsync(string text, CancellationToken token = default)
+        //Queuing system
+        //if (_sendQueue.Writer.TryWrite(data))
+        //{
+        //    return OperationResult.Success();
+        //}
+        //else
+        //{
+        //    return OperationResult.Failure($"Write queue for Serial port {_port} is full");
+        //}
+        //Queue if _sendQueue is full
+        //var enqueued = await EnqueueAsync(data, token).ConfigureAwait(false);
+        //return enqueued ? OperationResult.Success() : OperationResult.Failure($"Failed to Enqueue data on {PortPath}");
+
+    }
+
+    public Task<OperationResult> WriteTextAsync(string text, CancellationToken token = default)
         => WriteAsync(Encoding.UTF8.GetBytes(text), token);
 
     private async Task<bool> EnqueueAsync(byte[] data, CancellationToken token)
@@ -112,7 +150,7 @@ public sealed class SerialPortWorker : ISerialWorker
 
     // ── Read loop (serial → channel) ─────────────────────────────────────────
 
-    private async Task ReadLoopAsync(CancellationToken token)
+    private async Task<OperationResult> ReadLoopAsync(CancellationToken token)
     {
         var buffer = new byte[4096];
 
@@ -129,12 +167,18 @@ public sealed class SerialPortWorker : ISerialWorker
                 var text = Encoding.UTF8.GetString(buffer, 0, count);
                 await ProcessIncomingTextAsync(text, token).ConfigureAwait(false);
             }
+            return OperationResult.Success();
         }
-        catch (OperationCanceledException) { }
-        catch (ObjectDisposedException)    { }
+        catch (OperationCanceledException) {
+            return OperationResult.Success();
+        }
+        catch (ObjectDisposedException)    {
+            return OperationResult.Success();
+        }
         catch (IOException ex)
         {
             _logger.LogError(ex, "Read error on {Port}", PortPath);
+            return OperationResult.Failure($"Read error on {PortPath}. Exception: {ex.Message}");
         }
         finally
         {
@@ -172,26 +216,26 @@ public sealed class SerialPortWorker : ISerialWorker
 
     // ── Write loop (channel → serial) ────────────────────────────────────────
 
-    private async Task WriteLoopAsync(CancellationToken token)
-    {
-        try
-        {
-            await foreach (var data in _sendQueue.Reader.ReadAllAsync(token))
-            {
-                if (_port is null || !_port.IsOpen) break;
+    //private async Task WriteLoopAsync(CancellationToken token)
+    //{
+    //    try
+    //    {
+    //        await foreach (var data in _sendQueue.Reader.ReadAllAsync(token))
+    //        {
+    //            if (_port is null || !_port.IsOpen) break;
 
-                try
-                {
-                    await _port.BaseStream.WriteAsync(data, token).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.LogWarning(ex, "Write error on {Port}", PortPath);
-                }
-            }
-        }
-        catch (OperationCanceledException) { }
-    }
+    //            try
+    //            {
+    //                await _port.BaseStream.WriteAsync(data, token).ConfigureAwait(false);
+    //            }
+    //            catch (Exception ex) when (ex is not OperationCanceledException)
+    //            {
+    //                _logger.LogWarning(ex, "Write error on {Port}", PortPath);
+    //            }
+    //        }
+    //    }
+    //    catch (OperationCanceledException) { }
+    //}
 
     // ── Disposal ──────────────────────────────────────────────────────────────
 
@@ -202,4 +246,6 @@ public sealed class SerialPortWorker : ISerialWorker
         _port?.Dispose();
         _port = null;
     }
+
+
 }

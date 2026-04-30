@@ -14,7 +14,7 @@ public sealed class ClientPushChannel : IDisposable
 {
     private readonly Channel<PushFrame> _channel =
         Channel.CreateBounded<PushFrame>(new BoundedChannelOptions(512)
-        { FullMode = BoundedChannelFullMode.DropOldest });
+        { FullMode = BoundedChannelFullMode.Wait });
 
     public ChannelWriter<PushFrame> Writer => _channel.Writer;
     public ChannelReader<PushFrame> Reader => _channel.Reader;

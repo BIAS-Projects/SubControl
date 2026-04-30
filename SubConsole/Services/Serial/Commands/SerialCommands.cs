@@ -178,6 +178,9 @@ public sealed class WriteTextCommand : ISerialCommand
     }
 }
 
+
+
+
 /// <summary>
 /// Subscribe to incoming messages for one or more function names.
 /// Returns the shared <see cref="System.Threading.Channels.ChannelReader{T}"/>
@@ -218,8 +221,16 @@ public sealed class AutoDiscoverCommand : ISerialCommand
         ISerialPortManagerService manager,
         CancellationToken token)
     {
-        NewPortsOpened = await manager.AutoDiscoverAsync(
+        var result = await manager.AutoDiscoverAsync(
             AutoOpenFound, DefaultBaudRate, DefaultWorkerType, token);
+        if (result.IsSuccess)
+        {
+            NewPortsOpened = result.Value;
+        }
+        else
+        {
+            return OperationResult.Failure(result.Message);
+        }
 
         return OperationResult.Success();
     }

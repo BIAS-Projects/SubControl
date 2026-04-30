@@ -10,6 +10,10 @@ namespace SubConsole.Models
 
         public static int FLIRBaudCommandBaudRate { get; set; } = 921600;
 
+        public static string LUTRainBow { get; set; } = "LUTRainbow";
+
+        public static string LUTWhiteHot { get; set; } = "LUTWhiteHot";
+
         //public static string TurnOnAllSystemsCommand { get; set; } = $"$PBLUTP,S,PWR,CTRL,ON,15*29";
 
         //public static string TurnOffAllSystemsCommand { get; set; } = $"$PBLUTP,S,PWR,CTRL,OFF,15*67";

@@ -77,6 +77,7 @@ public sealed class TcpSerialCommandHandler
                   "CLOSE" => await HandleCloseAsync(message, token),
                   "WRITE" => await HandleWriteAsync(message, token),
                   "WRITE TEXT" => await HandleWriteTextAsync(message, token),
+                  //"WRITE FLIR" => await HandleWriteFLIRAsync(message, token),
                   "DISCOVER" => await HandleDiscoverAsync(message, token),
                   "ASSIGN PORT" => HandleAssignPort(message),
                   _ => ErrorResponse($"Unknown command: '{message.Command}'")
@@ -283,6 +284,22 @@ public sealed class TcpSerialCommandHandler
             ? SuccessResponse(new { message.Function })
             : ErrorResponse(result.Message);
     }
+
+    //private async Task<string> HandleWriteFLIRAsync(TCPMessageBody<string> message, CancellationToken token)
+    //{
+
+    //    var result = await _dispatcher.DispatchAsync(new WriteFLIRCommand
+    //    {
+    //        FunctionName = message.Function,
+    //        Text = message.Data
+
+    //    }, token);
+
+    //    return result.IsSuccess
+    //        ? SuccessResponse(new { message.Function })
+    //        : ErrorResponse(result.Message);
+    //}
+
 
     private async Task<string> HandleDiscoverAsync(TCPMessageBody<string> message, CancellationToken token)
     {

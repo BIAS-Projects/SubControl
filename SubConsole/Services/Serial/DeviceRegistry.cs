@@ -44,6 +44,12 @@ public interface IDeviceRegistry
     string? ResolvePortPath(string functionName);
 
     /// <summary>
+    /// Resolve a function name to a USB device key.
+    /// Returns null when the device is not registered or has no port assigned.
+    /// </summary>
+    string? ResolveKeyForFucntion(string functionName);
+
+    /// <summary>
     /// Return the function names bound to the port that produced a message.
     /// Used when routing received data back to callers.
     /// </summary>
@@ -146,8 +152,19 @@ public sealed class DeviceRegistry : IDeviceRegistry
         if (!_byKey.TryGetValue(key, out var reg))
             return null;
 
-        return reg.CurrentPortPath;
+        return reg.Identifier.PortName;
+        //return reg.CurrentPortPath;
     }
+
+    public string? ResolveKeyForFucntion(string functionName)
+    {
+        if (!_byFunction.TryGetValue(functionName, out var key))
+            return null;
+
+        return key;
+        //return reg.CurrentPortPath;
+    }
+
 
     //public IReadOnlyList<string> GetFunctionNames(string portPath)
     //{

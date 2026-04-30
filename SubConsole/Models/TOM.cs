@@ -15,11 +15,11 @@ namespace SubControlMAUI.Models
 
         public static int TomBaudCommandBaudRate { get; set; } = 115200;
 
-        public static string TurnOnAllSystemsCommand { get; set; } = $"$PBLUTP,S,PWR,CTRL,ON,15*29\r\n";
+        public static string TurnOnAllSystemsCommand { get; set; } = $"$PBLUTP,S,PWR,CTRL,ON,15*29";
 
-        public static string TurnOffAllSystemsCommand { get; set; } = $"$PBLUTP,S,PWR,CTRL,OFF,15*67\r\n";
+        public static string TurnOffAllSystemsCommand { get; set; } = $"$PBLUTP,S,PWR,CTRL,OFF,15*67";
 
-        public static string GetStatusCommand { get; set; } = $"$PBLUTP,Q,SYS,INFO*25\r\n";
+        public static string GetStatusCommand { get; set; } = $"$PBLUTP,Q,SYS,INFO*25";
 
         public static string TurnOffCommand { get; set; }
 
