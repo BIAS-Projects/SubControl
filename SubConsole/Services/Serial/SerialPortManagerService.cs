@@ -93,6 +93,13 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
         _appToken = stoppingToken;
         _logger.LogInformation("SerialPortManagerService started");
 
+        OperationResult result = await _registry.LoadDeviceRegistryFromDatabase();
+
+        if (!result.IsSuccess)
+        {
+            _logger.LogError("Load from database failed");
+        }
+
         // Fan-in task: reads from every worker's channel and writes to the broadcast.
         _ = Task.Run(() => BroadcastFanInAsync(stoppingToken), stoppingToken);
 

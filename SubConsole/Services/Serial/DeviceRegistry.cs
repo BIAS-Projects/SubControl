@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using SubConsole.Models;
+using SubControlMAUI.Services;
 using System.Collections.Concurrent;
 using static SubConsole.Models.UsbDeviceInfo;
 
@@ -15,14 +16,14 @@ public interface IDeviceRegistry
     // ── Registration ─────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Register a device and associate it with one or more function names.
+    /// Register a device and associate it with a function name.
     /// Call this at startup or when a USB hotplug event is detected.
     /// </summary>
   //  void Register(DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType serialWorker);
-    void Register(UsbSerialPortInfo identifier, string functionName, int baudRate, SerialWorkerType serialWorker);
+    Task<OperationResult> Register(UsbSerialPortInfo identifier, string functionName, int baudRate, SerialWorkerType serialWorker);
     /// <summary>Remove a device registration (e.g. on USB unplug).</summary>
   //  void Unregister(DeviceIdentifier identifier);
-    void Unregister(UsbSerialPortInfo identifier);
+    Task<OperationResult> Unregister(UsbSerialPortInfo identifier);
 
     // ── Port path management ──────────────────────────────────────────────────
 
@@ -55,6 +56,12 @@ public interface IDeviceRegistry
     /// </summary>
     string GetFunctionName(string portPath);
 
+    /// <summary>
+    /// Return the result of a database call.
+    /// Used load the previously register devices saved t the database.
+    /// </summary>
+    Task<OperationResult> LoadDeviceRegistryFromDatabase();
+
     /// <summary>All currently registered devices.</summary>
     IReadOnlyList<DeviceRegistration> AllRegistrations { get; }
 }
@@ -62,6 +69,8 @@ public interface IDeviceRegistry
 public sealed class DeviceRegistry : IDeviceRegistry
 {
     private readonly ILogger<DeviceRegistry> _logger;
+
+    private SQLiteService _database;
 
     // deviceKey → registration
     private readonly ConcurrentDictionary<string, DeviceRegistration> _byKey = new();
@@ -73,12 +82,30 @@ public sealed class DeviceRegistry : IDeviceRegistry
     // portPath → deviceKey  (updated when a port is opened)
     private readonly ConcurrentDictionary<string, string> _byPort = new(StringComparer.OrdinalIgnoreCase);
 
-    public DeviceRegistry(ILogger<DeviceRegistry> logger) => _logger = logger;
+    public DeviceRegistry(ILogger<DeviceRegistry> logger, SQLiteService database)
+    {
+        _logger = logger;
+        _database = database;
+    }
 
+    public async Task<OperationResult> LoadDeviceRegistryFromDatabase()
+    {
+        OperationResultWithValue<List<DeviceRegistration>> result = await _database.GetDeviceRegistriesAsync();
+        if(!result.IsSuccess)
+        {
+            return OperationResult.Failure(result.Message);
+        }
+
+        foreach(var device in result.Value)
+        {
+            Register(device.Identifier, device.FunctionName, device.BaudRate, device.SerialWorkerType);
+        }
+        return OperationResult.Success();
+    }
     // ── Registration ──────────────────────────────────────────────────────────
 
 //    public void Register(DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType serialWorker)
-    public void Register(UsbSerialPortInfo identifier, string functionName, int baudRate, SerialWorkerType serialWorker)
+    public async Task<OperationResult> Register(UsbSerialPortInfo identifier, string functionName, int baudRate, SerialWorkerType serialWorker)
     {
        // var fns = functionNames.ToList();
         var reg = new DeviceRegistration(identifier, functionName, baudRate, serialWorker);
@@ -87,15 +114,23 @@ public sealed class DeviceRegistry : IDeviceRegistry
 
         _byFunction[functionName] = identifier.Key;
 
+        OperationResult result = await _database.UpsertDeviceRegistrationAsync(reg);
+        if(!result.IsSuccess)
+        {
+            return OperationResult.Failure(result.Message);
+        }
+
         _logger.LogInformation("Registered function '{Function}' → device {Key}", functionName, identifier.Key);
+
+        return OperationResult.Success();
 
     }
 
  //   public void Unregister(DeviceIdentifier identifier)
-    public void Unregister(UsbSerialPortInfo identifier)
+    public async Task<OperationResult> Unregister(UsbSerialPortInfo identifier)
     {
         if (!_byKey.TryRemove(identifier.Key, out var reg))
-            return;
+            return OperationResult.Failure("Failed to remove identifier from Key dictionary");
 
       //  foreach (var fn in reg.FunctionName)
             _byFunction.TryRemove(reg.FunctionName, out _);
@@ -107,7 +142,14 @@ public sealed class DeviceRegistry : IDeviceRegistry
         if (stalePort is not null)
             _byPort.TryRemove(stalePort, out _);
 
+        OperationResult result = await _database.DeleteDeviceRegistrationAsync(identifier.Key);
+
+        if (!result.IsSuccess)
+        {
+            return result;
+        }
         _logger.LogInformation("Unregistered device {Key}", identifier.Key);
+        return OperationResult.Success();
     }
 
     // ── Port path management ──────────────────────────────────────────────────
