@@ -4,7 +4,6 @@ using Microsoft.Extensions.Logging;
 using SubConsole.Helpers;
 using SubConsole.Models;
 using SubConsole.Services.Serial;
-using SubConsole.Services.TCP.Commands;
 using SubControlMAUI.Models;
 using System.Collections.Concurrent;
 using System.Net;
@@ -164,7 +163,6 @@ public sealed class TcpHostService : BackgroundService
                     throw new InvalidOperationException($"Invalid JSON message: {frame.Command}");
                 }
 
-              //  var result = await _handler.HandleAsync(frame.Command, token);
                 var result = await _handler.HandleAsync(message, token);
 
                 await state.Outgoing.Writer.WriteAsync(
@@ -467,7 +465,7 @@ public sealed class TcpHostService : BackgroundService
         Console.WriteLine(result);
         Console.WriteLine("");
         Console.WriteLine("WRITE FLIR RAINBOW");
-        command = new TCPMessageBody<string>(function3, "WRITE TEXT", FLIR.LUTRainBow);
+        command = new TCPMessageBody<string>(function3, "WRITE TEXT", FLIR.LUTtoRAINBOW);
         result = await _handler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");

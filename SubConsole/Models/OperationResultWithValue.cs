@@ -1,33 +1,20 @@
-﻿//using Microsoft.Extensions.Logging;
-//using SubConsole.Helpers;
-//using SubConsole.Models;
-//using System;
-//using System.Collections.Generic;
-//using System.Text;
+﻿/// <summary>Result that also carries a typed value on success.</summary>
+public sealed class OperationResultWithValue<T>
+{
+    public bool IsSuccess { get; }
+    public string Message { get; }
+    public T? Value { get; }
 
-//namespace SubConsole.Models
-//{
-//    public record OperationResultWithValue<T>
-//    {
-//        public bool IsSuccess { get; init; }
-//        public T? Value { get; init; }
-//        public string? Error { get; init; }
-//        public Exception? Exception { get; init; }
+    private OperationResultWithValue(bool success, string message, T? value)
+    {
+        IsSuccess = success;
+        Message = message;
+        Value = value;
+    }
 
-//        private OperationResultWithValue() { }
+    public static OperationResultWithValue<T> Success(T value, string message = "OK") =>
+        new(true, message, value);
 
-//        public static OperationResultWithValue<T> Success(T value) => new()
-//        {
-//            IsSuccess = true,
-//            Value = value
-//        };
-
-//        public static OperationResultWithValue<T> Failure(string error, Exception? ex = null) => new()
-//        {
-//            IsSuccess = false,
-//            Error = error,
-//            Exception = ex
-//        };
-//    }
-//}
-
+    public static OperationResultWithValue<T> Failure(string message) =>
+        new(false, message, default);
+}

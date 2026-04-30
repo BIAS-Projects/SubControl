@@ -37,8 +37,18 @@ public class FlirSerialWorker : ISerialWorker
         _commands = new Dictionary<string, Func<Task<OperationResult>>>(
             StringComparer.OrdinalIgnoreCase)
         {
-            [FLIR.LUTWhiteHot] = FLIRSetLUTtoWHITEHOT,
-            [FLIR.LUTRainBow] = FLIRSetLUTtoRAINBOW,
+            [FLIR.LUTtoWHITEHOT] = FLIRSetLUTtoWHITEHOT,
+            [FLIR.LUTtoRAINBOW] = FLIRSetLUTtoRAINBOW,
+            [FLIR.LUTtoARCTIC] = FLIRSetLUTtoARCTIC,
+            [FLIR.LUTtoBLACKHOT] = FLIRSetLUTtoBLACKHOT,
+            [FLIR.LUTtoDEFAULT] = FLIRSetLUTtoDEFAULT,
+            [FLIR.LUTtoGLOBOW] = FLIRSetLUTtoGLOBOW,
+            [FLIR.LUTtoGRADEDFIRE] = FLIRSetLUTtoGRADEDFIRE,
+            [FLIR.LUTtoHOTTEST] = FLIRSetLUTtoHOTTEST,
+            [FLIR.LUTtoIRONBOW] = FLIRSetLUTtoIRONBOW,
+            [FLIR.LUTtoLAVA] = FLIRSetLUTtoLAVA,
+            [FLIR.LUTtoRAINBOW_HC] = FLIRSetLUTtoRAINBOW_HC,
+
         };
     }
 
@@ -87,6 +97,108 @@ public class FlirSerialWorker : ISerialWorker
 
     // ---------------- FLIR commands ----------------
 
+    private async Task<OperationResult> FLIRSetLUTtoARCTIC()
+    {
+        _camera.isothermSetEnable(Camera.FLR_ENABLE_E.FLR_DISABLE);
+
+        var result = _camera.colorLutSetId(Camera.FLR_COLORLUT_ID_E.FLR_COLORLUT_ARCTIC);
+
+        return result == Camera.FLR_RESULT.R_SUCCESS
+            ? OperationResult.Success()
+            : OperationResult.Failure($"FLIRSetLUTtoARCTIC error: {result}");
+    }
+
+    private async Task<OperationResult> FLIRSetLUTtoBLACKHOT()
+    {
+        _camera.isothermSetEnable(Camera.FLR_ENABLE_E.FLR_DISABLE);
+
+        var result = _camera.colorLutSetId(Camera.FLR_COLORLUT_ID_E.FLR_COLORLUT_BLACKHOT);
+
+        return result == Camera.FLR_RESULT.R_SUCCESS
+            ? OperationResult.Success()
+            : OperationResult.Failure($"FLIRSetLUTtoBLACKHOT error: {result}");
+    }
+
+    private async Task<OperationResult> FLIRSetLUTtoDEFAULT()
+    {
+        _camera.isothermSetEnable(Camera.FLR_ENABLE_E.FLR_DISABLE);
+
+        var result = _camera.colorLutSetId(Camera.FLR_COLORLUT_ID_E.FLR_COLORLUT_DEFAULT);
+
+        return result == Camera.FLR_RESULT.R_SUCCESS
+            ? OperationResult.Success()
+            : OperationResult.Failure($"FLIRSetLUTtoDEFAULT error: {result}");
+    }
+
+
+    private async Task<OperationResult> FLIRSetLUTtoGLOBOW()
+    {
+        _camera.isothermSetEnable(Camera.FLR_ENABLE_E.FLR_DISABLE);
+
+        var result = _camera.colorLutSetId(Camera.FLR_COLORLUT_ID_E.FLR_COLORLUT_GLOBOW);
+
+        return result == Camera.FLR_RESULT.R_SUCCESS
+            ? OperationResult.Success()
+            : OperationResult.Failure($"FLIRSetLUTtoGLOBOW error: {result}");
+    }
+
+    private async Task<OperationResult> FLIRSetLUTtoGRADEDFIRE()
+    {
+        _camera.isothermSetEnable(Camera.FLR_ENABLE_E.FLR_DISABLE);
+
+        var result = _camera.colorLutSetId(Camera.FLR_COLORLUT_ID_E.FLR_COLORLUT_GRADEDFIRE);
+
+        return result == Camera.FLR_RESULT.R_SUCCESS
+            ? OperationResult.Success()
+            : OperationResult.Failure($"FLIRSetLUTtoGRADEDFIRE error: {result}");
+    }
+
+    private async Task<OperationResult> FLIRSetLUTtoHOTTEST()
+    {
+        _camera.isothermSetEnable(Camera.FLR_ENABLE_E.FLR_DISABLE);
+
+        var result = _camera.colorLutSetId(Camera.FLR_COLORLUT_ID_E.FLR_COLORLUT_HOTTEST);
+
+        return result == Camera.FLR_RESULT.R_SUCCESS
+            ? OperationResult.Success()
+            : OperationResult.Failure($"FLIRSetLUTtoHOTTEST error: {result}");
+    }
+
+    private async Task<OperationResult> FLIRSetLUTtoIRONBOW()
+    {
+        _camera.isothermSetEnable(Camera.FLR_ENABLE_E.FLR_DISABLE);
+
+        var result = _camera.colorLutSetId(Camera.FLR_COLORLUT_ID_E.FLR_COLORLUT_IRONBOW);
+
+        return result == Camera.FLR_RESULT.R_SUCCESS
+            ? OperationResult.Success()
+            : OperationResult.Failure($"FLIRSetLUTtoIRONBOW error: {result}");
+    }
+
+    private async Task<OperationResult> FLIRSetLUTtoLAVA()
+    {
+        _camera.isothermSetEnable(Camera.FLR_ENABLE_E.FLR_DISABLE);
+
+        var result = _camera.colorLutSetId(Camera.FLR_COLORLUT_ID_E.FLR_COLORLUT_LAVA);
+
+        return result == Camera.FLR_RESULT.R_SUCCESS
+            ? OperationResult.Success()
+            : OperationResult.Failure($"FLIRSetLUTtoLAVA error: {result}");
+    }
+
+    private async Task<OperationResult> FLIRSetLUTtoRAINBOW_HC()
+    {
+        _camera.isothermSetEnable(Camera.FLR_ENABLE_E.FLR_DISABLE);
+
+        var result = _camera.colorLutSetId(Camera.FLR_COLORLUT_ID_E.FLR_COLORLUT_RAINBOW_HC);
+
+        return result == Camera.FLR_RESULT.R_SUCCESS
+            ? OperationResult.Success()
+            : OperationResult.Failure($"FLIRSetLUTtoRAINBOW_HC error: {result}");
+    }
+
+
+
     private async Task<OperationResult> FLIRSetLUTtoWHITEHOT()
     {
         _camera.isothermSetEnable(Camera.FLR_ENABLE_E.FLR_DISABLE);
@@ -97,6 +209,8 @@ public class FlirSerialWorker : ISerialWorker
             ? OperationResult.Success()
             : OperationResult.Failure($"FLIRSetLUTtoWHITEHOT error: {result}");
     }
+
+
 
     private async Task<OperationResult> FLIRSetLUTtoRAINBOW()
     {

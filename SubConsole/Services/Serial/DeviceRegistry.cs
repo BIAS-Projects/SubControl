@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Logging;
 using SubConsole.Models;
-using SubControlMAUI.Services;
+using SubConsole.Services.SQL;
 using System.Collections.Concurrent;
 using static SubConsole.Models.UsbDeviceInfo;
 

@@ -7,7 +7,7 @@ namespace SubControlMAUI.Models
 {
     public static class FunctionTypes
     {
-        public static string TomCommand { get; } = "TOM";
+        public static string TomCommand { get; } = "TOM Input";
 
         public static string SystemCommand { get; } = "SYSTEM";
 

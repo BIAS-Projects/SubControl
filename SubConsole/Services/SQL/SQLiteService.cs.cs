@@ -5,7 +5,7 @@ using System.Net.NetworkInformation;
 using System.Text.Json;
 using static SubConsole.Models.UsbDeviceInfo;
 
-namespace SubControlMAUI.Services
+namespace SubConsole.Services.SQL
 {
     public class SQLiteService
     {

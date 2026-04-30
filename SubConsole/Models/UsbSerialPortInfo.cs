@@ -12,9 +12,9 @@ public record UsbSerialPortInfo
 
 
     public string Key =>
-        //string.IsNullOrWhiteSpace(SerialNumber)
-        //    ? $"{VendorId}:{ProductId}:{Description}:{DeviceId}".ToUpperInvariant()
-        //    : $"{VendorId}:{ProductId}:{Description}:{DeviceId}:{SerialNumber}".ToUpperInvariant();
+    //string.IsNullOrWhiteSpace(SerialNumber)
+    //    ? $"{VendorId}:{ProductId}:{Description}:{DeviceId}".ToUpperInvariant()
+    //    : $"{VendorId}:{ProductId}:{Description}:{DeviceId}:{SerialNumber}".ToUpperInvariant();
     string.IsNullOrWhiteSpace(SerialNumber)
             ? $"{VendorId}:{ProductId}:{DeviceId}".ToUpperInvariant()
             : $"{VendorId}:{ProductId}:{DeviceId}:{SerialNumber}".ToUpperInvariant();

@@ -6,21 +6,33 @@ namespace SubConsole.Models
 {
     public static class FLIR
     {
-        public static string CommandPort { get; set; } = "COM10";
 
         public static int FLIRBaudCommandBaudRate { get; set; } = 921600;
 
-        public static string LUTRainBow { get; set; } = "LUTRainbow";
+        public static string LUTtoRAINBOW { get; set; } = "LUTtoRAINBOW";
 
-        public static string LUTWhiteHot { get; set; } = "LUTWhiteHot";
+        public static string LUTtoWHITEHOT { get; set; } = "LUTtoWHITEHOT";
 
-        //public static string TurnOnAllSystemsCommand { get; set; } = $"$PBLUTP,S,PWR,CTRL,ON,15*29";
+        public static string LUTtoARCTIC { get; set; } = "LUTtoARCTIC";
 
-        //public static string TurnOffAllSystemsCommand { get; set; } = $"$PBLUTP,S,PWR,CTRL,OFF,15*67";
+        public static string LUTtoBLACKHOT { get; set; } = "LUTtoBLACKHOT";
 
-        //public static string GetStatusCommand { get; set; } = $"$PBLUTP,Q,SYS,INFO*25";
+        public static string LUTtoDEFAULT { get; set; } = "LUTtoDEFAULT";
 
-        //public static string TurnOffCommand { get; set; }
+        public static string LUTtoGLOBOW { get; set; } = "LUTtoGLOBOW";
+
+        public static string LUTtoGRADEDFIRE { get; set; } = "LUTtoGRADEDFIRE";
+
+        public static string LUTtoHOTTEST { get; set; } = "LUTtoHOTTEST";
+
+        public static string LUTtoIRONBOW { get; set; } = "LUTtoIRONBOW";
+
+        public static string LUTtoLAVA { get; set; } = "LUTtoLAVA";
+
+        public static string LUTtoRAINBOW_HC { get; set; } = "LUTtoRAINBOW_HC";
+
+        
+
 
 
     }

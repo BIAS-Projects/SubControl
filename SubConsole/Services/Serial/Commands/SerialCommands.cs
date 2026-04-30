@@ -68,7 +68,7 @@ public sealed class ListRegisteredDevicesCommand : ISerialCommand
 /// </summary>
 public sealed class RegisterDeviceCommand : ISerialCommand
 {
-    public required UsbSerialPortInfo Identifier    { get; init; }
+    public required UsbSerialPortInfo Identifier { get; init; }
     //public required IEnumerable<string> FunctionNames { get; init; }
     public required string FunctionName { get; init; }
 

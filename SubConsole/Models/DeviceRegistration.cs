@@ -27,15 +27,6 @@ namespace SubConsole.Models
         /// <summary>Current OS port path (e.g. "COM3" or "/dev/ttyUSB0").</summary>
         public string? CurrentPortPath { get; internal set; }
 
-        //public DeviceRegistration(
-        //    DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType serialWorker)
-        //{
-        //    Identifier = identifier;
-        //    FunctionName = functionName;
-        //    SerialWorkerType = serialWorker;
-        //    BaudRate = baudRate;
-        //    //Key = identifier.BuildKey(portPath);
-        //}
 
         public DeviceRegistration(
         UsbSerialPortInfo identifier, string functionName, int baudRate, SerialWorkerType serialWorker)

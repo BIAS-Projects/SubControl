@@ -1,4 +1,3 @@
-using Gst;
 using Microsoft.Extensions.Logging;
 using SubConsole.Models;
 using SubConsole.Services.Serial;
