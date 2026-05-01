@@ -4,6 +4,7 @@ using SubConsole.Services.Serial;
 using System.IO.Ports;
 using System.Text;
 using System.Threading.Channels;
+using System.Xml.Linq;
 
 namespace SubConsole.Services.Serial.Workers;
 
@@ -13,8 +14,17 @@ namespace SubConsole.Services.Serial.Workers;
 
 public sealed class SerialPortWorker : ISerialWorker
 {
+    // Signals the fan-in loop the moment this worker is ready to produce messages
+    private readonly TaskCompletionSource _startedTcs =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Started => _startedTcs.Task;
+
     private readonly ILogger _logger;
     private readonly IDeviceRegistry _registry;
+
+    private int _stopped = 0; // 0 = running, 1 = stopped
+    private string _functionName;
 
     private SerialPort? _port;
     private CancellationTokenSource _cts = new();
@@ -53,39 +63,78 @@ public sealed class SerialPortWorker : ISerialWorker
     public int BaudRate { get; }
 
     // ── Start / Stop ──────────────────────────────────────────────────────────
-
     public async Task<OperationResult> StartAsync(CancellationToken appToken)
     {
-            try
-            {
-                _port = new SerialPort(PortPath, BaudRate)
-                {
-                    WriteTimeout = 2_000,
-                    ReadTimeout = 2_000,
-                    Encoding = Encoding.UTF8,
-                    Handshake = Handshake.None
-                };
+        try
+        {
+            _functionName = _registry.GetFunctionName(PortPath) ?? PortPath; // ← add this
 
-                _port.Open();
-                _logger.LogInformation("Opened serial port {Port} @ {Baud}", PortPath, BaudRate);
+            _port = new SerialPort(PortPath, BaudRate) {
+                WriteTimeout = 2_000,
+                ReadTimeout = 2_000,
+                Encoding = Encoding.UTF8,
+                Handshake = Handshake.None
+            };
+            _port.Open();
+            _logger.LogInformation("Opened serial port {Port} @ {Baud}", PortPath, BaudRate);
 
-                var linked = CancellationTokenSource
-                    .CreateLinkedTokenSource(appToken, _cts.Token).Token;
+            var linked = CancellationTokenSource
+                .CreateLinkedTokenSource(appToken, _cts.Token).Token;
 
-                _readerTask = Task.Run(() => ReadLoopAsync(linked), linked);
-             //   _writerTask = Task.Run(() => WriteLoopAsync(linked), linked);
+            _readerTask = Task.Run(() => ReadLoopAsync(linked), linked);
 
-                return OperationResult.Success();
-            }
-            catch (Exception ex) {
-                return OperationResult.Failure($"Error starting serial worker: {ex.Message}");
-            }
+            _startedTcs.TrySetResult();
+            return OperationResult.Success();
         }
+        catch (Exception ex)
+        {
+            _startedTcs.TrySetException(ex);
+            return OperationResult.Failure($"Error starting serial worker: {ex.Message}");
+        }
+    }
+
+    //public async Task<OperationResult> StartAsync(CancellationToken appToken)
+    //{
+    //        try
+    //        {
+    //            _functionName = _registry.GetFunctionName(PortPath);
+    //            if (string.IsNullOrEmpty(_functionName))
+    //            {
+    //                throw new ArgumentException("The function name cannot be null or empty.", nameof(_functionName));
+
+    //            }
+
+    //            _port = new SerialPort(PortPath, BaudRate)
+    //            {
+    //                WriteTimeout = 2_000,
+    //                ReadTimeout = 2_000,
+    //                Encoding = Encoding.UTF8,
+    //                Handshake = Handshake.None
+    //            };
+
+    //            _port.Open();
+    //            _logger.LogInformation("Opened serial port {Port} @ {Baud}", PortPath, BaudRate);
+
+    //            var linked = CancellationTokenSource
+    //                .CreateLinkedTokenSource(appToken, _cts.Token).Token;
+
+    //            _readerTask = Task.Run(() => ReadLoopAsync(linked), linked);
+    //         //   _writerTask = Task.Run(() => WriteLoopAsync(linked), linked);
+
+    //            return OperationResult.Success();
+    //        }
+    //        catch (Exception ex) {
+    //            return OperationResult.Failure($"Error starting serial worker: {ex.Message}");
+    //        }
+    //    }
+
+
 
     public async Task StopAsync()
     {
-        _cts.Cancel();
+        if (Interlocked.Exchange(ref _stopped, 1) == 1) return; // already stopped
 
+        _cts.Cancel();
         if (_port?.IsOpen == true)
             _port.Close();
 
@@ -99,24 +148,25 @@ public sealed class SerialPortWorker : ISerialWorker
 
     public async Task<OperationResult> WriteAsync(byte[] data, CancellationToken token = default)
     {
-        if (_port is null || !_port.IsOpen)
-        {
-            return OperationResult.Failure($"Serial port {_port} is closed");
-        }
+        var port = _port; // snapshot — avoids null ref if DisposeAsync runs concurrently
+        if (port is null || !port.IsOpen)
+            return OperationResult.Failure($"Serial port {PortPath} is not open");
+
         try
         {
-            await _port.BaseStream.WriteAsync(data, token).ConfigureAwait(false);
+            await port.BaseStream.WriteAsync(data, token).ConfigureAwait(false);
             return OperationResult.Success();
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogWarning(ex, "Write error on {Port}", PortPath);
-            return OperationResult.Failure($"Serial port {_port} is closed");
         }
         catch (OperationCanceledException)
         {
-            return OperationResult.Failure($"Operation Cancelled");
+            return OperationResult.Failure("Operation cancelled");
         }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Write error on {Port}", PortPath);
+            return OperationResult.Failure($"Write failed on {PortPath}: {ex.Message}");
+        }
+    
         
 
         //Queuing system
@@ -199,12 +249,12 @@ public sealed class SerialPortWorker : ISerialWorker
             var line = current[..nl].TrimEnd('\r');
             _lineBuffer.Remove(0, nl + 1);
 
-            var functionName = _registry.GetFunctionName(PortPath);
+          //  var functionName = _registry.GetFunctionName(PortPath);
          //   var primaryFunction = functionNames.Count > 0 ? functionNames[0] : PortPath;
 
             var message = new SerialMessage
             {
-                FunctionName = functionName,
+                FunctionName = _functionName,
                 PortPath     = PortPath,
                 Payload      = Encoding.UTF8.GetBytes(line),
                 Text         = line

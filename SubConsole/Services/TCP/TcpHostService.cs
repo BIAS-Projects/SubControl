@@ -44,6 +44,7 @@ public sealed class TcpHostService : BackgroundService
     private readonly ILogger<TcpHostService> _logger;
     private readonly TcpSerialCommandHandler _handler;
     private readonly SerialPushPump _pushPump;
+    private readonly ISerialPortManagerService _serialPortManager;
 
     private readonly TcpListener _listener;
     private readonly ConcurrentDictionary<Guid, ClientState> _clients = new();
@@ -56,6 +57,7 @@ public sealed class TcpHostService : BackgroundService
         ILogger<TcpHostService> logger,
         TcpSerialCommandHandler handler,
         SerialPushPump pushPump,
+        ISerialPortManagerService serialPortManager,
         IOptions<TcpSettings> tcpSettings
 
            )
@@ -63,6 +65,7 @@ public sealed class TcpHostService : BackgroundService
         _logger = logger;
         _handler = handler;
         _pushPump = pushPump;
+        _serialPortManager = serialPortManager;
 
 
         _port = tcpSettings.Value.Port;
@@ -82,6 +85,11 @@ public sealed class TcpHostService : BackgroundService
         _listener.Start();
 
         _logger.LogInformation("TCP server started on port {Port}", _port);
+
+        // ── Wire port-change notifications ────────────────────────────────────
+        UsbPortRegistry.Instance.PortChanged += OnPortChanged;
+        stoppingToken.Register(() =>
+            UsbPortRegistry.Instance.PortChanged -= OnPortChanged);
 
         BasicTest(stoppingToken);
 
@@ -115,6 +123,68 @@ public sealed class TcpHostService : BackgroundService
             _logger.LogInformation("TCP server shutting down");
             _listener.Stop();
             _logger.LogInformation("TCP server stopped");
+        }
+    }
+
+
+    private void OnPortChanged(object? sender, PortChangedEventArgs e)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var result = await _serialPortManager.HandlePortChangedAsync(e);
+
+                if (result.IsNoOp)
+                {
+                    _logger.LogDebug(
+                        "Port {Kind} on {Port} — no registered function affected",
+                        e.Kind, e.Port.PortName);
+                    return;
+                }
+
+                _logger.LogInformation(
+                    "Port {Kind}: function '{Function}' {OldPort} → {NewPort}",
+                    result.Kind, result.Function,
+                    result.OldPort, result.NewPort ?? "(removed)");
+
+                // Build the push frame and broadcast to all connected clients
+                var frame = new PushFrame
+                {
+                    FunctionName = "SYSTEM",
+                    Text = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        type = "PORT_CHANGED",
+                        kind = result.Kind.ToString(),
+                        function = result.Function,
+                        oldPort = result.OldPort,
+                        newPort = result.NewPort,
+                        error = result.Error,
+                        timestamp = DateTimeOffset.UtcNow
+                    })
+                };
+
+                BroadcastToAllClients(frame);
+
+                BroadcastToAllClients(frame);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Port change handler failed for {Port}", e.Port.PortName);
+            }
+        });
+    }
+
+    private void BroadcastToAllClients(PushFrame frame)
+    {
+        foreach (var client in _clients.Values)
+        {
+            if (!client.PushChannel.Writer.TryWrite(frame))
+            {
+                _logger.LogWarning(
+                    "Push channel full for client {ClientId} — port change notification dropped",
+                    client.Id);
+            }
         }
     }
 

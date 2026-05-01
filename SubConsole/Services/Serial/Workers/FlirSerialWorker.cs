@@ -21,6 +21,8 @@ public class FlirSerialWorker : ISerialWorker
 
     public ChannelReader<SerialMessage> ReceivedMessages => throw new NotImplementedException();
 
+    public Task Started => throw new NotImplementedException();
+
     private readonly ILogger _logger;
     private readonly IDeviceRegistry _registry;
 

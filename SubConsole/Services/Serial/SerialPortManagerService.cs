@@ -49,6 +49,8 @@ public interface ISerialPortManagerService
 
     // ── Command dispatcher ────────────────────────────────────────────────────
     Task<OperationResult> ExecuteAsync(ISerialCommand command, CancellationToken token = default);
+
+    Task<PortRemapResult> HandlePortChangedAsync(PortChangedEventArgs e, CancellationToken token = default);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -67,11 +69,16 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
 
     // Broadcast channel — all received messages from all ports flow here.
     // Filtered views are handed to consumers via GetMessageReader().
+    //private readonly Channel<SerialMessage> _broadcastChannel =
+    //    Channel.CreateUnbounded<SerialMessage>(new UnboundedChannelOptions
+    //    { SingleWriter = false, SingleReader = false });
     private readonly Channel<SerialMessage> _broadcastChannel =
-        Channel.CreateUnbounded<SerialMessage>(new UnboundedChannelOptions
-        { SingleWriter = false, SingleReader = false });
+    Channel.CreateUnbounded<SerialMessage>(new UnboundedChannelOptions
+    { SingleWriter = false, SingleReader = false });
 
     private CancellationToken _appToken;
+
+    private readonly SemaphoreSlim _remapLock = new(1, 1);
 
     public SerialPortManagerService(
         ILogger<SerialPortManagerService> logger,
@@ -100,7 +107,7 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
         }
 
         // Fan-in task: reads from every worker's channel and writes to the broadcast.
-        _ = Task.Run(() => BroadcastFanInAsync(stoppingToken), stoppingToken);
+       // _ = Task.Run(() => BroadcastFanInAsync(stoppingToken), stoppingToken);
 
         try { await Task.Delay(Timeout.Infinite, stoppingToken); }
         catch (OperationCanceledException) { }
@@ -178,15 +185,20 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
             if (!_workers.TryAdd(function, worker))
                 return OperationResult.Failure($"Concurrent open for '{function}'");
 
-            var result = await worker.StartAsync(CancellationTokenSource
-                .CreateLinkedTokenSource(_appToken, token).Token);
+            var result = await worker.StartAsync(
+                CancellationTokenSource.CreateLinkedTokenSource(_appToken, token).Token);
 
             if (result.IsSuccess)
             {
-                _logger.LogInformation(
-                 "Opened port {Port} for function {Function} as {Type}",
-                  portPath, function, workerType);
+                // Subscribe immediately — no polling gap
+                SubscribeWorkerToBroadcast(function, worker, _appToken);
 
+                _logger.LogInformation("Opened port {Port} for function {Function} as {Type}",
+                    portPath, function, workerType);
+            }
+            else
+            {
+                _workers.TryRemove(function, out _);
             }
 
             return result;
@@ -201,7 +213,46 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
     }
 
 
+    private void SubscribeWorkerToBroadcast(string function, ISerialWorker worker, CancellationToken token)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                // Wait for the worker to signal it is ready — should be near-instant
+                // since we call this after StartAsync succeeds, but the TCS guards
+                // against any timing gap between TryAdd and the reader loop starting.
+                await worker.Started.WaitAsync(token);
+            }
+            catch (OperationCanceledException) { return; }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Worker {Function} failed before fan-in could subscribe", function);
+                return;
+            }
 
+            _logger.LogDebug("Fan-in subscribed to worker {Function}", function);
+
+            try
+            {
+                await foreach (var msg in worker.ReceivedMessages.ReadAllAsync(token))
+                {
+                    await _broadcastChannel.Writer.WriteAsync(msg, token);
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Fan-in reader exited unexpectedly for {Function}", function);
+            }
+
+            // Channel completed (port dropped or worker stopped) — nothing to clean up here.
+            // The worker itself is already removed from _workers by ClosePortAsync or the
+            // port-change handler. If it was an unexpected drop you may want to raise an event.
+            _logger.LogDebug("Fan-in unsubscribed from worker {Function}", function);
+
+        }, token);
+    }
 
     public async Task<OperationResult> ClosePortAsync(
     string function, CancellationToken token = default)
@@ -231,49 +282,132 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
     }
 
 
+
+
+    public async Task<PortRemapResult> HandlePortChangedAsync(
+    PortChangedEventArgs e, CancellationToken token = default)
+    {
+        await _remapLock.WaitAsync(token);
+        try
+        {
+            return e.Kind switch
+            {
+                PortChangeKind.Removed => await HandlePortRemovedAsync(e.Port, token),
+                PortChangeKind.Added => await HandlePortAddedAsync(e.Port, token),
+                _ => PortRemapResult.NoOp()
+            };
+        }
+        finally { _remapLock.Release(); }
+    }
+
+    private async Task<PortRemapResult> HandlePortRemovedAsync(
+        UsbSerialPortInfo port, CancellationToken token)
+    {
+        var reg = _registry.AllRegistrations
+            .FirstOrDefault(r => r.Identifier.Key == port.Key);
+
+        if (reg is null) return PortRemapResult.NoOp();
+
+        string oldPort = reg.CurrentPortPath ?? port.PortName;
+
+        await ClosePortAsync(reg.FunctionName, token);
+
+        return new PortRemapResult(
+            Function: reg.FunctionName,
+            OldPort: oldPort,
+            NewPort: null,
+            Kind: PortChangeKind.Removed,
+            Error: null);
+    }
+
+    private async Task<PortRemapResult> HandlePortAddedAsync(
+        UsbSerialPortInfo port, CancellationToken token)
+    {
+        var reg = _registry.AllRegistrations
+            .FirstOrDefault(r => r.Identifier.Key == port.Key);
+
+        if (reg is null) return PortRemapResult.NoOp();
+
+        // Could be a rename (COM3→COM4) or a reconnect on the same port
+        string oldPort = reg.CurrentPortPath ?? "(none)";
+
+        _registry.SetPortPath(port.Key, port.PortName);
+
+        var result = await OpenPortAsync(reg.FunctionName, token);
+
+        return new PortRemapResult(
+            Function: reg.FunctionName,
+            OldPort: oldPort,
+            NewPort: port.PortName,
+            Kind: PortChangeKind.Added,
+            Error: result.IsSuccess ? null : result.Message);
+    }
+
     // ── I/O ───────────────────────────────────────────────────────────────────
 
+    //public async Task<OperationResult> WriteAsync(
+    //    string functionName, byte[] data, CancellationToken token = default)
+    //{
+    //    var portPath = _registry.ResolvePortPath(functionName);
+    //    if (portPath is null)
+    //        return OperationResult.Failure(
+    //            $"Function '{functionName}' is not mapped to any device");
+
+    //    // Reverse-look up the device key from the port path
+    //    if (functionName is null || !_workers.TryGetValue(functionName, out var worker))
+    //        return OperationResult.Failure(
+    //            $"Port for function '{functionName}' is not open");
+
+    //    var result = await worker.WriteAsync(data, token);
+    //    //return result.IsSuccess
+    //    //    ? OperationResult.Success()
+    //    //    : OperationResult.Failure("Write channel full or closed");
+    //    return await worker.WriteAsync(data, token);
+    //}
+
+    //public async Task<OperationResult> WriteTextAsync(
+    //    string functionName, string text, CancellationToken token = default)
+    //{
+    //    var portPath = _registry.ResolvePortPath(functionName);
+    //    if (portPath is null)
+    //        return OperationResult.Failure(
+    //            $"Function '{functionName}' is not mapped to any device");
+
+    //  //  var deviceKey = FindDeviceKeyByPort(portPath);
+    //    if (functionName is null || !_workers.TryGetValue(functionName, out var worker))
+    //        return OperationResult.Failure(
+    //            $"Port for function '{functionName}' is not open");
+
+    //    var result = await worker.WriteTextAsync(text, token);
+    //    //return result.IsSuccess
+    //    //    ? OperationResult.Success()
+    //    //    : OperationResult.Failure("Write channel full or closed");
+    //    return await worker.WriteTextAsync(text, token);
+    //}
+
     public async Task<OperationResult> WriteAsync(
-        string functionName, byte[] data, CancellationToken token = default)
+    string functionName, byte[] data, CancellationToken token = default)
     {
-        var portPath = _registry.ResolvePortPath(functionName);
-        if (portPath is null)
-            return OperationResult.Failure(
-                $"Function '{functionName}' is not mapped to any device");
+        if (_registry.ResolvePortPath(functionName) is null)
+            return OperationResult.Failure($"Function '{functionName}' is not mapped to any device");
 
-        // Reverse-look up the device key from the port path
-        if (functionName is null || !_workers.TryGetValue(functionName, out var worker))
-            return OperationResult.Failure(
-                $"Port for function '{functionName}' is not open");
+        if (!_workers.TryGetValue(functionName, out var worker))
+            return OperationResult.Failure($"Port for function '{functionName}' is not open");
 
-        var result = await worker.WriteAsync(data, token);
-        return result.IsSuccess
-            ? OperationResult.Success()
-            : OperationResult.Failure("Write channel full or closed");
+        return await worker.WriteAsync(data, token);
     }
 
     public async Task<OperationResult> WriteTextAsync(
-        string functionName, string text, CancellationToken token = default)
+    string functionName, string text, CancellationToken token = default)
     {
-        var portPath = _registry.ResolvePortPath(functionName);
-        if (portPath is null)
-            return OperationResult.Failure(
-                $"Function '{functionName}' is not mapped to any device");
+        if (_registry.ResolvePortPath(functionName) is null)
+            return OperationResult.Failure($"Function '{functionName}' is not mapped to any device");
 
-      //  var deviceKey = FindDeviceKeyByPort(portPath);
-        if (functionName is null || !_workers.TryGetValue(functionName, out var worker))
-            return OperationResult.Failure(
-                $"Port for function '{functionName}' is not open");
+        if (!_workers.TryGetValue(functionName, out var worker))
+            return OperationResult.Failure($"Port for function '{functionName}' is not open");
 
-        var result = await worker.WriteTextAsync(text, token);
-        return result.IsSuccess
-            ? OperationResult.Success()
-            : OperationResult.Failure("Write channel full or closed");
+        return await worker.WriteTextAsync(text, token);
     }
-
-
-
-
 
 
     /// <summary>
@@ -331,9 +465,10 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
 
             _registry.SetPortPath(identifier.Key, identifier.PortName);
 
-            if (!autoOpen || _workers.ContainsKey(identifier.Key)) continue;
 
-            var result = await OpenPortAsync(identifier.Key, token);
+            if (!autoOpen || _workers.ContainsKey(existing.FunctionName)) continue;
+            var result = await OpenPortAsync(existing.FunctionName, token);
+
             if (result.IsSuccess) opened++;
         }
 
@@ -371,44 +506,44 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
     /// to the shared broadcast channel. New workers added at runtime are
     /// picked up because each worker's reader is consumed independently.
     /// </summary>
-    private async Task BroadcastFanInAsync(CancellationToken token)
-    {
-        // We snapshot and continuously scan active workers.
-        // A dedicated task per worker is spawned when new workers appear.
-        var spawned = new ConcurrentDictionary<string, bool>();
+    //private async Task BroadcastFanInAsync(CancellationToken token)
+    //{
+    //    // We snapshot and continuously scan active workers.
+    //    // A dedicated task per worker is spawned when new workers appear.
+    //    var spawned = new ConcurrentDictionary<string, bool>();
 
-        while (!token.IsCancellationRequested)
-        {
-            foreach (var (key, worker) in _workers)
-            {
-                if (spawned.TryAdd(key, true))
-                {
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            await foreach (var msg in worker.ReceivedMessages.ReadAllAsync(token))
-                            {
-                                await _broadcastChannel.Writer.WriteAsync(msg, token);
-                            }
-                        }
-                        catch (OperationCanceledException) { }
-                        finally { spawned.TryRemove(key, out _); }
-                    }, token);
-                }
-            }
+    //    while (!token.IsCancellationRequested)
+    //    {
+    //        foreach (var (key, worker) in _workers)
+    //        {
+    //            if (spawned.TryAdd(key, true))
+    //            {
+    //                _ = Task.Run(async () =>
+    //                {
+    //                    try
+    //                    {
+    //                        await foreach (var msg in worker.ReceivedMessages.ReadAllAsync(token))
+    //                        {
+    //                            await _broadcastChannel.Writer.WriteAsync(msg, token);
+    //                        }
+    //                    }
+    //                    catch (OperationCanceledException) { }
+    //                    finally { spawned.TryRemove(key, out _); }
+    //                }, token);
+    //            }
+    //        }
 
-            await Task.Delay(500, token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-        }
-    }
+    //        await Task.Delay(500, token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    //    }
+    //}
 
-    private string? FindDeviceKeyByPort(string portPath)
-    {
-        return _registry.AllRegistrations
-            .FirstOrDefault(r =>
-                string.Equals(r.CurrentPortPath, portPath, StringComparison.OrdinalIgnoreCase))
-            ?.Identifier.Key;
-    }
+    //private string? FindDeviceKeyByPort(string portPath)
+    //{
+    //    return _registry.AllRegistrations
+    //        .FirstOrDefault(r =>
+    //            string.Equals(r.CurrentPortPath, portPath, StringComparison.OrdinalIgnoreCase))
+    //        ?.Identifier.Key;
+    //}
 
 
     private async Task<bool> RefreshPortPathAsync(string function, CancellationToken token)

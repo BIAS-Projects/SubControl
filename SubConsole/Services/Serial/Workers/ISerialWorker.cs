@@ -13,6 +13,7 @@ public interface ISerialWorker : IAsyncDisposable
     string PortPath { get; }
     bool IsOpen { get; }
 
+    Task Started { get; } 
     Task<OperationResult> StartAsync(CancellationToken appToken);
     Task StopAsync();
 
