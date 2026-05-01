@@ -1,10 +1,14 @@
 
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using SubConsole.Helpers;
+using Microsoft.Extensions.Options;
+using Serilog.Core;
 using SubConsole.Models;
+using SubConsole.Services.Helpers;
 using SubConsole.Services.Serial;
 using SubControlMAUI.Models;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
@@ -44,22 +48,40 @@ public sealed class TcpHostService : BackgroundService
     private readonly TcpListener _listener;
     private readonly ConcurrentDictionary<Guid, ClientState> _clients = new();
 
+    private readonly int _port;
+
+
+
     public TcpHostService(
         ILogger<TcpHostService> logger,
         TcpSerialCommandHandler handler,
-        SerialPushPump pushPump)
+        SerialPushPump pushPump,
+        IOptions<TcpSettings> tcpSettings
+
+           )
     {
-        _logger   = logger;
-        _handler  = handler;
+        _logger = logger;
+        _handler = handler;
         _pushPump = pushPump;
-        _listener = new TcpListener(IPAddress.Any, 9000);
+
+
+        _port = tcpSettings.Value.Port;
+        if (_port <= 0)
+        {
+            _logger.LogError("Invalid TCP port configuration port: {Port}", _port);
+            throw new InvalidOperationException("Invalid TCP port configuration");
+        }
+
+        _listener = new TcpListener(IPAddress.Any, _port);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _logger.LogInformation("TCP server starting on port {Port}", _port);
 
         _listener.Start();
-        _logger.LogInformation("TCP server started on port 9000");
+
+        _logger.LogInformation("TCP server started on port {Port}", _port);
 
         BasicTest(stoppingToken);
 
@@ -67,33 +89,32 @@ public sealed class TcpHostService : BackgroundService
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-
-
                 await UsbPortRegistry.Instance.RefreshAsync();
 
                 var client = await _listener.AcceptTcpClientAsync(stoppingToken);
-                var id     = Guid.NewGuid();
+                var id = Guid.NewGuid();
 
                 _logger.LogInformation(
-                    "Client {Id} connected from {Endpoint}", id, client.Client.RemoteEndPoint);
+                    "Client {ClientId} connected from {RemoteEndPoint}. Active clients: {ClientCount}",
+                    id,
+                    client.Client.RemoteEndPoint,
+                    _clients.Count + 1);
 
-                // Register with the push pump before starting loops so no
-                // messages can be missed between connection and registration.
                 var pushChannel = _pushPump.AddClient(id);
-                var state       = new ClientState(id, client, pushChannel);
-                _clients[id]    = state;
+                var state = new ClientState(id, client, pushChannel);
+                _clients[id] = state;
 
                 _ = Task.Run(() => ReceiveLoop(state, stoppingToken), stoppingToken);
                 _ = Task.Run(() => ProcessLoop(state, stoppingToken), stoppingToken);
-                _ = Task.Run(() => SendLoop(state, stoppingToken),    stoppingToken);
-
-
+                _ = Task.Run(() => SendLoop(state, stoppingToken), stoppingToken);
             }
         }
         catch (OperationCanceledException) { }
         finally
         {
+            _logger.LogInformation("TCP server shutting down");
             _listener.Stop();
+            _logger.LogInformation("TCP server stopped");
         }
     }
 
@@ -126,6 +147,11 @@ public sealed class TcpHostService : BackgroundService
                     var id      = sepIdx >= 0 ? frame[..sepIdx]       : frame;
                     var command = sepIdx >= 0 ? frame[(sepIdx + 1)..] : string.Empty;
 
+                    _logger.LogDebug( "Client {ClientId} received frame {RequestId} with command {CommandPreview}",
+                    state.Id,
+                    id,
+                    command.Length > 100 ? command[..100] : command);
+
                     await state.Incoming.Writer.WriteAsync(new IncomingFrame(id, command), token);
                 }
 
@@ -135,7 +161,7 @@ public sealed class TcpHostService : BackgroundService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogError(ex, "Client {Id} receive error", state.Id);
+            _logger.LogError(ex, "Client {ClientId} receive error", state.Id);
         }
         finally
         {
@@ -150,6 +176,10 @@ public sealed class TcpHostService : BackgroundService
     {
         await foreach (var frame in state.Incoming.Reader.ReadAllAsync(token))
         {
+            _logger.LogDebug("Client {ClientId} processing request {RequestId}",
+            state.Id,
+            frame.Id);
+
             try
             {
                 // ACK immediately so the client's timeout is never hit by handler latency
@@ -158,6 +188,10 @@ public sealed class TcpHostService : BackgroundService
 
                 var message = JsonSerializer.Deserialize<TCPMessageBody<string>>(frame.Command);
 
+                _logger.LogDebug("Client {ClientId} deserialized command {CommandType}",
+                state.Id,
+                message?.Command);
+
                 if (message == null)
                 {
                     throw new InvalidOperationException($"Invalid JSON message: {frame.Command}");
@@ -165,13 +199,21 @@ public sealed class TcpHostService : BackgroundService
 
                 var result = await _handler.HandleAsync(message, token);
 
+
                 await state.Outgoing.Writer.WriteAsync(
                     $"{frame.Id}{TcpProtocol.SEP}{result}{TcpProtocol.EOM}", token);
+
+                _logger.LogInformation("Client {ClientId} successfully processed request {RequestId}",
+                state.Id,
+                frame.Id);
+
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Client {Id} process error for command '{Command}'",
-                    state.Id, frame.Command);
+                _logger.LogError(ex,"Client {ClientId} failed processing request {RequestId}. Command preview: {CommandPreview}",
+                state.Id,
+                frame.Id,
+                frame.Command.Length > 100 ? frame.Command[..100] : frame.Command);
 
                 await state.Outgoing.Writer.WriteAsync(
                     $"{TcpProtocol.NACK}{TcpProtocol.SEP}{frame.Id}{TcpProtocol.SEP}{ex.Message}{TcpProtocol.EOM}",
@@ -208,13 +250,17 @@ public sealed class TcpHostService : BackgroundService
             {
                 if (!state.Client.Connected) break;
 
+                _logger.LogDebug("Client {ClientId} sending message of {Length} bytes",
+                state.Id,
+                message.Length);
+
                 var bytes = Encoding.UTF8.GetBytes(message);
                 await stream.WriteAsync(bytes, token);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogError(ex, "Client {Id} send error", state.Id);
+            _logger.LogError(ex, "Client {ClientId} send error", state.Id);
         }
         finally
         {
@@ -236,11 +282,17 @@ public sealed class TcpHostService : BackgroundService
 
         try { state.Client.Close(); } catch { }
 
-        _logger.LogInformation("Client {Id} disconnected", id);
+        _logger.LogInformation(
+            "Client {ClientId} disconnected. Active clients: {ClientCount}",
+            id,
+            _clients.Count);
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
+        _logger.LogInformation("Stopping TCP host service. Disconnecting {ClientCount} clients",
+        _clients.Count);
+
         foreach (var id in _clients.Keys.ToList())
             CleanupClient(id);
 

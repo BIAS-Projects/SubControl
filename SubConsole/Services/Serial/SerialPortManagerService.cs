@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using SubConsole.Helpers;
 using SubConsole.Models;
+using SubConsole.Services.Helpers;
 using SubConsole.Services.Serial.Commands;
 using System.Collections.Concurrent;
 using System.Threading.Channels;
@@ -27,7 +27,6 @@ public interface ISerialPortManagerService
         CancellationToken token = default);
 
     // ── Registry ──────────────────────────────────────────────────────────────
-    //   void RegisterDevice(DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType type);
     void RegisterDevice(UsbSerialPortInfo identifier, string functionName, int baudRate, SerialWorkerType type);
 
     Task<OperationResult> UnregisterDeviceAsync(string deviceKey, CancellationToken token = default);
@@ -116,29 +115,11 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
 
     // ── Registry ──────────────────────────────────────────────────────────────
 
-    //public void RegisterDevice(DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType type)
-    //    => _registry.Register(identifier, functionName, baudRate, type);
 
     public void RegisterDevice(UsbSerialPortInfo identifier, string functionName, int baudRate, SerialWorkerType type)
     => _registry.Register(identifier, functionName, baudRate, type);
 
-    //public async Task<OperationResult> UnregisterDeviceAsync(
-    //    string deviceKey, CancellationToken token = default)
-    //{
-    //    var close = await ClosePortAsync(deviceKey, token);
-    // //   if (!close.IsSuccess) return close;
-
-    //    var reg = _registry.AllRegistrations.FirstOrDefault(r => r.Identifier.Key == deviceKey);
-    //    if (reg is not null)
-    //    {
-    //        _registry.Unregister(reg.Identifier);
-    //        return OperationResult.Success();
-    //    }
-    //    else
-    //    {
-    //        return OperationResult.Failure($"Key: {deviceKey} not found in registered device list");
-    //    }
-    //}
+ 
 
     public async Task<OperationResult> UnregisterDeviceAsync(
     string function, CancellationToken token = default)
@@ -163,54 +144,7 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
 
     // ── Port lifecycle ────────────────────────────────────────────────────────
 
-    //public async Task<OperationResult> OpenPortAsync(
-    //    string deviceKey, CancellationToken token = default)
-    //{
-    //    if (_workers.ContainsKey(deviceKey))
-    //        return OperationResult.Failure($"Port for device '{deviceKey}' is already open");
 
-    //    var reg = _registry.AllRegistrations.FirstOrDefault(r => r.Identifier.Key == deviceKey);
-    //    if (reg is null)
-    //        return OperationResult.Failure($"Device '{deviceKey}' is not registered");
-
-    //    if (reg.CurrentPortPath is null)
-    //    {
-    //        // Attempt to find the device on the OS right now
-    //        var refreshResult = await RefreshPortPathAsync(deviceKey, token);
-    //        if (!refreshResult)
-    //            return OperationResult.Failure(
-    //                $"No OS port path found for device '{deviceKey}'");
-    //    }
-
-    //    SerialWorkerType workerType = reg.SerialWorkerType;
-
-    //    int baudRate = reg.BaudRate;
-
-    //    var portPath = reg.CurrentPortPath!;
-
-    //    try
-    //    {
-    //        var worker = _workerFactory.Create(portPath, baudRate, workerType, _registry);
-
-    //        if (!_workers.TryAdd(deviceKey, worker))
-    //            return OperationResult.Failure($"Concurrent open for '{deviceKey}'");
-
-    //        await worker.StartAsync(CancellationTokenSource
-    //            .CreateLinkedTokenSource(_appToken, token).Token);
-
-    //        _logger.LogInformation(
-    //            "Opened port {Port} for device {Key} as {Type}",
-    //            portPath, deviceKey, workerType);
-
-    //        return OperationResult.Success();
-    //    }
-    //    catch (Exception ex)
-    //    {
-    //        _workers.TryRemove(deviceKey, out _);
-    //        _logger.LogError(ex, "Failed to open port {Port}", portPath);
-    //        return OperationResult.Failure(ex.Message);
-    //    }
-    //}
 
     public async Task<OperationResult> OpenPortAsync(
     string function, CancellationToken token = default)
@@ -250,7 +184,7 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
             if (result.IsSuccess)
             {
                 _logger.LogInformation(
-                 "Opened port {Port} for fucntion {Function} as {Type}",
+                 "Opened port {Port} for function {Function} as {Type}",
                   portPath, function, workerType);
 
             }
@@ -268,27 +202,6 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
 
 
 
-    //public async Task<OperationResult> ClosePortAsync(
-    //    string deviceKey, CancellationToken token = default)
-    //{
-    //    if (!_workers.TryRemove(deviceKey, out var worker))
-    //        return OperationResult.Failure($"No open port for device '{deviceKey}'");
-
-    //    try
-    //    {
-    //        await worker.StopAsync();
-    //        await worker.DisposeAsync();
-    //        _registry.ClearPortPath(deviceKey);
-
-    //        _logger.LogInformation("Closed port for device {Key}", deviceKey);
-    //        return OperationResult.Success();
-    //    }
-    //    catch (Exception ex)
-    //    {
-    //        _logger.LogError(ex, "Error closing port for device {Key}", deviceKey);
-    //        return OperationResult.Failure(ex.Message);
-    //    }
-    //}
 
     public async Task<OperationResult> ClosePortAsync(
     string function, CancellationToken token = default)
@@ -301,7 +214,7 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
             await worker.StopAsync();
             await worker.DisposeAsync();
 
-            string key = _registry.ResolveKeyForFucntion(function);
+            string key = _registry.ResolveKeyForFunction(function);
             if (key is null)
                 return OperationResult.Failure($"No key found for function '{function}'");
             
@@ -329,7 +242,6 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
                 $"Function '{functionName}' is not mapped to any device");
 
         // Reverse-look up the device key from the port path
-       // var deviceKey = FindDeviceKeyByPort(portPath);
         if (functionName is null || !_workers.TryGetValue(functionName, out var worker))
             return OperationResult.Failure(
                 $"Port for function '{functionName}' is not open");
@@ -398,7 +310,6 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
         SerialWorkerType defaultType,
         CancellationToken token = default)
     {
-        //var devices = await _enumerator.EnumerateAsync(token);
         var devices = await UsbSerialPortMapper.GetUsbSerialPortsAsync(token);
 
 
@@ -499,19 +410,6 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
             ?.Identifier.Key;
     }
 
-    //private async Task<bool> RefreshPortPathAsync(string deviceKey, CancellationToken token)
-    //{
-    //    var reg = _registry.AllRegistrations.FirstOrDefault(r => r.Identifier.Key == deviceKey);
-    //    if (reg is null) return false;
-
-    //    var devices = await UsbSerialPortMapper.GetUsbSerialPortsAsync(token);
-    //    var match = devices.FirstOrDefault(d => d.Key == deviceKey);
-
-    //    if (match!.PortName is null) return false;
-
-    //    _registry.SetPortPath(deviceKey, match.PortName);
-    //    return true;
-    //}
 
     private async Task<bool> RefreshPortPathAsync(string function, CancellationToken token)
     {

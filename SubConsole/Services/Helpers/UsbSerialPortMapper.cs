@@ -14,7 +14,7 @@ using System.Threading.Tasks;
 using Microsoft.Win32;
 #endif
 
-namespace SubConsole.Helpers;
+namespace SubConsole.Services.Helpers;
 
 public static class UsbSerialPortMapper
 {
@@ -25,16 +25,16 @@ public static class UsbSerialPortMapper
 
 
 
-//    // On startup or hardware change notification:
-//    await UsbPortRegistry.Instance.RefreshAsync();
+    //    // On startup or hardware change notification:
+    //    await UsbPortRegistry.Instance.RefreshAsync();
 
-//// Read from any thread:
-//if (UsbPortRegistry.Instance.TryGetPort("COM3", out var info))
-//    Console.WriteLine(info.Description);
+    //// Read from any thread:
+    //if (UsbPortRegistry.Instance.TryGetPort("COM3", out var info))
+    //    Console.WriteLine(info.Description);
 
-//// React to plug/unplug:
-//UsbPortRegistry.Instance.PortChanged += (_, e) =>
-//    logger.LogInformation("{Kind}: {Port}", e.Kind, e.Port.PortName);
+    //// React to plug/unplug:
+    //UsbPortRegistry.Instance.PortChanged += (_, e) =>
+    //    logger.LogInformation("{Kind}: {Port}", e.Kind, e.Port.PortName);
 
     public static async Task<IReadOnlyList<UsbSerialPortInfo>> GetUsbSerialPortsAsync(CancellationToken token)
     {

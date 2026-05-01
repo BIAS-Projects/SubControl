@@ -1,5 +1,5 @@
-using SubConsole.Helpers;
 using SubConsole.Models;
+using SubConsole.Services.Helpers;
 using static SubConsole.Models.UsbDeviceInfo;
 
 namespace SubConsole.Services.Serial.Commands;

@@ -1,4 +1,6 @@
 using Microsoft.Extensions.Logging;
+using Serilog.Core;
+using Serilog.Events;
 using SubConsole.Models;
 using SubConsole.Services.Serial;
 using SubConsole.Services.Serial.Commands;
@@ -40,17 +42,21 @@ public sealed class TcpSerialCommandHandler
     private readonly ISerialPortManagerService _manager;
     private readonly ILogger<TcpSerialCommandHandler> _logger;
 
+    private readonly LoggingLevelSwitch _levelSwitch;
+
     private static readonly JsonSerializerOptions _jsonOptions =
         new() { WriteIndented = false };
 
     public TcpSerialCommandHandler(
         ISerialCommandDispatcher dispatcher,
         ISerialPortManagerService manager,
-        ILogger<TcpSerialCommandHandler> logger)
+        ILogger<TcpSerialCommandHandler> logger,
+        LoggingLevelSwitch levelSwitch)
     {
         _dispatcher = dispatcher;
         _manager    = manager;
         _logger     = logger;
+        _levelSwitch = levelSwitch;
     }
 
     // ── Entry point ───────────────────────────────────────────────────────────
@@ -78,6 +84,7 @@ public sealed class TcpSerialCommandHandler
                   "WRITE TEXT" => await HandleWriteTextAsync(message, token),
                   //"WRITE FLIR" => await HandleWriteFLIRAsync(message, token),
                   "DISCOVER" => await HandleDiscoverAsync(message, token),
+                  "LOGGING" => await HandleLoggingAsync(message, token),
                   "ASSIGN PORT" => HandleAssignPort(message),
                   _ => ErrorResponse($"Unknown command: '{message.Command}'")
               };
@@ -357,6 +364,57 @@ public sealed class TcpSerialCommandHandler
 
         return SuccessResponse(new { command.DeviceKey, command.PortPath });
     }
+
+    private async Task<string> HandleLoggingAsync(TCPMessageBody<string> message, CancellationToken token)
+    {
+        switch (message.Data)
+        {
+            case "Fatal":
+                _levelSwitch.MinimumLevel = LogEventLevel.Fatal;
+                return SuccessResponse();
+                break;
+            case "Error": _levelSwitch.MinimumLevel = LogEventLevel.Error;
+                return SuccessResponse();
+                break;
+            case "Warning":
+                _levelSwitch.MinimumLevel = LogEventLevel.Warning;
+                return SuccessResponse();
+                break;
+            case "Information":
+                _levelSwitch.MinimumLevel = LogEventLevel.Information;
+                return SuccessResponse();
+                break;
+            case "Debug":
+                _levelSwitch.MinimumLevel = LogEventLevel.Debug;
+                return SuccessResponse();
+                break;
+
+            case "Verbose":
+                _levelSwitch.MinimumLevel = LogEventLevel.Verbose;
+                return SuccessResponse();
+                break;
+            default:
+                return ErrorResponse($"Unknown logging level: {message.Data}");
+                break;
+        }
+    }
+
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     // ── Response helpers ──────────────────────────────────────────────────────
 
