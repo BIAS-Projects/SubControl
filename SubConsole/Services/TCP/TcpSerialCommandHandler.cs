@@ -68,7 +68,10 @@ public sealed class TcpSerialCommandHandler
     /// </summary>
     public async Task<string> HandleAsync(TCPMessageBody<string> message, CancellationToken token)
     {
-        _logger.LogDebug("Handling frame: {Message}", message);
+        _logger.LogDebug(
+            "Handling command {Command} for {Function}",
+            message.Command,
+            message.Function);
 
         try
         {
@@ -86,21 +89,38 @@ public sealed class TcpSerialCommandHandler
                   "DISCOVER" => await HandleDiscoverAsync(message, token),
                   "LOGGING" => await HandleLoggingAsync(message, token),
                   "ASSIGN PORT" => HandleAssignPort(message),
-                  _ => ErrorResponse($"Unknown command: '{message.Command}'")
+               //   _ => ErrorResponse($"Unknown command: '{message.Command}'")
+                   _ => await UnknownCommand(message.Command)
               };
         }
         
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error handling frame: {Message}", message);
+            _logger.LogError(
+                ex,
+                "Command {Command} failed for {Function}",
+                message.Command,
+                message.Function);
             return ErrorResponse(ex.Message);
         }
     }
 
     // ── Handlers ──────────────────────────────────────────────────────────────
 
+
+    private async Task<string> UnknownCommand(string command)
+    {
+        _logger.LogWarning(
+            "Unknown Serial Command: {Command}",
+            command);
+        return ErrorResponse("Unknown Serial Command: {command}");
+    }
+
+
     public async Task<string> HandleListDevicesAsync(CancellationToken token)
     {
+        _logger.LogDebug("Executing LIST DEVICES");
+
         var cmd = new ListUsbDevicesCommand();
         await _dispatcher.DispatchAsync(cmd, token);
 
@@ -115,11 +135,17 @@ public sealed class TcpSerialCommandHandler
             portPath     = d.PortName
         });
 
+        _logger.LogInformation(
+            "LIST DEVICES returned {DeviceCount} devices",
+            cmd.Result?.Count ?? 0);
+
         return SuccessResponse(payload);
     }
 
     private async Task<string> HandleListRegisteredAsync(CancellationToken token)
     {
+        _logger.LogDebug("Executing LIST REGISTERED");
+
         var cmd = new ListRegisteredDevicesCommand();
         await _dispatcher.DispatchAsync(cmd, token);
 
@@ -131,11 +157,17 @@ public sealed class TcpSerialCommandHandler
             currentPort   = r.CurrentPortPath
         });
 
+        _logger.LogInformation(
+            "LIST REGISTERED returned {Count} entries",
+            cmd.Result?.Count ?? 0);
+
         return SuccessResponse(payload);
     }
 
     private async Task<string> HandleRegisterAsync(TCPMessageBody<string> message, CancellationToken token)
     {
+        _logger.LogDebug("Processing REGISTER command");
+
         int baudrate;
         SerialWorkerType serialWorkerType;
         FunctionToPortEntry entry;
@@ -176,11 +208,23 @@ public sealed class TcpSerialCommandHandler
             return ErrorResponse($"HandleRegisterAsync WorkerType must be a registered type: {entry.WorkerType} submitted");
         }
 
-           var devices = await _manager.EnumerateUsbDevicesAsync(token);
+        _logger.LogInformation(
+            "Registering device {DeviceKey} as {FunctionName} ({WorkerType} @ {BaudRate})",
+            entry.DeviceKey,
+            entry.FunctionName,
+            serialWorkerType,
+            baudrate);
+
+        var devices = await _manager.EnumerateUsbDevicesAsync(token);
         var found = devices.FirstOrDefault(d => d.Key == entry.DeviceKey);
 
         if (found is null)
+        {
+            _logger.LogWarning(
+                "REGISTER failed: device {DeviceKey} not found",
+                entry.DeviceKey);
             return ErrorResponse($"Device '{entry.DeviceKey}' not found in connected USB Devices");
+        }
 
         var result = await _dispatcher.DispatchAsync(new RegisterDeviceCommand
         {
@@ -190,6 +234,22 @@ public sealed class TcpSerialCommandHandler
             BaudRate = baudrate,
             WorkerType = serialWorkerType
         }, token);
+
+
+        if (result.IsSuccess)
+        {
+            _logger.LogInformation(
+                "Device {DeviceKey} registered as {FunctionName}",
+                entry.DeviceKey,
+                entry.FunctionName);
+        }
+        else
+        {
+            _logger.LogWarning(
+                "REGISTER failed for {DeviceKey}: {Reason}",
+                entry.DeviceKey,
+                result.Message);
+        }
 
         return result.IsSuccess
             ? SuccessResponse(new { entry.DeviceKey, entry.FunctionName })
@@ -202,6 +262,10 @@ public sealed class TcpSerialCommandHandler
     private async Task<string> HandleUnregisterAsync(TCPMessageBody<string> message, CancellationToken token)
     {
 
+        _logger.LogInformation(
+            "Unregistering device {DeviceKey}",
+            message.Data);
+
         if (String.IsNullOrWhiteSpace(message.Data))
         {
             return ErrorResponse("HandleUnregisterAsync DeviceKey cannot be empty");
@@ -210,6 +274,20 @@ public sealed class TcpSerialCommandHandler
         var result = await _dispatcher.DispatchAsync(
             new UnregisterDeviceCommand { DeviceKey = message.Data }, token);
 
+        if (result.IsSuccess)
+        {
+            _logger.LogInformation(
+                "Device {DeviceKey} ukregistered",
+                message.Data,
+                result.Message);
+        }
+        else
+        {
+            _logger.LogWarning(
+                "UNREGISTER failed for {DeviceKey}: {Reason} ",
+                message.Data);
+        }
+
         return result.IsSuccess
             ? SuccessResponse(new { deviceKey = message.Data })
             : ErrorResponse(result.Message);
@@ -217,6 +295,10 @@ public sealed class TcpSerialCommandHandler
 
     private async Task<string> HandleOpenAsync(TCPMessageBody<string> message, CancellationToken token)
     {
+        _logger.LogInformation(
+            "Opening device {DeviceKey}",
+            message.Data);
+
         if (String.IsNullOrWhiteSpace(message.Data))
         {
             return ErrorResponse("HandleUnregisterAsync DeviceKey cannot be empty");
@@ -245,6 +327,9 @@ public sealed class TcpSerialCommandHandler
 
     private async Task<string> HandleCloseAsync(TCPMessageBody<string> message, CancellationToken token)
     {
+        _logger.LogInformation(
+            "Closing device {DeviceKey}",
+            message.Data);
 
         if (String.IsNullOrWhiteSpace(message.Data))
         {
@@ -264,6 +349,11 @@ public sealed class TcpSerialCommandHandler
 
     private async Task<string> HandleWriteAsync(TCPMessageBody<string> message, CancellationToken token)
     {
+        _logger.LogDebug(
+            "Writing binary data to {FunctionName} ({ByteCount} bytes)",
+            message.Function,
+            message.Data?.Length ?? 0);
+
         if (String.IsNullOrWhiteSpace(message.Command))
         {
             return ErrorResponse("HandleWriteAsync Message Data cannot be empty");
@@ -278,7 +368,10 @@ public sealed class TcpSerialCommandHandler
 
     private async Task<string> HandleWriteTextAsync(TCPMessageBody<string> message, CancellationToken token)
     {
-
+        _logger.LogDebug(
+            "Writing text to {FunctionName} ({Length} chars)",
+            message.Function,
+            message.Data?.Length ?? 0);
         var result = await _dispatcher.DispatchAsync(new WriteTextCommand
         {
             FunctionName  = message.Function,
@@ -309,6 +402,8 @@ public sealed class TcpSerialCommandHandler
 
     private async Task<string> HandleDiscoverAsync(TCPMessageBody<string> message, CancellationToken token)
     {
+        _logger.LogInformation("Starting auto-discovery");
+
         SerialWorkerType serialWorkerType;
         AutoDiscoverCommand command = JsonSerializer.Deserialize<AutoDiscoverCommand>(message.Command);
 
@@ -342,6 +437,7 @@ public sealed class TcpSerialCommandHandler
 
     private string HandleAssignPort(TCPMessageBody<string> message)
     {
+
         DeviceKeyToPortPathEntry command = JsonSerializer.Deserialize<DeviceKeyToPortPathEntry>(message.Command);
 
         if (command is null)
@@ -359,14 +455,28 @@ public sealed class TcpSerialCommandHandler
         var reg = _manager.GetRegisteredDevices()
             .FirstOrDefault(r => r.Identifier.Key == command.DeviceKey);
 
+        _logger.LogInformation(
+            "Assigning port {PortPath} to device {DeviceKey}",
+            command.PortPath,
+            command.DeviceKey);
+
         if (reg is null)
+        {
+            _logger.LogWarning(
+                "ASSIGN PORT failed: device {DeviceKey} not registered",
+                command.DeviceKey);
             return ErrorResponse($"Device '{command.DeviceKey}' is not registered");
+        }
 
         return SuccessResponse(new { command.DeviceKey, command.PortPath });
     }
 
     private async Task<string> HandleLoggingAsync(TCPMessageBody<string> message, CancellationToken token)
     {
+        _logger.LogInformation(
+            "Changing log level to {Level}",
+            message.Data);
+
         switch (message.Data)
         {
             case "Fatal":

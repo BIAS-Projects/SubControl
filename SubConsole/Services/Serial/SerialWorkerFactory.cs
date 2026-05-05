@@ -38,6 +38,13 @@ public sealed class SerialWorkerFactory : ISerialWorkerFactory
         SerialWorkerType type,
         IDeviceRegistry registry)
     {
+
+        _logger.LogDebug(
+            "Creating serial worker {WorkerType} for {PortPath} at {BaudRate}",
+            type,
+            portPath,
+            baudRate);
+
         return type switch
         {
             SerialWorkerType.Text => new SerialPortWorker(

@@ -40,7 +40,10 @@ public sealed class SerialPushPump : BackgroundService
     {
         var channel = new ClientPushChannel();
         _clients[clientId] = channel;
-        _logger.LogDebug("Push pump: client {Id} registered", clientId);
+        _logger.LogInformation(
+            "Client {ClientId} registered to push pump (TotalClients={Count})",
+            clientId,
+            _clients.Count);
         return channel;
     }
 
@@ -50,7 +53,16 @@ public sealed class SerialPushPump : BackgroundService
         {
             ch.Complete();
             ch.Dispose();
-            _logger.LogDebug("Push pump: client {Id} removed", clientId);
+            _logger.LogInformation(
+                "Client {ClientId} removed from push pump (TotalClients={Count})",
+                clientId,
+                _clients.Count);
+        }
+        else
+        {
+            _logger.LogDebug(
+                "Attempted to remove unknown client {ClientId}",
+                clientId);
         }
     }
 
@@ -67,6 +79,10 @@ public sealed class SerialPushPump : BackgroundService
         {
             await foreach (var message in reader.ReadAllAsync(stoppingToken))
             {
+                _logger.LogDebug(
+                    "Received serial message from {FunctionName}",
+                    message.FunctionName);
+
                 var frame = new PushFrame
                 {
                     FunctionName = message.FunctionName,
@@ -79,12 +95,17 @@ public sealed class SerialPushPump : BackgroundService
                     if (!client.Writer.TryWrite(frame))
                     {
                         _logger.LogWarning(
-                            "Push channel full for client {Id} — frame dropped", id);
+                            "Push channel full for client {ClientId} — frame dropped (Function={FunctionName})",
+                            id,
+                            frame.FunctionName);
                     }
                 }
             }
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) 
+        {
+            _logger.LogDebug("SerialPushPump cancellation requested");
+        }
 
         _logger.LogInformation("SerialPushPump stopped");
     }

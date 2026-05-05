@@ -1,6 +1,7 @@
 using SubConsole.Models;
 using SubConsole.Services.Helpers;
 using static SubConsole.Models.UsbDeviceInfo;
+using Microsoft.Extensions.Logging;
 
 namespace SubConsole.Services.Serial.Commands;
 
@@ -25,12 +26,31 @@ public interface ISerialCommand
 // List commands
 // ═════════════════════════════════════════════════════════════════════════════
 
+
+//public abstract class SerialCommandBase
+//{
+//    protected ILogger Logger { get; }
+
+//    protected SerialCommandBase(ILogger logger)
+//    {
+//        Logger = logger;
+//    }
+//}
+
+
 /// <summary>
 /// Enumerate USB devices currently visible to the OS and return their
 /// identifiers. Does not modify the registry.
 /// </summary>
 public sealed class ListUsbDevicesCommand : ISerialCommand
+  //  public sealed class ListUsbDevicesCommand : SerialCommandBase, ISerialCommand
 {
+
+    //public ListUsbDevicesCommand(ILogger<ListUsbDevicesCommand> logger)
+    //: base(logger)
+    //{
+    //}
+
     public List<UsbSerialPortInfo>? Result { get; private set; }
 
     public async Task<OperationResult> ExecuteAsync(
@@ -39,6 +59,7 @@ public sealed class ListUsbDevicesCommand : ISerialCommand
     {
         Result = (await UsbSerialPortMapper.GetUsbSerialPortsAsync(token)).ToList();
         return OperationResult.Success();
+
     }
 }
 

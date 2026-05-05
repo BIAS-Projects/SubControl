@@ -35,6 +35,8 @@ public sealed class WindowsUsbDeviceEnumerator : IUsbDeviceEnumerator
         {
             var results = new List<(DeviceIdentifier, string)>();
 
+            _logger.LogInformation("Starting USB serial enumeration (Windows/WMI)");
+
             try
             {
                 // Query USB serial converters via PnP — filters to USB\VID_ devices
@@ -70,13 +72,24 @@ public sealed class WindowsUsbDeviceEnumerator : IUsbDeviceEnumerator
                     results.Add((identifier, port));
 
                     _logger.LogDebug(
-                        "Found USB serial: {Key} on {Port}", identifier.Key, port);
+                        "Discovered USB serial device {DeviceKey} on {PortPath}",
+                        identifier.Key,
+                        port);
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogDebug("USB serial enumeration cancelled (Windows/WMI)");
+                throw;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger.LogError(ex, "WMI enumeration failed");
+                _logger.LogError(ex, "WMI USB enumeration failed");
             }
+
+            _logger.LogInformation(
+                "Completed USB serial enumeration (Windows). Found {DeviceCount} device(s)",
+                results.Count);
 
             return results;
         }, token);
@@ -113,31 +126,54 @@ public sealed class LinuxUsbDeviceEnumerator : IUsbDeviceEnumerator
 
     private readonly ILogger<LinuxUsbDeviceEnumerator> _logger;
 
-    public LinuxUsbDeviceEnumerator(ILogger<LinuxUsbDeviceEnumerator> logger)
-        => _logger = logger;
+    public LinuxUsbDeviceEnumerator(ILogger<LinuxUsbDeviceEnumerator> logger) => _logger = logger;
 
     public Task<IReadOnlyList<(DeviceIdentifier, string)>> EnumerateAsync(
-        CancellationToken token = default)
+           CancellationToken token = default)
     {
         return Task.Run<IReadOnlyList<(DeviceIdentifier, string)>>(() =>
         {
             var results = new List<(DeviceIdentifier, string)>();
 
-            // Strategy 1: /dev/serial/by-id — symlinks with human-readable names
-            // that embed VID, PID, and serial number when available.
-            if (Directory.Exists(ByIdDir))
-                results.AddRange(EnumerateByIdDir(token));
+            _logger.LogInformation("Starting USB serial enumeration (Linux)");
 
-            // Strategy 2: Walk /sys/bus/usb/devices looking for tty children.
-            // Catches devices that have no by-id symlink (no serial number).
-            results.AddRange(EnumerateSysUsbDevices(token));
+            try
+            {
+                if (Directory.Exists(ByIdDir))
+                {
+                    _logger.LogDebug("Enumerating via /dev/serial/by-id");
+                    results.AddRange(EnumerateByIdDir(token));
+                }
+                else
+                {
+                    _logger.LogDebug("/dev/serial/by-id not found");
+                }
 
-            // Deduplicate by port path — by-id is preferred because it carries the SN.
-            return results
-                .GroupBy(r => r.Item2, StringComparer.OrdinalIgnoreCase)
-                .Select(g => g.OrderByDescending(r => r.Item1.SerialNumber.Length).First())
-                .ToList()
-                .AsReadOnly();
+                _logger.LogDebug("Enumerating via /sys/bus/usb/devices");
+                results.AddRange(EnumerateSysUsbDevices(token));
+
+                var deduped = results
+                    .GroupBy(r => r.Item2, StringComparer.OrdinalIgnoreCase)
+                    .Select(g => g.OrderByDescending(r => r.Item1.SerialNumber.Length).First())
+                    .ToList()
+                    .AsReadOnly();
+
+                _logger.LogInformation(
+                    "Completed USB serial enumeration (Linux). Found {DeviceCount} device(s)",
+                    deduped.Count);
+
+                return deduped;
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogDebug("USB enumeration cancelled (Linux)");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Linux USB enumeration failed");
+                return results;
+            }
         }, token);
     }
 
@@ -168,7 +204,11 @@ public sealed class LinuxUsbDeviceEnumerator : IUsbDeviceEnumerator
             var desc = name;
 
             var identifier = new DeviceIdentifier(vid, pid, sn, mfr, desc);
-            _logger.LogDebug("by-id: {Key} → {Port}", identifier.Key, portPath);
+            _logger.LogDebug(
+                "Discovered USB serial device {DeviceKey} on {PortPath} via {Strategy}",
+                identifier.Key,
+                portPath,
+                "by-id");
 
             yield return (identifier, portPath);
         }
@@ -227,7 +267,11 @@ public sealed class LinuxUsbDeviceEnumerator : IUsbDeviceEnumerator
                     mfr,
                     desc);
 
-                _logger.LogDebug("sysfs: {Key} → {Port}", identifier.Key, tty);
+                _logger.LogDebug(
+                    "Discovered USB serial device {DeviceKey} on {PortPath} via {Strategy}",
+                    identifier.Key,
+                    tty,
+                    "sysfs");
                 yield return (identifier, tty);
             }
         }
@@ -315,14 +359,22 @@ public static class UsbDeviceEnumeratorFactory
 {
     public static IUsbDeviceEnumerator Create(ILoggerFactory loggerFactory)
     {
+        var logger = loggerFactory.CreateLogger("UsbDeviceEnumeratorFactory");
+
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            logger.LogInformation("Using Windows USB device enumerator");
             return new WindowsUsbDeviceEnumerator(
                 loggerFactory.CreateLogger<WindowsUsbDeviceEnumerator>());
-
+        }
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        {
+            logger.LogInformation("Using Linux USB device enumerator");
             return new LinuxUsbDeviceEnumerator(
                 loggerFactory.CreateLogger<LinuxUsbDeviceEnumerator>());
+        }
 
+        logger.LogError("Unsupported OS platform for USB enumeration");
         throw new PlatformNotSupportedException("Only Windows and Linux are supported.");
     }
 }

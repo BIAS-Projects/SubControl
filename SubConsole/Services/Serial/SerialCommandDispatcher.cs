@@ -32,21 +32,44 @@ public sealed class SerialCommandDispatcher : ISerialCommandDispatcher
     public async Task<OperationResult> DispatchAsync(
         ISerialCommand command, CancellationToken token = default)
     {
-        _logger.LogDebug("Dispatching {Command}", command.GetType().Name);
+        var commandName = command.GetType().Name;
 
+        _logger.LogInformation(
+            "Executing serial command {Command}",
+            commandName);
+
+        var start = DateTime.UtcNow;
         try
         {
             var result = await _manager.ExecuteAsync(command, token);
 
             if (!result.IsSuccess)
+            {
                 _logger.LogWarning(
-                    "{Command} failed: {Message}", command.GetType().Name, result.Message);
+                    "Serial command {Command} failed: {Message}",
+                    commandName,
+                    result.Message);
+            }
+            var durationMs = (DateTime.UtcNow - start).TotalMilliseconds;
+
+            _logger.LogInformation(
+                "Completed serial command {Command}: {Success} in {Duration}ms",
+                commandName,
+                result.IsSuccess,
+                durationMs);
 
             return result;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "{Command} threw an exception", command.GetType().Name);
+            var durationMs = (DateTime.UtcNow - start).TotalMilliseconds;
+
+            _logger.LogError(
+                ex,
+                "Exception during serial command {Command}: {Success} in {Duration}ms",
+                commandName,
+                false,
+                durationMs);
             return OperationResult.Failure(ex.Message);
         }
     }

@@ -7,6 +7,7 @@ using Serilog.Core;
 using SubConsole.Models;
 using SubConsole.Services.Helpers;
 using SubConsole.Services.Serial;
+using SubConsole.Services.Video;
 using SubControlMAUI.Models;
 using System.Collections;
 using System.Collections.Concurrent;
@@ -42,31 +43,31 @@ namespace SubConsole.Services.TCP;
 public sealed class TcpHostService : BackgroundService
 {
     private readonly ILogger<TcpHostService> _logger;
-    private readonly TcpSerialCommandHandler _handler;
+    private readonly TcpSerialCommandHandler _serialHandler;
+    private readonly TcpCameraCommandHandler _cameraHandler;  
     private readonly SerialPushPump _pushPump;
     private readonly ISerialPortManagerService _serialPortManager;
+    private readonly ICameraManagerService _cameraManager;   
 
     private readonly TcpListener _listener;
     private readonly ConcurrentDictionary<Guid, ClientState> _clients = new();
-
     private readonly int _port;
-
-
 
     public TcpHostService(
         ILogger<TcpHostService> logger,
-        TcpSerialCommandHandler handler,
+        TcpSerialCommandHandler serialHandler,
+        TcpCameraCommandHandler cameraHandler,   // ← new
         SerialPushPump pushPump,
         ISerialPortManagerService serialPortManager,
-        IOptions<TcpSettings> tcpSettings
-
-           )
+        ICameraManagerService cameraManager,   // ← new
+        IOptions<TcpSettings> tcpSettings)
     {
         _logger = logger;
-        _handler = handler;
+        _serialHandler = serialHandler;
+        _cameraHandler = cameraHandler;
         _pushPump = pushPump;
         _serialPortManager = serialPortManager;
-
+        _cameraManager = cameraManager;
 
         _port = tcpSettings.Value.Port;
         if (_port <= 0)
@@ -80,33 +81,41 @@ public sealed class TcpHostService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+
+        await BasicTest(stoppingToken);
+
+
         _logger.LogInformation("TCP server starting on port {Port}", _port);
-
         _listener.Start();
-
         _logger.LogInformation("TCP server started on port {Port}", _port);
 
-        // ── Wire port-change notifications ────────────────────────────────────
+        // ── Wire serial port-change notifications (unchanged) ─────────────────
         UsbPortRegistry.Instance.PortChanged += OnPortChanged;
         stoppingToken.Register(() =>
             UsbPortRegistry.Instance.PortChanged -= OnPortChanged);
 
-        BasicTest(stoppingToken);
+        // ── Wire camera change notifications ──────────────────────────────────
+        UsbCameraRegistry.Instance.CameraChanged += OnCameraChanged;   // ← new
+        stoppingToken.Register(() =>
+            UsbCameraRegistry.Instance.CameraChanged -= OnCameraChanged);
+
+        _logger.LogDebug("Port and camera change listeners registered");
 
         try
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                await UsbPortRegistry.Instance.RefreshAsync();
+                // Run both registry refreshes in parallel on each accept cycle
+                await Task.WhenAll(
+                    UsbPortRegistry.Instance.RefreshAsync(stoppingToken),
+                    UsbCameraRegistry.Instance.RefreshAsync(stoppingToken));   // ← new
 
                 var client = await _listener.AcceptTcpClientAsync(stoppingToken);
                 var id = Guid.NewGuid();
 
                 _logger.LogInformation(
                     "Client {ClientId} connected from {RemoteEndPoint}. Active clients: {ClientCount}",
-                    id,
-                    client.Client.RemoteEndPoint,
-                    _clients.Count + 1);
+                    id, client.Client.RemoteEndPoint, _clients.Count + 1);
 
                 var pushChannel = _pushPump.AddClient(id);
                 var state = new ClientState(id, client, pushChannel);
@@ -126,6 +135,56 @@ public sealed class TcpHostService : BackgroundService
         }
     }
 
+    private void OnCameraChanged(object? sender, CameraChangedEventArgs e)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var result = await _cameraManager.HandleCameraChangedAsync(e);
+
+                if (result.IsSuccess && result.DeviceId is null)
+                {
+                    _logger.LogDebug(
+                        "Camera {Kind} — no registered camera affected",
+                        e.Kind);
+                    return;
+                }
+
+                _logger.LogInformation(
+                    "Camera {Kind}: device {DeviceId} stream '{StreamPath}' — {Status}",
+                    result.Kind,
+                    result.DeviceId,
+                    result.StreamPathName,
+                    result.IsSuccess ? "OK" : result.Error);
+
+                var frame = new PushFrame
+                {
+                    FunctionName = "SYSTEM",
+                    Text = JsonSerializer.Serialize(new
+                    {
+                        type = "CAMERA_CHANGED",
+                        kind = result.Kind.ToString(),
+                        deviceId = result.DeviceId,
+                        streamPathName = result.StreamPathName,
+                        error = result.Error,
+                        timestamp = DateTimeOffset.UtcNow
+                    })
+                };
+
+                _logger.LogDebug(
+                    "Broadcasting camera change for {DeviceId} to {ClientCount} clients",
+                    result.DeviceId, _clients.Count);
+
+                BroadcastToAllClients(frame);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Camera change handler failed for {FriendlyName}", e.Camera.FriendlyName);
+            }
+        });
+    }
 
     private void OnPortChanged(object? sender, PortChangedEventArgs e)
     {
@@ -144,9 +203,11 @@ public sealed class TcpHostService : BackgroundService
                 }
 
                 _logger.LogInformation(
-                    "Port {Kind}: function '{Function}' {OldPort} → {NewPort}",
-                    result.Kind, result.Function,
-                    result.OldPort, result.NewPort ?? "(removed)");
+                    "Port {ChangeKind}: function {FunctionName} changed from {OldPort} to {NewPort}",
+                    result.Kind,
+                    result.Function,
+                    result.OldPort,
+                    result.NewPort ?? "(removed)");
 
                 // Build the push frame and broadcast to all connected clients
                 var frame = new PushFrame
@@ -164,9 +225,13 @@ public sealed class TcpHostService : BackgroundService
                     })
                 };
 
-                BroadcastToAllClients(frame);
+                _logger.LogDebug(
+                    "Broadcasting port change for {FunctionName} to {ClientCount} clients",
+                    result.Function,
+                    _clients.Count);
 
                 BroadcastToAllClients(frame);
+
             }
             catch (Exception ex)
             {
@@ -177,15 +242,23 @@ public sealed class TcpHostService : BackgroundService
 
     private void BroadcastToAllClients(PushFrame frame)
     {
+        var clientCount = _clients.Count;
+
         foreach (var client in _clients.Values)
         {
             if (!client.PushChannel.Writer.TryWrite(frame))
             {
                 _logger.LogWarning(
-                    "Push channel full for client {ClientId} — port change notification dropped",
-                    client.Id);
+                    "Push channel full for client {ClientId} — notification dropped (Function={FunctionName})",
+                    client.Id,
+                    frame.FunctionName);
             }
         }
+
+        _logger.LogDebug(
+            "Broadcast complete for {FunctionName} to {ClientCount} clients",
+            frame.FunctionName,
+            clientCount);
     }
 
     // ── Receive loop (socket → Incoming channel) ──────────────────────────────
@@ -217,10 +290,11 @@ public sealed class TcpHostService : BackgroundService
                     var id      = sepIdx >= 0 ? frame[..sepIdx]       : frame;
                     var command = sepIdx >= 0 ? frame[(sepIdx + 1)..] : string.Empty;
 
-                    _logger.LogDebug( "Client {ClientId} received frame {RequestId} with command {CommandPreview}",
-                    state.Id,
-                    id,
-                    command.Length > 100 ? command[..100] : command);
+                    _logger.LogDebug(
+                        "Client {ClientId} received request {RequestId} ({CommandLength} chars)",
+                        state.Id,
+                        id,
+                        command.Length);
 
                     await state.Incoming.Writer.WriteAsync(new IncomingFrame(id, command), token);
                 }
@@ -246,44 +320,39 @@ public sealed class TcpHostService : BackgroundService
     {
         await foreach (var frame in state.Incoming.Reader.ReadAllAsync(token))
         {
-            _logger.LogDebug("Client {ClientId} processing request {RequestId}",
-            state.Id,
-            frame.Id);
+            _logger.LogDebug(
+                "Client {ClientId} processing request {RequestId}",
+                state.Id, frame.Id);
 
             try
             {
-                // ACK immediately so the client's timeout is never hit by handler latency
                 await state.Outgoing.Writer.WriteAsync(
                     $"{TcpProtocol.ACK}{TcpProtocol.SEP}{frame.Id}{TcpProtocol.EOM}", token);
 
                 var message = JsonSerializer.Deserialize<TCPMessageBody<string>>(frame.Command);
 
-                _logger.LogDebug("Client {ClientId} deserialized command {CommandType}",
-                state.Id,
-                message?.Command);
+                if (message is null)
+                    throw new InvalidOperationException($"Invalid JSON: {frame.Command}");
 
-                if (message == null)
-                {
-                    throw new InvalidOperationException($"Invalid JSON message: {frame.Command}");
-                }
-
-                var result = await _handler.HandleAsync(message, token);
-
+                // Route to the correct domain handler based on the Function field.
+                // Serial commands use a device function name or "TOM".
+                // Camera commands use the reserved function name "CAMERA".
+                var result = message.Function.Equals("CAMERA", StringComparison.OrdinalIgnoreCase)
+                    ? await _cameraHandler.HandleAsync(message, token)
+                    : await _serialHandler.HandleAsync(message, token);
 
                 await state.Outgoing.Writer.WriteAsync(
                     $"{frame.Id}{TcpProtocol.SEP}{result}{TcpProtocol.EOM}", token);
 
-                _logger.LogInformation("Client {ClientId} successfully processed request {RequestId}",
-                state.Id,
-                frame.Id);
-
+                _logger.LogInformation(
+                    "Client {ClientId} completed request {RequestId}",
+                    state.Id, frame.Id);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex,"Client {ClientId} failed processing request {RequestId}. Command preview: {CommandPreview}",
-                state.Id,
-                frame.Id,
-                frame.Command.Length > 100 ? frame.Command[..100] : frame.Command);
+                _logger.LogError(ex,
+                    "Client {ClientId} failed request {RequestId}",
+                    state.Id, frame.Id);
 
                 await state.Outgoing.Writer.WriteAsync(
                     $"{TcpProtocol.NACK}{TcpProtocol.SEP}{frame.Id}{TcpProtocol.SEP}{ex.Message}{TcpProtocol.EOM}",
@@ -316,13 +385,18 @@ public sealed class TcpHostService : BackgroundService
 
         try
         {
+            _logger.LogDebug(
+                "Client {ClientId} send loop started",
+                state.Id);
+
             await foreach (var message in merged.Reader.ReadAllAsync(token))
             {
                 if (!state.Client.Connected) break;
 
-                _logger.LogDebug("Client {ClientId} sending message of {Length} bytes",
-                state.Id,
-                message.Length);
+                _logger.LogDebug(
+                    "Client {ClientId} sending {ByteCount} bytes",
+                    state.Id,
+                    message.Length);
 
                 var bytes = Encoding.UTF8.GetBytes(message);
                 await stream.WriteAsync(bytes, token);
@@ -334,6 +408,9 @@ public sealed class TcpHostService : BackgroundService
         }
         finally
         {
+            _logger.LogDebug(
+                "Client {ClientId} send loop stopped",
+                state.Id);
             CleanupClient(state.Id);
         }
     }
@@ -408,15 +485,16 @@ public sealed class TcpHostService : BackgroundService
         string function2 = "TOM Output";
         string key3 = $"::USB\\VID_09CB\u0026PID_4007\u0026MI_02\\7\u00261C0DEC35\u00260\u00260002";
         string function3 = "FLIR";
+        string function4 = "CAMERA";
 
         Console.WriteLine("LIST DEVICES");
         TCPMessageBody<string> command = new TCPMessageBody<string>("TOM", "LIST DEVICES", "");
-        var result = await _handler.HandleAsync(command, stoppingToken);
+        var result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         Console.WriteLine("LIST REGISTERED - EMPTY LIST");
         command = new TCPMessageBody<string>("TOM", "LIST REGISTERED", "");
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         Console.WriteLine("REGISTER");
@@ -429,17 +507,17 @@ public sealed class TcpHostService : BackgroundService
         };
         var json = JsonSerializer.Serialize<FunctionToPortEntry>(entry);
         command = new TCPMessageBody<string>("TOM", "REGISTER", json);
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         Console.WriteLine("REGISTER THE SAME THING TWICE - OVERWRITE BASED ON KEY - NOT DUPLICATE");
         command = new TCPMessageBody<string>("TOM", "REGISTER", json);
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         Console.WriteLine("LIST REGISTERED");
         command = new TCPMessageBody<string>("TOM", "LIST REGISTERED", "");
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         Console.WriteLine("REGISTER THE SAME KEY TO A DIFFERENT FUNCTION - UPDATED KEY ENTRY");
@@ -452,12 +530,12 @@ public sealed class TcpHostService : BackgroundService
         };
         json = JsonSerializer.Serialize<FunctionToPortEntry>(entry);
         command = new TCPMessageBody<string>("TOM", "REGISTER", json);
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         Console.WriteLine("LIST REGISTERED");
         command = new TCPMessageBody<string>("TOM", "LIST REGISTERED", "");
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         Console.WriteLine("REGISTER THE SAME KEY TO A DIFFERENT FUNCTION - RESTORE ENTRY");
@@ -470,28 +548,28 @@ public sealed class TcpHostService : BackgroundService
         };
         json = JsonSerializer.Serialize<FunctionToPortEntry>(entry);
         command = new TCPMessageBody<string>("TOM", "REGISTER", json);
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
 
         Console.WriteLine("");
         Console.WriteLine("LIST REGISTERED");
         command = new TCPMessageBody<string>("TOM", "LIST REGISTERED", "");
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         Console.WriteLine("UNREGISTER");
         command = new TCPMessageBody<string>("TOM", "UNREGISTER", function);
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         Console.WriteLine("UNREGISTER SOMETHNG ALREADY UNREGISTERED");
         command = new TCPMessageBody<string>("TOM", "UNREGISTER", function);
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         Console.WriteLine("LIST REGISTERED");
         command = new TCPMessageBody<string>("TOM", "LIST REGISTERED", "");
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         Console.WriteLine("REGISTER");
@@ -504,37 +582,37 @@ public sealed class TcpHostService : BackgroundService
         //};
         // json = JsonSerializer.Serialize<FunctionToPortEntry>(entry);
         command = new TCPMessageBody<string>("TOM", "REGISTER", json);
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         Console.WriteLine("OPEN COMM ");
         command = new TCPMessageBody<string>("TOM", "OPEN", function);
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         Console.WriteLine("OPEN COMM  TWICE");
         command = new TCPMessageBody<string>("TOM", "OPEN", function);
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         Console.WriteLine("CLOSE COMM ");
         command = new TCPMessageBody<string>("TOM", "CLOSE", function);
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         Console.WriteLine("CLOSE COMM  TWICE");
         command = new TCPMessageBody<string>("TOM", "CLOSE", function);
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         Console.WriteLine("WRITE TEXT TO CLOSED PORT");
         command = new TCPMessageBody<string>(function, "WRITE TEXT", TOM.TurnOnAllSystemsCommand);
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         Console.WriteLine("OPEN COMM ");
         command = new TCPMessageBody<string>("TOM", "OPEN", function);
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         //Console.WriteLine("WRITE TEXT TURN TOM OFF");
@@ -544,7 +622,7 @@ public sealed class TcpHostService : BackgroundService
         Console.WriteLine("");
         Console.WriteLine("WRITE TEXT TURN TOM ON");
         command = new TCPMessageBody<string>(function, "WRITE TEXT", TOM.TurnOnAllSystemsCommand);
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         FunctionToPortEntry entry2 = new FunctionToPortEntry()
@@ -558,12 +636,12 @@ public sealed class TcpHostService : BackgroundService
 
         Console.WriteLine("REGISTER TOM OUPUT");
         command = new TCPMessageBody<string>("TOM", "REGISTER", json2);
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         Console.WriteLine("OPEN TOM OUPUT ");
         command = new TCPMessageBody<string>("TOM", "OPEN", function2);
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
 
@@ -578,22 +656,316 @@ public sealed class TcpHostService : BackgroundService
         };
         json = JsonSerializer.Serialize<FunctionToPortEntry>(entry);
         command = new TCPMessageBody<string>("TOM", "REGISTER", json);
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         Console.WriteLine("OPEN FLIR ");
         command = new TCPMessageBody<string>("TOM", "OPEN", function3);
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
         Console.WriteLine("WRITE FLIR RAINBOW");
         command = new TCPMessageBody<string>(function3, "WRITE TEXT", FLIR.LUTtoRAINBOW);
-        result = await _handler.HandleAsync(command, stoppingToken);
+        result = await _serialHandler.HandleAsync(command, stoppingToken);
         Console.WriteLine(result);
         Console.WriteLine("");
 
+        Console.WriteLine("");
+        Console.WriteLine("CHECK FFMPEG");
+        command = new TCPMessageBody<string>(function4, "CHECK FFMPEG","");
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+        Console.WriteLine("");
+        Console.WriteLine("CHECK MTX VERSION");
+        command = new TCPMessageBody<string>(function4, "CHECK MTX VERSION", "");
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+        Console.WriteLine("");
+        Console.WriteLine("CHECK MTX STREAMS");
+        command = new TCPMessageBody<string>(function4, "CHECK MTX STREAMS", "");
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
 
-        //TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  
+        Console.WriteLine("");
 
-    }
+        string deviceId = "USB\\VID_32E4&PID_9422&MI_00\\7&149655b1&0&0000";
+        string deviceId2 = "USB\\VID_09CB&PID_4007&MI_00\\7&1C0DEC35&0&0000";
+        const string cameraFunction = "CAMERA";
+
+        // ── LIST CAMERAS ──────────────────────────────────────────────────────────
+
+        Console.WriteLine("LIST CAMERAS");
+        command = new TCPMessageBody<string>(cameraFunction, "LIST CAMERAS", "");
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+
+        // ── LIST REGISTERED — empty ───────────────────────────────────────────────
+
+        Console.WriteLine("LIST REGISTERED - EMPTY");
+        command = new TCPMessageBody<string>(cameraFunction, "LIST REGISTERED", "");
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+
+        // ── REGISTER USB CAMERA ───────────────────────────────────────────────────
+
+        Console.WriteLine("REGISTER USB CAMERA");
+        var register = new CameraRegistrationRequest
+        {
+            DeviceId = deviceId,
+            StreamPathName = "usbcamera",
+            FfmpegOptions = new FfmpegCameraOptions
+            {
+                DeviceName = "USB Camera",          // Windows dshow name
+                Width = 1280,
+                Height = 720,
+                Framerate = 30,
+                PixelFormat = "yuv420p",
+                VideoCodec = "libx264",
+                Preset = "ultrafast",
+                Tune = "zerolatency",
+                Bitrate = "4M"
+            },
+            MtxConfig = new MediaMtxPathConfig
+            {
+                RunOnDemandRestart = true,
+                RunOnDemandStartTimeout = "10s",
+                RunOnDemandCloseAfter = "10s"
+            }
+        };
+        var camjson = JsonSerializer.Serialize(register);
+        command = new TCPMessageBody<string>(cameraFunction, "REGISTER", json);
+        Console.WriteLine($"Function: {command.Function}");
+        Console.WriteLine($"Command:  {command.Command}");
+        Console.WriteLine($"Data:     {command.Data}");
+
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+
+        // ── REGISTER SAME CAMERA TWICE — should overwrite, not duplicate ──────────
+
+        Console.WriteLine("REGISTER SAME CAMERA TWICE - OVERWRITE");
+        command = new TCPMessageBody<string>(cameraFunction, "REGISTER", json);
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+
+        // ── REGISTER FLIR CAMERA ──────────────────────────────────────────────────
+
+        Console.WriteLine("REGISTER FLIR CAMERA");
+        var registerFlir = new CameraRegistrationRequest
+        {
+            DeviceId = deviceId2,
+            StreamPathName = "flir",
+            FfmpegOptions = new FfmpegCameraOptions
+            {
+                DeviceName = "FLIR Video",          // Windows dshow name
+                Width = 640,
+                Height = 512,
+                Framerate = 9,
+                PixelFormat = "yuv420p",
+                VideoCodec = "libx264",
+                Preset = "ultrafast",
+                Tune = "zerolatency",
+                Bitrate = "2M"
+            },
+            MtxConfig = new MediaMtxPathConfig
+            {
+                RunOnDemandRestart = true,
+                RunOnDemandStartTimeout = "10s",
+                RunOnDemandCloseAfter = "10s"
+            }
+        };
+        var jsonFlir = JsonSerializer.Serialize(registerFlir);
+        command = new TCPMessageBody<string>(cameraFunction, "REGISTER", jsonFlir);
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+
+        // ── LIST REGISTERED — should show both cameras ────────────────────────────
+
+        Console.WriteLine("LIST REGISTERED - TWO CAMERAS");
+        command = new TCPMessageBody<string>(cameraFunction, "LIST REGISTERED", "");
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+
+        // ── ADD STREAM — push USB camera path config to MediaMTX ─────────────────
+
+        Console.WriteLine("ADD STREAM - USB CAMERA");
+        command = new TCPMessageBody<string>(cameraFunction, "ADD STREAM", deviceId);
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+
+        // ── ADD STREAM TWICE — should return failure, already active ─────────────
+
+        Console.WriteLine("ADD STREAM TWICE - SHOULD FAIL");
+        command = new TCPMessageBody<string>(cameraFunction, "ADD STREAM", deviceId);
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+
+        // ── ADD STREAM — push FLIR path config to MediaMTX ───────────────────────
+
+        Console.WriteLine("ADD STREAM - FLIR");
+        command = new TCPMessageBody<string>(cameraFunction, "ADD STREAM", deviceId2);
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+
+        // ── UPDATE FFMPEG OPTIONS — change USB camera resolution ──────────────────
+
+        Console.WriteLine("UPDATE FFMPEG - CHANGE RESOLUTION TO 1920x1080");
+        var updateFfmpeg = new UpdateFfmpegRequest
+        {
+            DeviceId = deviceId,
+            FfmpegOptions = new FfmpegCameraOptions
+            {
+                DeviceName = "USB Camera",
+                Width = 1920,
+                Height = 1080,
+                Framerate = 30,
+                PixelFormat = "yuv420p",
+                VideoCodec = "libx264",
+                Preset = "ultrafast",
+                Tune = "zerolatency",
+                Bitrate = "8M"
+            }
+        };
+        json = JsonSerializer.Serialize(updateFfmpeg);
+        command = new TCPMessageBody<string>(cameraFunction, "UPDATE FFMPEG", json);
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+
+        // ── UPDATE MTX CONFIG — tighten the close-after timeout ──────────────────
+
+        Console.WriteLine("UPDATE MTX CONFIG - CHANGE CLOSE AFTER TO 5s");
+        var updateMtx = new UpdateMtxRequest
+        {
+            DeviceId = deviceId,
+            MtxConfig = new MediaMtxPathConfig
+            {
+                RunOnDemandRestart = true,
+                RunOnDemandStartTimeout = "10s",
+                RunOnDemandCloseAfter = "5s",
+                Record = false
+            }
+        };
+        json = JsonSerializer.Serialize(updateMtx);
+        command = new TCPMessageBody<string>(cameraFunction, "UPDATE MTX", json);
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+
+        // ── UPDATE MTX CONFIG — enable recording ─────────────────────────────────
+
+        Console.WriteLine("UPDATE MTX CONFIG - ENABLE RECORDING");
+        var updateMtxRecord = new UpdateMtxRequest
+        {
+            DeviceId = deviceId,
+            MtxConfig = new MediaMtxPathConfig
+            {
+                RunOnDemandRestart = true,
+                RunOnDemandStartTimeout = "10s",
+                RunOnDemandCloseAfter = "5s",
+                Record = true,
+                RecordPath = "./recordings/%path/%Y-%m-%d_%H-%M-%S-%f",
+                RecordFormat = "fmp4",
+                RecordSegmentDuration = "1h",
+                RecordDeleteAfter = "7d"
+            }
+        };
+        json = JsonSerializer.Serialize(updateMtxRecord);
+        command = new TCPMessageBody<string>(cameraFunction, "UPDATE MTX", json);
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+
+        // ── DISCOVER — scan for known cameras and add any not yet in MTX ─────────
+
+        Console.WriteLine("DISCOVER - AUTO ADD STREAMS");
+        var discover = new CameraDiscoverRequest { AutoAdd = true };
+        json = JsonSerializer.Serialize(discover);
+        command = new TCPMessageBody<string>(cameraFunction, "DISCOVER", json);
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+
+        // ── DISCOVER — scan only, do not push to MTX ─────────────────────────────
+
+        Console.WriteLine("DISCOVER - SCAN ONLY");
+        var discoverScan = new CameraDiscoverRequest { AutoAdd = false };
+        json = JsonSerializer.Serialize(discoverScan);
+        command = new TCPMessageBody<string>(cameraFunction, "DISCOVER", json);
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+
+        // ── REMOVE STREAM — take USB camera offline in MTX ────────────────────────
+
+        Console.WriteLine("REMOVE STREAM - USB CAMERA");
+        command = new TCPMessageBody<string>(cameraFunction, "REMOVE STREAM", deviceId);
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+
+        // ── REMOVE STREAM TWICE — should succeed silently (nothing to do) ─────────
+
+        Console.WriteLine("REMOVE STREAM TWICE - SHOULD SUCCEED (NO-OP)");
+        command = new TCPMessageBody<string>(cameraFunction, "REMOVE STREAM", deviceId);
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+
+        // ── UNREGISTER — remove from registry and MTX ────────────────────────────
+
+        Console.WriteLine("UNREGISTER USB CAMERA");
+        command = new TCPMessageBody<string>(cameraFunction, "UNREGISTER", deviceId);
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+
+        // ── UNREGISTER ALREADY REMOVED — should return failure ───────────────────
+
+        Console.WriteLine("UNREGISTER ALREADY UNREGISTERED - SHOULD FAIL");
+        command = new TCPMessageBody<string>(cameraFunction, "UNREGISTER", deviceId);
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+
+        // ── UNREGISTER FLIR ───────────────────────────────────────────────────────
+
+        Console.WriteLine("UNREGISTER FLIR");
+        command = new TCPMessageBody<string>(cameraFunction, "UNREGISTER", deviceId2);
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+
+        // ── LIST REGISTERED — should be empty again ───────────────────────────────
+
+        Console.WriteLine("LIST REGISTERED - SHOULD BE EMPTY");
+        command = new TCPMessageBody<string>(cameraFunction, "LIST REGISTERED", "");
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+
+        // ── UNKNOWN COMMAND — should return error response ────────────────────────
+
+        Console.WriteLine("UNKNOWN COMMAND - SHOULD RETURN ERROR");
+        command = new TCPMessageBody<string>(cameraFunction, "EXPLODE", "");
+        result = await _cameraHandler.HandleAsync(command, stoppingToken);
+        Console.WriteLine(result);
+        Console.WriteLine("");
+    
+
+    //TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  TEST  
+
+}
 }

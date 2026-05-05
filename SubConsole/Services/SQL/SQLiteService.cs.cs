@@ -1,9 +1,14 @@
-﻿using SQLite;
+﻿using Microsoft.AspNetCore.DataProtection.KeyManagement;
+using Microsoft.Extensions.Logging;
+using SQLite;
 using SubConsole.Models;
+using SubConsole.Services.Video;
 using SubControl.Model;
 using System.Net.NetworkInformation;
+using System.Reflection;
 using System.Text.Json;
 using static SubConsole.Models.UsbDeviceInfo;
+using static System.Net.WebRequestMethods;
 
 namespace SubConsole.Services.SQL
 {
@@ -15,16 +20,24 @@ namespace SubConsole.Services.SQL
         public bool DefaultsLoaded { get; set; } = false;
         public bool ConfigLoadedError { get; set; } = false;
 
-        public SQLiteService() { }
+        private readonly ILogger<SQLiteService> _logger;
 
-    //    public Config config { get; set; }
+        public SQLiteService(ILogger<SQLiteService> logger)
+        {
+            _logger = logger;
+        }
+
+        //    public Config config { get; set; }
 
         private async Task<OperationResult> Init()
         {
             try
             {
                 if (Database is not null)
+                {
+                    _logger.LogDebug("SQLite already initialized");
                     return OperationResult.Success();
+                }
 
                 string basePath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
                 string appFolder = Path.Combine(basePath, "SubControl");
@@ -32,14 +45,21 @@ namespace SubConsole.Services.SQL
 
                 string dbPath = Path.Combine(appFolder, "mydb.sqlite");
 
-                Database = new SQLiteAsyncConnection(dbPath, Constants.Flags);
-                //        await Database.CreateTableAsync<Config>();
-                await Database.CreateTableAsync<DeviceRegistrationEntity>();
-                return OperationResult.Success();
+                _logger.LogInformation(
+                    "Initializing SQLite database at {DatabasePath}",
+                    dbPath);
 
+                Database = new SQLiteAsyncConnection(dbPath, Constants.Flags);
+
+                await Database.CreateTableAsync<DeviceRegistrationEntity>();
+                await Database.CreateTableAsync<CameraRegistrationEntity>();  // ← new
+
+                _logger.LogInformation("SQLite initialized successfully");
+                return OperationResult.Success();
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Failed to initialize SQLite database");
                 return OperationResult.Failure($"Exception: {ex.Message}");
             }
         }
@@ -49,18 +69,158 @@ namespace SubConsole.Services.SQL
             try
             {
                 await Init();
+                _logger.LogWarning("Dropping all SQLite tables");
+
                 await Database.DropTableAsync<DeviceRegistrationEntity>();
-                //  await Database.DropTableAsync<Config>();
-                //   await Database.DropTableAsync<CameraConfig>();
+                await Database.DropTableAsync<CameraRegistrationEntity>();  // ← new
+
+                _logger.LogInformation("All tables dropped successfully");
                 return OperationResult.Success();
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Failed to drop tables");
                 return OperationResult.Failure($"Exception: {ex.Message}");
             }
         }
 
-     
+        #region CameraRegistry
+
+        public async Task<OperationResultWithValue<List<CameraRegistration>>> GetCameraRegistrationsAsync()
+        {
+            try
+            {
+                await Init();
+
+                _logger.LogDebug("Fetching camera registrations from database");
+
+                var entities = await Database.Table<CameraRegistrationEntity>().ToListAsync();
+
+                var result = entities
+                    .Select(CameraRegistrationEntity.ToModel)
+                    .ToList();
+
+                _logger.LogInformation(
+                    "Loaded {Count} camera registrations from database",
+                    result.Count);
+
+                return OperationResultWithValue<List<CameraRegistration>>.Success(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to load camera registrations");
+                return OperationResultWithValue<List<CameraRegistration>>.Failure(
+                    $"Exception: {ex.Message}");
+            }
+        }
+
+        public async Task<OperationResult> UpsertCameraRegistrationAsync(CameraRegistration model)
+        {
+            try
+            {
+                await Init();
+
+                _logger.LogInformation(
+                    "Upserting camera registration {DeviceId} (StreamPath={StreamPath}, MtxRegistered={IsRegistered})",
+                    model.Camera.DeviceId,
+                    model.StreamPathName,
+                    model.IsRegisteredWithMtx);
+
+                var entity = CameraRegistrationEntity.ToEntity(model);
+                var rows = await Database.InsertOrReplaceAsync(entity);
+
+                if (rows != 1)
+                {
+                    _logger.LogWarning(
+                        "Failed to upsert camera registration {DeviceId}: returned {Rows} row(s), expected 1",
+                        model.Camera.DeviceId,
+                        rows);
+                    return OperationResult.Failure(
+                        $"Failed to upsert camera registration {model.Camera.DeviceId}: " +
+                        $"returned {rows} row(s), expected 1");
+                }
+
+                _logger.LogDebug(
+                    "Upsert result for {DeviceId}: {RowsAffected} row(s)",
+                    model.Camera.DeviceId,
+                    rows);
+
+                return OperationResult.Success();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "Failed to upsert camera registration {DeviceId}",
+                    model.Camera.DeviceId);
+                return OperationResult.Failure($"Exception: {ex.Message}");
+            }
+        }
+
+        public async Task<OperationResult> DeleteCameraRegistrationAsync(string deviceId)
+        {
+            try
+            {
+                await Init();
+
+                _logger.LogInformation(
+                    "Deleting camera registration {DeviceId}", deviceId);
+
+                var rows = await Database.Table<CameraRegistrationEntity>()
+                    .Where(x => x.DeviceId == deviceId)
+                    .DeleteAsync();
+
+                if (rows != 1)
+                {
+                    _logger.LogWarning(
+                        "Failed to delete camera registration {DeviceId}: returned {Rows} row(s), expected 1",
+                        deviceId,
+                        rows);
+                    return OperationResult.Failure(
+                        $"Failed to delete camera registration {deviceId}: " +
+                        $"returned {rows} row(s), expected 1");
+                }
+
+                _logger.LogDebug(
+                    "Delete result for {DeviceId}: {RowsAffected} row(s)",
+                    deviceId,
+                    rows);
+
+                return OperationResult.Success();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "Failed to delete camera registration {DeviceId}",
+                    deviceId);
+                return OperationResult.Failure($"Exception: {ex.Message}");
+            }
+        }
+
+        public async Task<OperationResult> DeleteAllCameraRegistrationsAsync()
+        {
+            try
+            {
+                await Init();
+
+                _logger.LogWarning("Deleting ALL camera registrations");
+
+                var rows = await Database.DeleteAllAsync<CameraRegistrationEntity>();
+
+                _logger.LogInformation(
+                    "Deleted {RowsAffected} camera registrations", rows);
+
+                return OperationResult.Success();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to delete all camera registrations");
+                return OperationResult.Failure($"Exception: {ex.Message}");
+            }
+        }
+
+        #endregion
 
 
         #region DeviceRegistry
@@ -70,6 +230,8 @@ namespace SubConsole.Services.SQL
             try
             {
                 await Init();
+
+                _logger.LogDebug("Fetching device registrations from database");
 
                 var entities = await Database.Table<DeviceRegistrationEntity>().ToListAsync();
 
@@ -92,11 +254,14 @@ namespace SubConsole.Services.SQL
 
                     result.Add(model);
                 }
-
+                _logger.LogInformation(
+                    "Loaded {Count} device registrations from database",
+                    result.Count);
                 return OperationResultWithValue<List<DeviceRegistration>>.Success(result);
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Failed to load device registrations");
                 return OperationResultWithValue<List<DeviceRegistration>>.Failure($"Exception: {ex.Message}");
 
             }
@@ -109,6 +274,12 @@ namespace SubConsole.Services.SQL
             {
                 await Init();
 
+                _logger.LogInformation(
+                    "Upserting device registration {DeviceKey} (Function={FunctionName}, Port={PortPath})",
+                    model.Key,
+                    model.FunctionName,
+                    model.CurrentPortPath);
+
                 var entity = new DeviceRegistrationEntity
                 {
                     Key = model.Key,
@@ -119,12 +290,30 @@ namespace SubConsole.Services.SQL
                     CurrentPortPath = model.CurrentPortPath
                 };
 
-                await Database.InsertOrReplaceAsync(entity);
+                var rows = await Database.InsertOrReplaceAsync(entity);
+
+                if(rows != 1)
+                {
+                    _logger.LogWarning(
+                        "Failed to upsert device registration {DeviceKey} update returned:{Rows} expecting:1",
+                        model.Key,
+                        rows);
+                    return OperationResult.Failure($"Failed to upsert device registration {model.Key} update returned:{rows} expecting:1");
+                }
+
+                _logger.LogDebug(
+                    "Upsert result for {DeviceKey}: {RowsAffected} row(s)",
+                    model.Key,
+                    rows);
 
                 return OperationResult.Success();
             }
             catch (Exception ex)
             {
+                _logger.LogError(
+                    ex,
+                    "Failed to upsert device registration {DeviceKey}",
+                    model.Key);
                 return OperationResult.Failure($"Exception: {ex.Message}");
             }
         }
@@ -136,14 +325,36 @@ namespace SubConsole.Services.SQL
             {
                 await Init();
 
+                _logger.LogInformation(
+                    "Deleting device registration {DeviceKey}",
+                    key);
+
                 var rows = await Database.Table<DeviceRegistrationEntity>()
                     .Where(x => x.Key == key)
                     .DeleteAsync();
+
+                if (rows != 1)
+                {
+                    _logger.LogWarning(
+                        "Failed to delete device registration {DeviceKey} update returned:{Rows} expecting:1",
+                        key,
+                        rows);
+                    return OperationResult.Failure($"Failed to delete device registration {key} update returned:{rows} expecting:1");
+                }
+
+                _logger.LogDebug(
+                    "Delete result for {DeviceKey}: {RowsAffected} row(s)",
+                    key,
+                    rows);
 
                 return OperationResult.Success();
             }
             catch (Exception ex)
             {
+                _logger.LogError(
+                    ex,
+                    "Failed to delete device registration {DeviceKey}",
+                    key);
                 return OperationResult.Failure($"Exception: {ex.Message}");
             }
         }
@@ -154,12 +365,19 @@ namespace SubConsole.Services.SQL
             {
                 await Init();
 
-                await Database.DeleteAllAsync<DeviceRegistrationEntity>();
+                _logger.LogWarning("Deleting ALL device registrations");
+
+                var rows = await Database.DeleteAllAsync<DeviceRegistrationEntity>();
+
+                _logger.LogInformation(
+                    "Deleted {RowsAffected} device registrations",
+                    rows);
 
                 return OperationResult.Success();
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Failed to delete all device registrations");
                 return OperationResult.Failure($"Exception: {ex.Message}");
             }
         }

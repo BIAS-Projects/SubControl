@@ -9,6 +9,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using static SQLite.SQLite3;
 
 #if WINDOWS
 using Microsoft.Win32;
@@ -19,6 +20,13 @@ namespace SubConsole.Services.Helpers;
 public static class UsbSerialPortMapper
 {
     private static readonly SemaphoreSlim _lock = new(1, 1);
+
+    private static ILogger? _logger;
+
+    public static void ConfigureLogger(ILogger logger)
+    {
+        _logger = logger;
+    }
 
     // ---------------- PUBLIC API ----------------
 
@@ -41,14 +49,24 @@ public static class UsbSerialPortMapper
         await _lock.WaitAsync();
         try
         {
+
+
             return await Task.Run(() =>
             {
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                {
+                    _logger?.LogInformation("Starting Windows USB serial port scan");
                     return GetWindowsUsbSerialPorts(token);
 
-                if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-                    return GetLinuxUsbSerialPorts(token);
+                }
 
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                {
+                    _logger?.LogInformation("Starting Linux USB serial port scan");
+                    return GetLinuxUsbSerialPorts(token);
+                }
+
+                _logger?.LogWarning("No ports foud during port scan");
                 return Array.Empty<UsbSerialPortInfo>();
             });
         }
@@ -63,6 +81,7 @@ public static class UsbSerialPortMapper
 
     public static async Task<string> GetUsbSerialPortsAsJsonAsync(CancellationToken token)
     {
+
         var ports = await GetUsbSerialPortsAsync(token);
         return JsonSerializer.Serialize(ports, new JsonSerializerOptions
         {
@@ -83,8 +102,7 @@ public static class UsbSerialPortMapper
 
             if (usbEnumKey == null)
             {
-                System.Diagnostics.Debug.WriteLine(
-                    "[UsbSerialPortMapper] USB enum key not found");
+                _logger?.LogWarning("USB enum registry key not found");
                 return results;
             }
 
@@ -122,9 +140,13 @@ public static class UsbSerialPortMapper
 
                     results.Add(info);
 
-                    System.Diagnostics.Debug.WriteLine(
-                        $"[Registry] Port={info.PortName} VID={info.VendorId} " +
-                        $"PID={info.ProductId} SN={info.SerialNumber} Desc={info.Description}");
+                    _logger?.LogInformation(
+                        "Discovered USB serial port {PortName} VID={VendorId} PID={ProductId} SN={SerialNumber} Desc={Description}",
+                        info.PortName,
+                        info.VendorId,
+                        info.ProductId,
+                        info.SerialNumber,
+                        info.Description);
                 }
             }
 
@@ -132,8 +154,7 @@ public static class UsbSerialPortMapper
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine(
-                $"[UsbSerialPortMapper] Registry enumeration failed: {ex.Message}");
+            _logger?.LogError(ex, "Registry enumeration failed");
         }
 
         return results;
@@ -331,6 +352,7 @@ public static class UsbSerialPortMapper
         return null;
     }
 
+
     private static string ReadSysfsFile(string basePath, string fileName)
     {
         try
@@ -384,12 +406,19 @@ public sealed class PortChangedEventArgs(
 /// </summary>
 public sealed class UsbPortRegistry
 {
+
+    private ILogger<UsbPortRegistry>? _logger;
     // ---- Singleton ----
 
     public static UsbPortRegistry Instance { get; } = new();
 
+
     private UsbPortRegistry() { }
 
+    public static void ConfigureLogger(ILogger<UsbPortRegistry> logger)
+    {
+        Instance._logger = logger;
+    }
     // ---- Storage ----
 
     // Internal mutable store — all mutations happen under _refreshLock.
@@ -425,11 +454,15 @@ public sealed class UsbPortRegistry
         await _refreshLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            _logger?.LogInformation("Refreshing USB port registry");
+
             var discovered = await UsbSerialPortMapper
                 .GetUsbSerialPortsAsync(cancellationToken)
                 .ConfigureAwait(false);
 
             ApplySnapshot(discovered);
+
+            _logger?.LogInformation("Discovered {Count} ports from mapper", discovered.Count);
         }
         finally
         {
@@ -459,6 +492,8 @@ public sealed class UsbPortRegistry
     /// </summary>
     private void ApplySnapshot(IReadOnlyList<UsbSerialPortInfo> discovered)
     {
+        _logger?.LogDebug("Applying port snapshot. Incoming count: {Count}", discovered.Count);
+
         var incoming = discovered.ToDictionary(
             p => p.PortName,
             p => p,
@@ -468,7 +503,10 @@ public sealed class UsbPortRegistry
         foreach (var key in _store.Keys)
         {
             if (!incoming.ContainsKey(key) && _store.TryRemove(key, out var removed))
+            {
                 RaisePortChanged(PortChangeKind.Removed, removed);
+                _logger?.LogInformation("Port removed: {PortName}", removed.PortName);
+            }
         }
 
         // --- Detect additions and updates ---
@@ -479,12 +517,14 @@ public sealed class UsbPortRegistry
                 // add branch
                 addKey =>
                 {
+                    _logger?.LogInformation("Port added: {PortName}", newInfo.PortName);
                     RaisePortChanged(PortChangeKind.Added, newInfo);
                     return newInfo;
                 },
                 // update branch — only raise event if something actually changed
                 (updateKey, existing) =>
                 {
+                    _logger?.LogInformation("Port updated: {PortName}", newInfo.PortName);
                     if (!PortInfoEquals(existing, newInfo))
                         RaisePortChanged(PortChangeKind.Updated, newInfo);
                     return newInfo;
@@ -492,8 +532,11 @@ public sealed class UsbPortRegistry
         }
     }
 
-    private void RaisePortChanged(PortChangeKind kind, UsbSerialPortInfo port) =>
+    private void RaisePortChanged(PortChangeKind kind, UsbSerialPortInfo port)
+    {
+        _logger?.LogDebug("Raising PortChanged event {Kind} for {PortName}", kind, port.PortName);
         PortChanged?.Invoke(this, new PortChangedEventArgs(kind, port));
+    }
 
     /// <summary>
     /// Value-equality check so we avoid spurious <see cref="PortChangeKind.Updated"/>

@@ -90,9 +90,15 @@ public sealed class DeviceRegistry : IDeviceRegistry
 
     public async Task<OperationResult> LoadDeviceRegistryFromDatabase()
     {
+        _logger.LogInformation(
+            "Loading device registry from database");
         OperationResultWithValue<List<DeviceRegistration>> result = await _database.GetDeviceRegistriesAsync();
         if(!result.IsSuccess)
         {
+            _logger.LogError(
+                "Error loading device registry: {Success}. Reason: {Message}",
+                false,
+                result.Message);
             return OperationResult.Failure(result.Message);
         }
 
@@ -100,6 +106,10 @@ public sealed class DeviceRegistry : IDeviceRegistry
         {
             Register(device.Identifier, device.FunctionName, device.BaudRate, device.SerialWorkerType);
         }
+        _logger.LogInformation(
+            "Completed loading device registry: {Success}. Devices loaded: {Count}",
+            true,
+            result.Value.Count);
         return OperationResult.Success();
     }
     // ── Registration ──────────────────────────────────────────────────────────
@@ -107,7 +117,12 @@ public sealed class DeviceRegistry : IDeviceRegistry
 //    public void Register(DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType serialWorker)
     public async Task<OperationResult> Register(UsbSerialPortInfo identifier, string functionName, int baudRate, SerialWorkerType serialWorker)
     {
-       // var fns = functionNames.ToList();
+        _logger.LogInformation(
+            "Registering device {Key} as function {Function} @ {Baud}",
+            identifier.Key,
+            functionName,
+            baudRate);
+        // var fns = functionNames.ToList();
         var reg = new DeviceRegistration(identifier, functionName, baudRate, serialWorker);
 
         _byKey[identifier.Key] = reg;
@@ -117,10 +132,21 @@ public sealed class DeviceRegistry : IDeviceRegistry
         OperationResult result = await _database.UpsertDeviceRegistrationAsync(reg);
         if(!result.IsSuccess)
         {
+            _logger.LogError(
+                "Error saving to database register device {Key} ({Function}): {Success}. Reason: {Message}",
+                identifier.Key,
+                functionName,
+                false,
+                result.Message);
+
             return OperationResult.Failure(result.Message);
         }
 
-        _logger.LogInformation("Registered function '{Function}' → device {Key}", functionName, identifier.Key);
+        _logger.LogInformation(
+            "Completed register device {Key} ({Function}): {Success}",
+            identifier.Key,
+            functionName,
+            true);
 
         return OperationResult.Success();
 
@@ -129,8 +155,17 @@ public sealed class DeviceRegistry : IDeviceRegistry
  //   public void Unregister(DeviceIdentifier identifier)
     public async Task<OperationResult> Unregister(UsbSerialPortInfo identifier)
     {
+        _logger.LogInformation(
+            "Unregistering device {Key}",
+            identifier.Key);
         if (!_byKey.TryRemove(identifier.Key, out var reg))
+        {
+            _logger.LogWarning(
+                "Error unregistering device {Key}: {Success}. Reason: Not found",
+                identifier.Key,
+                false);
             return OperationResult.Failure("Failed to remove identifier from Key dictionary");
+        }
 
       //  foreach (var fn in reg.FunctionName)
             _byFunction.TryRemove(reg.FunctionName, out _);
@@ -146,9 +181,17 @@ public sealed class DeviceRegistry : IDeviceRegistry
 
         if (!result.IsSuccess)
         {
+            _logger.LogError(
+                "Error saving to database unregister device {Key}: {Success}. Reason: {Message}",
+                identifier.Key,
+                false,
+                result.Message);
             return result;
         }
-        _logger.LogInformation("Unregistered device {Key}", identifier.Key);
+        _logger.LogInformation(
+            "Completed unregister device {Key}: {Success}",
+            identifier.Key,
+            true);
         return OperationResult.Success();
     }
 
@@ -159,7 +202,9 @@ public sealed class DeviceRegistry : IDeviceRegistry
         if (!_byKey.TryGetValue(deviceKey, out var reg))
         {
             _logger.LogWarning(
-                "SetPortPath: device key '{Key}' not found in registry", deviceKey);
+                "SetPortPath failed for {Key}: {Success}. Reason: Not registered",
+                deviceKey,
+                false);
             return;
         }
 
@@ -167,20 +212,31 @@ public sealed class DeviceRegistry : IDeviceRegistry
         _byPort[portPath] = deviceKey;
 
         _logger.LogInformation(
-            "Device {Key} assigned to port {Port}", deviceKey, portPath);
+            "Completed port assignment {Key} → {Port}: {Success}",
+            deviceKey,
+            portPath,
+            true);
     }
 
     public void ClearPortPath(string deviceKey)
     {
+
         if (!_byKey.TryGetValue(deviceKey, out var reg))
+        {
+            _logger.LogDebug(
+                "ClearPortPath skipped for {Key}: no active port",
+                deviceKey);
             return;
+        }
 
         if (reg.CurrentPortPath is { } port)
         {
             _byPort.TryRemove(port, out _);
             reg.CurrentPortPath = null;
             _logger.LogInformation(
-                "Cleared port path for device {Key}", deviceKey);
+                "Completed clearing port for {Key}: {Success}",
+                deviceKey,
+                true);
         }
     }
 
@@ -189,10 +245,20 @@ public sealed class DeviceRegistry : IDeviceRegistry
     public string? ResolvePortPath(string functionName)
     {
         if (!_byFunction.TryGetValue(functionName, out var key))
+        {
+            _logger.LogDebug(
+                "ResolvePortPath failed for {Function}: not found",
+                functionName);
             return null;
+        }
 
         if (!_byKey.TryGetValue(key, out var reg))
+        {
+            _logger.LogDebug(
+                "ResolvePortPath failed for {Key}: not found",
+                key);
             return null;
+        }
 
         return reg.Identifier.PortName;
         //return reg.CurrentPortPath;
@@ -201,7 +267,12 @@ public sealed class DeviceRegistry : IDeviceRegistry
     public string? ResolveKeyForFunction(string functionName)
     {
         if (!_byFunction.TryGetValue(functionName, out var key))
+        {
+            _logger.LogDebug(
+                "ResolveKeyForFunction failed for {Function}",
+                functionName);
             return null;
+        }
 
         return key;
         //return reg.CurrentPortPath;
@@ -221,11 +292,21 @@ public sealed class DeviceRegistry : IDeviceRegistry
     public string GetFunctionName(string portPath)
     {
         if (!_byPort.TryGetValue(portPath, out var key))
+        {
+            _logger.LogDebug(
+                "GetFunctionName: no mapping for port {Port}",
+                portPath);
             return String.Empty;
+        }
 
-        return _byKey.TryGetValue(key, out var reg)
-            ? reg.FunctionName
-            : String.Empty;
+        if (!_byKey.TryGetValue(key, out var reg))
+        {
+            _logger.LogDebug(
+                "GetFunctionName: no mapping for key {Key}",
+                key);
+            return String.Empty;
+        }
+        return reg.FunctionName;
     }
 
     public IReadOnlyList<DeviceRegistration> AllRegistrations =>
