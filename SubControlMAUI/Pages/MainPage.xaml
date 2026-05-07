@@ -1,242 +1,140 @@
-<?xml version="1.0" encoding="utf-8" ?>
-<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
-             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
-             xmlns:viewModel="clr-namespace:SubControlMAUI.ViewModels"
-             xmlns:skia="clr-namespace:SkiaSharp.Views.Maui.Controls;assembly=SkiaSharp.Views.Maui.Controls"
-             x:Class="SubControlMAUI.Pages.MainPage"
-             x:DataType="viewModel:MainViewModel"
-             Title="{Binding Title}">
+<ContentPage
+    x:Class="SubControlMAUI.Pages.MainPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:vm="clr-namespace:SubControlMAUI.ViewModels"
+    x:DataType="vm:MainViewModel"
+    Title="{Binding Title}">
+
+
+
     <Grid>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*" />
-            <ColumnDefinition Width="*"/>
-        </Grid.ColumnDefinitions>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="6*"/>
 
-        </Grid.RowDefinitions>
+        <Grid RowDefinitions="50,Auto,Auto,*" Padding="10">
 
+            <!-- Top Row -->
+            <Grid Grid.Row="0" ColumnDefinitions="auto,auto,*,20,50,20" ColumnSpacing="10">
 
-        
-        <Label 
-            Text="{Binding Status}"
-            Grid.Row="0"
-            Grid.ColumnSpan="2"
-            HorizontalOptions="Center"
-            VerticalOptions="Center"
-            FontSize="Medium"
-            Margin="10"/>
+            <Button Text="Connect"
+                    Grid.Column="0"
+                        Command="{Binding ConnectCommand}"
+                        IsEnabled="{Binding IsNotBusy}" />
 
-        
-        
+                <Button Text="Disconnect"
+                        Grid.Column="1"
+                        Command="{Binding DisconnectCommand}"
+                        IsEnabled="{Binding IsNotBusy}" />
 
-        <HorizontalStackLayout Grid.Row="1" Grid.ColumnSpan="2" HorizontalOptions="Center" Spacing="10" Padding="10">
-            <Button 
-           IsEnabled="{Binding IsNotConnected}"
-           Text="Connect"
-           Command="{Binding ConnectCommand}"/>
-
-            <Button 
-           IsEnabled="{Binding IsConnected}"
-           Text="Disconnect"
-           Command="{Binding DisconnectCommand}"/>
-
-            <Button 
-           IsEnabled="{Binding IsConnected}"
-           Text="StartTOM"
-           Command="{Binding StartTOMCommand}"/>
-
-            <Button 
-           IsEnabled="{Binding IsConnected}"
-           Text="StopTOM"
-           Command="{Binding StopTOMCommand}"/>
-
-            <Button 
-           IsEnabled="{Binding IsConnected}"
-           Text="List USB Ports"
-           Command="{Binding ListDevicesCommand}"/>
-
-            <Button 
-           IsEnabled="{Binding IsConnected}"
-           Text="List Video Ports"
-           Command="{Binding GetVideoPortsCommand}"/>
-            
-            <Label 
-
-            Text="{Binding StatusLabel}"
-            Grid.Row="0"
-            Grid.ColumnSpan="2"
-            HorizontalOptions="Center"
-            VerticalOptions="Center"
-            FontSize="Micro"
-            Margin="10"/>
-
-        </HorizontalStackLayout>
+            <Image Grid.Column="3"
+                   WidthRequest="30"
+                   HeightRequest="30"
+                   Source="{AppThemeBinding Light=light_sun.png, Dark=dark_sun.png}"
+                     BackgroundColor="Transparent"/>
 
 
-        <HorizontalStackLayout Grid.Row="2" Grid.ColumnSpan="2" HorizontalOptions="Center">
-            <!-- URL row -->
-            <Grid ColumnDefinitions="*, Auto" ColumnSpacing="8">
-                <Entry x:Name="UrlEntry"
-                   Grid.Column="0"
-                   Text="rtsp://localhost:8554/usbcamera"
-                   Placeholder="rtsp://..."
-                   PlaceholderColor="#666"
-                   TextColor="White"
-                   BackgroundColor="#2d2d2d"
-                   ReturnType="Done"
-                   Completed="OnUrlCompleted"/>
 
-                <Button x:Name="ConnectBtn"
-                    Grid.Column="1"
-                    Text="Connect"
-                    BackgroundColor="#0078d4"
-                    TextColor="White"
-                    CornerRadius="6"
-                    Padding="16,0"
-                    Clicked="OnConnectClicked"/>
+            <Switch Grid.Column="4"
+                    HorizontalOptions="Center"
+                        IsToggled="{Binding IsDarkTheme}"
+                        IsEnabled="{Binding IsNotBusy}"
+                        Toggled="OnThemeSwitchToggled" />
+
+            <Image Grid.Column="5"
+                   WidthRequest="30"
+                   HeightRequest="30"
+                   Source="{AppThemeBinding Light=light_moon.png, Dark=dark_moon.png}"
+                       BackgroundColor="Transparent"/>
+       </Grid>
+
+                <!-- Status -->
+            <Label Grid.Row="1"
+                   Margin="0,15,0,15"
+                   FontSize="16">
+                <Label.FormattedText>
+                    <FormattedString>
+                        <Span Text="Status: " FontAttributes="Bold"/>
+                        <Span Text="{Binding StatusText}" />
+                    </FormattedString>
+                </Label.FormattedText>
+            </Label>
+
+
+            <BoxView Grid.Row="2"
+         HeightRequest="1"
+         Margin="0,5,0,15"
+         Opacity="0.3"
+         Color="{AppThemeBinding Light=#000000, Dark=#FFFFFF}" />
+
+            <!-- Main Buttons -->
+            <Grid Grid.Row="3"
+                  ColumnDefinitions="*,*,*"
+                  ColumnSpacing="40"
+                  HorizontalOptions="Center"
+                  VerticalOptions="Center">
+
+                <VerticalStackLayout Grid.Column="0" Spacing="8" HorizontalOptions="Center">
+
+                    <ImageButton
+                        Source="{AppThemeBinding Light=light_video.png, Dark=dark_video.png}"
+                        WidthRequest="{Binding ButtonSize}"
+                        HeightRequest="{Binding ButtonSize}"
+                        BackgroundColor="Transparent"
+                        Command="{Binding VideoCommand}"
+                        IsEnabled="{Binding IsNotBusy}" />
+
+                    <BoxView HeightRequest="8"
+                     WidthRequest="60"
+                     CornerRadius="4"
+                     Color="{Binding VideoStatusColor}" />
+
+                    <Label Text="Video" HorizontalOptions="Center"/>
+                </VerticalStackLayout>
+
+                <!-- ROTOR -->
+                <VerticalStackLayout Grid.Column="1" Spacing="8" HorizontalOptions="Center">
+                    <ImageButton Source="{AppThemeBinding Light=light_robot_arm.png, Dark=dark_robot_arm.png}"
+                                 WidthRequest="{Binding ButtonSize}"
+                                 HeightRequest="{Binding ButtonSize}"
+                                 BackgroundColor="Transparent"
+                                 Command="{Binding RotorCommand}"
+                                 IsEnabled="{Binding IsNotBusy}" />
+
+                    <BoxView HeightRequest="8"
+                             WidthRequest="60"
+                             CornerRadius="4"
+                             Color="{Binding RotorStatusColor}" />
+
+                    <Label Text="Rotor" HorizontalOptions="Center"/>
+                </VerticalStackLayout>
+
+                <!-- SETTINGS -->
+                <VerticalStackLayout Grid.Column="2" Spacing="8" HorizontalOptions="Center">
+                    <ImageButton Source="{AppThemeBinding Light=light_settings.png, Dark=dark_settings.png}"
+                                 WidthRequest="{Binding ButtonSize}"
+                                 HeightRequest="{Binding ButtonSize}"
+                                 BackgroundColor="Transparent"
+                                 Command="{Binding SettingsCommand}"
+                                 IsEnabled="{Binding IsNotBusy}" />
+
+                    <Label Text="Settings" HorizontalOptions="Center"/>
+                </VerticalStackLayout>
+
             </Grid>
+        </Grid>
 
-            <!-- Status + controls row -->
-            <Grid ColumnDefinitions="*, Auto" ColumnSpacing="8">
+        <!-- BUSY OVERLAY (on top) -->
+        <Grid IsVisible="{Binding IsBusy}"
+              BackgroundColor="#80000000"
+              ZIndex="1">
 
-                <Label x:Name="StatusLabel"
-                   Grid.Column="0"
-                   Text="Disconnected"
-                   TextColor="#888"
-                   VerticalOptions="Center"
-                   FontSize="13"/>
+            <ActivityIndicator IsRunning="{Binding IsBusy}"
+                               IsVisible="{Binding IsBusy}"
+                               VerticalOptions="Center"
+                               HorizontalOptions="Center"
+                               WidthRequest="60"
+                               HeightRequest="60" />
+        </Grid>
 
-                <HorizontalStackLayout Grid.Column="1" Spacing="8">
-
-                    <Label x:Name="FpsLabel"
-                       Text="-- fps"
-                       TextColor="#888"
-                       VerticalOptions="Center"
-                       FontSize="13"
-                       WidthRequest="60"/>
-
-                    <Button x:Name="StopBtn"
-                        Text="⏹"
-                        FontSize="18"
-                        BackgroundColor="#333"
-                        TextColor="White"
-                        CornerRadius="6"
-                        WidthRequest="48"
-                        HeightRequest="40"
-                        Padding="0"
-                        IsEnabled="False"
-                        Clicked="OnStopClicked"/>
-
-                    <Button x:Name="SnapBtn"
-                        Text="📷"
-                        FontSize="18"
-                        BackgroundColor="#333"
-                        TextColor="White"
-                        CornerRadius="6"
-                        WidthRequest="48"
-                        HeightRequest="40"
-                        Padding="0"
-                        IsEnabled="False"
-                        Clicked="OnSnapClicked"/>
-
-                    <Button x:Name="FLIR_WHITEHOT"
-                        Text="WHITEHOT"
-                        FontSize="18"
-                        BackgroundColor="#333"
-                        TextColor="White"
-                        CornerRadius="6"
-                        WidthRequest="90"
-                        HeightRequest="40"
-                        Padding="0"
-                        IsEnabled="True"
-                        Command="{Binding FLIRWhitehotCommand}"/>
-
-                    <Button x:Name="FLIR_RAINBOW"
-                        Text="RAINBOW"
-                        FontSize="18"
-                        BackgroundColor="#333"
-                        TextColor="White"
-                        CornerRadius="6"
-                        WidthRequest="90"
-                        HeightRequest="40"
-                        Padding="0"
-                        IsEnabled="True"
-                        Command="{Binding FLIRRainbowCommand}"/>
-
-
-                    <Button x:Name="RotorForward"
-                        Text="◀"
-                        FontSize="18"
-                        BackgroundColor="#333"
-                        TextColor="White"
-                        CornerRadius="6"
-                        WidthRequest="90"
-                        HeightRequest="40"
-                        Padding="0"
-                        IsEnabled="True"
-                        Command="{Binding RotorForwardCommand}"/>
-
-                    <Button x:Name="RotorBack"
-                        Text="▶"
-                        FontSize="18"
-                        BackgroundColor="#333"
-                        TextColor="White"
-                        CornerRadius="6"
-                        WidthRequest="90"
-                        HeightRequest="40"
-                        Padding="0"
-                        IsEnabled="True"
-                        Command="{Binding RotorBackwardCommand}"/>
-
-                    <Button x:Name="RotorStop"
-                        Text="◼"
-                        FontSize="18"
-                        BackgroundColor="#333"
-                        TextColor="White"
-                        CornerRadius="6"
-                        WidthRequest="90"
-                        HeightRequest="40"
-                        Padding="0"
-                        IsEnabled="True"
-                        Command="{Binding RotorStopCommand}"/>
-
-
-                </HorizontalStackLayout>
-            </Grid>
-
-        </HorizontalStackLayout>
-
-
-        <!-- SkiaSharp canvas — redraws on every decoded frame -->
-        <skia:SKCanvasView x:Name="CanvasView"
-                           Grid.Row="3"
-                           Grid.ColumnSpan="2"
-                           PaintSurface="OnPaintSurface"
-                           BackgroundColor="Black"
-                           HorizontalOptions="Fill"
-                           VerticalOptions="Fill"/>
-
-
-
-
-
-
-
-
-
-
-        <ActivityIndicator x:Name="Spinner"
-                           IsRunning="{Binding IsBusy}"
-                           IsVisible="{Binding IsBusy}"
-                           Grid.ColumnSpan="2"
-                           Grid.RowSpan="5"
-                           HorizontalOptions="Center"
-                           VerticalOptions="Center"
-                           WidthRequest="50"
-                           HeightRequest="50"/>
     </Grid>
+
 </ContentPage>

@@ -1,87 +1,147 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
-             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
-             xmlns:viewModel="clr-namespace:SubControlMAUI.ViewModels"
-             x:Class="SubControlMAUI.Pages.PeriscopePage"
-             x:DataType="viewModel:PeriscopeViewModel"
-             Title="{Binding Title}">
-    <Grid>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*" />
-            <ColumnDefinition Width="*"/>
-        </Grid.ColumnDefinitions>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="*"/>
-        </Grid.RowDefinitions>
+<ContentPage
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:viewModel="clr-namespace:SubControlMAUI.ViewModels"
+    xmlns:skia="clr-namespace:SkiaSharp.Views.Maui.Controls;assembly=SkiaSharp.Views.Maui.Controls"
+    x:Class="SubControlMAUI.Pages.PeriscopePage"
+    x:DataType="viewModel:PeriscopeViewModel"
+    Title="{Binding Title}">
 
+    <Grid RowDefinitions="Auto,Auto,*">
 
-        <Label 
-            Text="{Binding Status}"
-            Grid.Row="0"
-            Grid.ColumnSpan="2"
-            HorizontalOptions="Center"
-            VerticalOptions="Center"
-            FontSize="Medium"
-            Margin="10"/>
+        <!-- ========================================================= -->
+        <!-- STATUS BAR -->
+        <!-- ========================================================= -->
 
-        <Button 
-            IsEnabled="{Binding IsNotConnected}"
-            Text="Connect"
-            Command="{Binding ConnectCommand}"
-            Grid.Row="1"
-            Grid.ColumnSpan="0"
-            Margin="10"/>
+        <Border Grid.Row="0"
+                StrokeThickness="0"
+                Padding="12,8">
 
+            <Grid ColumnDefinitions="Auto,*">
 
+                <Label Text="Status:"
+                       FontAttributes="Bold"
+                       VerticalOptions="Center" />
 
-        <Button 
-            IsEnabled="{Binding IsConnected}"
-            Text="Disconnect"
-            Command="{Binding DisconnectCommand}"
-            Grid.Row="1"
-            Grid.Column="1"
-            Margin="10"/>
+                <Label Grid.Column="1"
+                       Margin="10,0,0,0"
+                       Text="{Binding Status}"
+                       VerticalOptions="Center"
+                       LineBreakMode="TailTruncation" />
 
-        <Button 
-            IsEnabled="{Binding IsConnected}"
-            Text="Up"
-            Command="{Binding UpCommand}"
-            Grid.Row="2"
-            Grid.ColumnSpan="2"
-            Margin="10"/>
-        <Button 
-            IsEnabled="{Binding IsConnected}"
-            Text="Down"
-            Command="{Binding DownCommand}"
-            Grid.Row="3"
-            Grid.ColumnSpan="2"
-            Margin="10"/>
+            </Grid>
 
-        <Label 
-            Text="{Binding CutterCurrent}"
-            Grid.Row="7"
-            Grid.ColumnSpan="2"
-            HorizontalOptions="Center"
-            VerticalOptions="Center"
-            FontSize="Medium"
-            Margin="10"/>
+        </Border>
 
-        <ActivityIndicator IsRunning="{Binding IsBusy}"
-                           IsVisible="{Binding IsBusy}"
-                           Grid.ColumnSpan="2"
-                           Grid.RowSpan="5"
-                           HorizontalOptions="Center"
-                           VerticalOptions="Center"
-                           WidthRequest="50"
-                           HeightRequest="50"/>
+        <!-- ========================================================= -->
+        <!-- BUTTON BAR -->
+        <!-- ========================================================= -->
 
+        <ScrollView Grid.Row="1"
+                    Orientation="Horizontal"
+                    HorizontalScrollBarVisibility="Never">
+
+            <HorizontalStackLayout Spacing="10"
+                                   Padding="10">
+
+                <ImageButton 
+                        Source="{AppThemeBinding Light=light_video.png, Dark=dark_video.png}"
+                        WidthRequest="{Binding ButtonSize}"
+                        HeightRequest="{Binding ButtonSize}"
+                        BackgroundColor="Transparent"
+                        Command="{Binding ConnectCommand}"
+                        IsEnabled="{Binding IsNotConnected}" />
+
+                <ImageButton 
+                        Source="{AppThemeBinding Light=light_flir.png, Dark=dark_flir.png}"
+                        WidthRequest="{Binding ButtonSize}"
+                        HeightRequest="{Binding ButtonSize}"
+                        BackgroundColor="Transparent"
+                        Command="{Binding DisconnectCommand}"
+                        IsEnabled="{Binding IsConnected}" />
+
+                <ImageButton 
+                        Source="{AppThemeBinding Light=light_dual.png, Dark=dark_dual.png}"
+                        WidthRequest="{Binding ButtonSize}"
+                        HeightRequest="{Binding ButtonSize}"
+                        BackgroundColor="Transparent"
+                        Command="{Binding StartTOMCommand}"
+                        IsEnabled="{Binding IsConnected}" />
+
+                <ImageButton
+                        Source="{AppThemeBinding Light=light_video_off.png, Dark=dark_video_off.png}"
+                        WidthRequest="{Binding ButtonSize}"
+                        HeightRequest="{Binding ButtonSize}"
+                        BackgroundColor="Transparent"
+                        Command="{Binding StopTOMCommand}"
+                        IsEnabled="{Binding IsConnected}" />
+
+                <ImageButton 
+                        Source="{AppThemeBinding Light=light_lens.png, Dark=dark_lens.png}"
+                        WidthRequest="{Binding ButtonSize}"
+                        HeightRequest="{Binding ButtonSize}"
+                        BackgroundColor="Transparent"
+                        Clicked="OnSnapClicked"
+                        IsEnabled="{Binding IsConnected}"/>
+
+                <ImageButton Source="whitehot.png"
+                        WidthRequest="{Binding ButtonSize}"
+                        HeightRequest="{Binding ButtonSize}"
+                        BackgroundColor="Transparent"
+                        Command="{Binding FLIRWhitehotCommand}"
+                        IsEnabled="{Binding IsConnected}" />
+
+                <ImageButton Source="rainbow.png"
+                        WidthRequest="{Binding ButtonSize}"
+                        HeightRequest="{Binding ButtonSize}"
+                        BackgroundColor="Transparent"
+                        Command="{Binding FLIRRainbowCommand}"
+                        IsEnabled="{Binding IsConnected}" />
+
+            </HorizontalStackLayout>
+
+        </ScrollView>
+
+        <!-- ========================================================= -->
+        <!-- VIDEO AREA -->
+        <!-- ========================================================= -->
+
+        <Grid Grid.Row="2">
+
+            <skia:SKCanvasView x:Name="CanvasView"
+                               PaintSurface="OnPaintSurface"
+                               BackgroundColor="Black"
+                               HorizontalOptions="Fill"
+                               VerticalOptions="Fill" />
+
+            <!-- Overlay spinner -->
+            <ActivityIndicator x:Name="Spinner"
+                               IsRunning="{Binding IsBusy}"
+                               IsVisible="{Binding IsBusy}"
+                               HorizontalOptions="Center"
+                               VerticalOptions="Center"
+                               WidthRequest="60"
+                               HeightRequest="60"
+                               Color="White" />
+
+            <!-- FPS Overlay -->
+            <Border HorizontalOptions="End"
+                    VerticalOptions="Start"
+                    Margin="10"
+                    Padding="8,4"
+                    BackgroundColor="#80000000"
+                    StrokeThickness="0">
+
+                <Label x:Name="FpsLabel"
+                       Text="-- fps"
+                       TextColor="White"
+                       FontSize="12" />
+
+            </Border>
+
+        </Grid>
 
     </Grid>
+
 </ContentPage>

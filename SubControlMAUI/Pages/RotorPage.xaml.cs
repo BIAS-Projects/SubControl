@@ -2,14 +2,16 @@ using SubControlMAUI.ViewModels;
 
 namespace SubControlMAUI.Pages;
 
-public partial class FeatureOptionsPage : ContentPage
+public partial class RotorPage : ContentPage
 {
+    private readonly RotorViewModel _viewModel;
 
-    FeatureOptionViewModel _viewModel;
-    public FeatureOptionsPage(FeatureOptionViewModel viewModel)
+    public RotorPage(RotorViewModel viewModel)
     {
         InitializeComponent();
+
         _viewModel = viewModel;
+
         BindingContext = _viewModel;
     }
 }

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="SubControlMAUI.Pages.VideoConfigPage"
+             xmlns:vm="clr-namespace:SubControlMAUI.ViewModels"
+             xmlns:models="clr-namespace:SubControlMAUI.Models"
+             x:DataType="vm:VideoConfigViewModel"
+    Title="{Binding Title}">
+    <Grid Padding="10"
+        RowDefinitions="Auto,*,Auto">
+
+
+        <Button Grid.Row="0"
+              Text="Query System Devices"
+              Command="{Binding QueryDevicesCommand}"
+              Margin="0,0,0,10" />
+
+
+        <CollectionView Grid.Row="1"
+                      ItemsSource="{Binding VideoDevices}">
+            <CollectionView.ItemTemplate>
+                <DataTemplate x:DataType="models:VideoDevice">
+
+                    <Grid ColumnDefinitions="*,*"
+                        Padding="5">
+
+                        <!-- USB Device Name -->
+                        <Label Text="{Binding Name}"
+                             VerticalOptions="Center"
+                             FontAttributes="Bold" />
+
+                        <!-- Function Picker -->
+                        <Picker Grid.Column="1"
+      Title="Select Function"
+      ItemsSource="{Binding AvailableFunctions}"
+      SelectedItem="{Binding SelectedFunction, Mode=TwoWay}" />
+
+                    </Grid>
+
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+
+        <Button Grid.Row="2"
+              Text="Save Mapping"
+              Command="{Binding SaveCommand}"
+              Margin="0,10,0,0" />
+
+    </Grid>
+</ContentPage>

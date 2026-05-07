@@ -1,6 +1,7 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
+using Microsoft.Extensions.Logging;
 using SubControlMAUI.Messages;
 using SubControlMAUI.Model;
 using SubControlMAUI.Services;
@@ -25,7 +26,8 @@ namespace SubControlMAUI.ViewModels
 
         public bool IsNotConnected => !IsConnected;
 
-        public SettingsViewModel(SQLiteService sQLiteService, IAlertService alertService, TcpSocketService tCPService, IMessenger messenger)
+        public SettingsViewModel(SQLiteService sQLiteService, IAlertService alertService, TcpSocketService tCPService, IMessenger messenger,
+        ILogger<PeriscopeViewModel> logger) : base(messenger, logger)
         {
             Title = "Ethernet Settings";
             _sqliteService = sQLiteService;

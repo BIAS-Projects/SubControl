@@ -12,6 +12,7 @@ namespace SubControlMAUI
     {
         public static MauiApp CreateMauiApp()
         {
+
             // Call this FIRST before any FFmpeg service is registered or resolved
             RtspFrameDecoder.InitialiseFfmpeg();
 
@@ -32,6 +33,9 @@ namespace SubControlMAUI
             builder.Services.AddSingleton<Pages.MainPage>();
             builder.Services.AddSingleton<MainViewModel>();
 
+            builder.Services.AddSingleton<ConfigMenuPage>();
+            builder.Services.AddSingleton<ConfigMenuViewModel>();
+
             builder.Services.AddSingleton<SettingsPage>();
             builder.Services.AddSingleton<SettingsViewModel>();
 
@@ -39,7 +43,7 @@ namespace SubControlMAUI
             builder.Services.AddSingleton<CommsViewModel>();
 
             builder.Services.AddSingleton<AppShell>();
-            builder.Services.AddSingleton<AppShellViewModel>();
+          //  builder.Services.AddSingleton<AppShellViewModel>();
 
             builder.Services.AddSingleton<CutterCommandSettingsPage>();
             builder.Services.AddSingleton<CutterCommandViewModel>();
@@ -59,6 +63,15 @@ namespace SubControlMAUI
             builder.Services.AddSingleton<PeriscopePage>();
             builder.Services.AddSingleton<PeriscopeViewModel>();
 
+            builder.Services.AddSingleton<VideoConfigPage>();
+            builder.Services.AddSingleton<VideoConfigViewModel>();
+
+            builder.Services.AddSingleton<TechPage>();
+            builder.Services.AddSingleton<TechViewModel>();
+
+            builder.Services.AddSingleton<RotorPage>();
+            builder.Services.AddSingleton<RotorViewModel>();
+
 
             builder.Services.AddSingleton<SQLiteService>();
 
@@ -71,5 +84,7 @@ namespace SubControlMAUI
 
             return builder.Build();
         }
+
+
     }
 }

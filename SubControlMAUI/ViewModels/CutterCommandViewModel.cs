@@ -1,5 +1,7 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using CommunityToolkit.Mvvm.Messaging;
+using Microsoft.Extensions.Logging;
 using SubControlMAUI.Messages;
 using SubControlMAUI.Services;
 using System;
@@ -14,7 +16,8 @@ namespace SubControlMAUI.ViewModels
     {
         IAlertService _alertService;
         SQLiteService _sqlLiteService;
-        public CutterCommandViewModel(IAlertService alertService, SQLiteService sqlLiteService)
+        public CutterCommandViewModel(IAlertService alertService, SQLiteService sqlLiteService,IMessenger messenger,
+        ILogger<PeriscopeViewModel> logger): base(messenger, logger)
         {
             Title = "Cutter Commands";
             _alertService = alertService;

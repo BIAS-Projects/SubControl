@@ -1,5 +1,7 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using CommunityToolkit.Mvvm.Messaging;
+using Microsoft.Extensions.Logging;
 using SubControlMAUI.Services;
 using System;
 using System.Collections.Generic;
@@ -11,7 +13,8 @@ namespace SubControlMAUI.ViewModels
     {
         IAlertService _alertService;
         SQLiteService _sqlLiteService;
-        public RS232SettingsViewModel(IAlertService alertService, SQLiteService sqlLiteService)
+        public RS232SettingsViewModel(IAlertService alertService, SQLiteService sqlLiteService, IMessenger messenger,
+        ILogger<PeriscopeViewModel> logger) : base(messenger, logger)
         {
             Title = "RS232 Settings";
             _alertService = alertService;

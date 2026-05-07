@@ -1,5 +1,7 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using CommunityToolkit.Mvvm.Messaging;
+using Microsoft.Extensions.Logging;
 using SubControlMAUI.Services;
 using System;
 using System.Collections.Generic;
@@ -13,7 +15,8 @@ namespace SubControlMAUI.ViewModels
         IAlertService _alertService;
         SQLiteService _sqlLiteService;
 
-        public I2CSettingsViewModel(IAlertService alertService, SQLiteService sqlLiteService)
+        public I2CSettingsViewModel(IAlertService alertService, SQLiteService sqlLiteService, IMessenger messenger,
+        ILogger<PeriscopeViewModel> logger) : base(messenger, logger)
         {
             Title = "I2C Settings";
             _alertService = alertService;

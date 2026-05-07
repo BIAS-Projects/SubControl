@@ -1,60 +1,76 @@
-﻿
-using CommunityToolkit.Mvvm.ComponentModel;
-using CommunityToolkit.Mvvm.Input;
+﻿using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
-using SubControlMAUI.Messages;
-using SubControlMAUI.Services;
-using System;
-using System.Collections.Generic;
-using System.Text;
+using Microsoft.Extensions.Logging;
+using SubControlMAUI.Models;
+using SubControlMAUI.ViewModels;
+using System.Collections.ObjectModel;
+using System.Diagnostics;
 
-namespace SubControlMAUI.ViewModels
+namespace SubControlMAUI.ViewModels;
+
+public partial class FeatureOptionViewModel : BaseViewModel
 {
-    public partial class FeatureOptionViewModel : BaseViewModel
+    private bool _isRebuilding = false;
+
+    private readonly List<string> _allFunctions = new()
+        { "Unselected", "TOM Input", "TOM Output", "TOM AHRS", "TOM GNSS", "TOM FLIR", "ROTOR" };
+
+    public FeatureOptionViewModel(IMessenger messenger,
+        ILogger<PeriscopeViewModel> logger): base(messenger, logger)
     {
-        SQLiteService _sqlLiteService;
-        IAlertService _alertService;
-        private readonly IMessenger _messenger;
-        public FeatureOptionViewModel(SQLiteService sqlLiteService, IAlertService alertService, IMessenger messenger)
+        Title = "Feature to USB Mapping";
+
+        UsbDevices.Add(new UsbDevice { Name = "USB1" });
+        UsbDevices.Add(new UsbDevice { Name = "USB2" });
+        UsbDevices.Add(new UsbDevice { Name = "USB3" });
+        UsbDevices.Add(new UsbDevice { Name = "USB4" });
+        UsbDevices.Add(new UsbDevice { Name = "USB5" });
+        UsbDevices.Add(new UsbDevice { Name = "USB6" });
+
+        foreach (var device in UsbDevices)
         {
-            Title = "Feature Options";
-            _sqlLiteService = sqlLiteService;
-            _alertService = alertService;
-            _messenger = messenger;
-            LoadSettings();
+            // Wire up callback instead of PropertyChanged
+            device.OnFunctionSelected = HandleSelection;
+            device.SetSelectionSilently("Unselected");
         }
-
-        [ObservableProperty]
-        bool cutterEnabled;
-
-        [ObservableProperty]
-        bool periscopeEnabled;
-
-        [RelayCommand]
-        public async Task Save()
-        {
-            string featureSettings = string.Empty;
-            if(CutterEnabled)
-                featureSettings += "CUTTER,";
-            if(PeriscopeEnabled)
-                featureSettings += "PERISCOPE,";
-            _sqlLiteService.config.Features = featureSettings.TrimEnd(','); 
-            if (await _sqlLiteService.SaveConfigAsync(true) == 1)
-            {
-                _messenger.Send(new FeatureUpdateMessage("Update"));
-                await _alertService.ShowAlertAsync("Informarion", $"Settings Saved Successfully", "OK");
-            }
-            else
-            {
-                await _alertService.ShowAlertAsync("Error", $"Error Saving Settings: {_sqlLiteService.LastError}", "OK");
-            }
-        }
-
-        private void LoadSettings()
-        {
-            CutterEnabled = _sqlLiteService.config.Features.Contains("CUTTER");
-            PeriscopeEnabled = _sqlLiteService.config.Features.Contains("PERISCOPE");
-        }
-
     }
+
+    public ObservableCollection<UsbDevice> UsbDevices { get; set; } = new();
+
+    private void HandleSelection(UsbDevice changedDevice, string selectedValue)
+    {
+        if (_isRebuilding) return;
+        _isRebuilding = true;
+        try
+        {
+            foreach (var device in UsbDevices)
+            {
+                var otherClaimed = UsbDevices
+                    .Where(d => d != device && d.SelectedFunction != "Unselected")
+                    .Select(d => d.SelectedFunction)
+                    .ToHashSet();
+
+                var available = _allFunctions
+                    .Where(f => !otherClaimed.Contains(f))
+                    .ToList();
+
+                var currentSelection = device.SelectedFunction;
+
+                // Update list first, then restore selection
+                device.UpdateAvailableFunctions(available);
+                device.SetSelectionSilently(
+                    available.Contains(currentSelection) ? currentSelection : "Unselected");
+            }
+        }
+        finally
+        {
+            _isRebuilding = false;
+        }
+    }
+
+    [RelayCommand]
+    public void Save() { }
+
+    [RelayCommand]
+    public void QueryDevices() { }
 }

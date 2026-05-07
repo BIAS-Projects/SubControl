@@ -2,6 +2,7 @@
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using CommunityToolkit.Mvvm.Messaging.Messages;
+using Microsoft.Extensions.Logging;
 using SubControlMAUI.Messages;
 using System;
 using System.Collections.Generic;
@@ -12,7 +13,8 @@ namespace SubControlMAUI.ViewModels
     public partial class CommsViewModel : BaseViewModel
     {
         private readonly IMessenger _messenger;
-        public CommsViewModel(IMessenger messenger)
+        public CommsViewModel(IMessenger messenger,
+        ILogger<PeriscopeViewModel> logger): base (messenger, logger)
         {
             Title = "Comms";
             _messenger = messenger;

@@ -1,0 +1,107 @@
+<ContentPage
+    x:Class="SubControlMAUI.Pages.ConfigMenuPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:vm="clr-namespace:SubControlMAUI.ViewModels"
+    x:DataType="vm:ConfigMenuViewModel"
+    Title="{Binding Title}">
+
+    <Grid>
+
+        <Grid RowDefinitions="*" Padding="10">
+
+            <!-- Main Buttons -->
+            <Grid Grid.Row="2"
+                  ColumnDefinitions="*,*,*,*"
+                  ColumnSpacing="60"
+                  HorizontalOptions="Center"
+                  VerticalOptions="Center">
+
+                <!-- ETHERNET -->
+                <VerticalStackLayout Grid.Column="0"
+                                     Spacing="8"
+                                     HorizontalOptions="Center">
+
+                    <ImageButton
+                        Source="{AppThemeBinding Light=light_ethernet.png, Dark=dark_ethernet.png}"
+                        WidthRequest="{Binding ButtonSize}"
+                        HeightRequest="{Binding ButtonSize}"
+                        BackgroundColor="Transparent"
+                        Command="{Binding EthernetCommand}"
+                        IsEnabled="{Binding IsNotBusy}" />
+
+
+                    <Label Text="Ethernet"
+                           HorizontalOptions="Center"/>
+                </VerticalStackLayout>
+
+                <!-- FEATURES -->
+                <VerticalStackLayout Grid.Column="1"
+                                     Spacing="8"
+                                     HorizontalOptions="Center">
+
+                    <ImageButton
+                        Source="{AppThemeBinding Light=light_checkbox.png, Dark=dark_checkbox.png}"
+                        WidthRequest="{Binding ButtonSize}"
+                        HeightRequest="{Binding ButtonSize}"
+                        BackgroundColor="Transparent"
+                        Command="{Binding FeaturesCommand}"
+                        IsEnabled="{Binding IsNotBusy}" />
+
+
+                    <Label Text="USB Features"
+                           HorizontalOptions="Center"/>
+                </VerticalStackLayout>
+
+                <VerticalStackLayout Grid.Column="2"
+                                     Spacing="8"
+                                     HorizontalOptions="Center">
+
+                    <ImageButton
+                        Source="{AppThemeBinding Light=light_video.png, Dark=dark_video.png}"
+                        WidthRequest="{Binding ButtonSize}"
+                        HeightRequest="{Binding ButtonSize}"
+                        BackgroundColor="Transparent"
+                        Command="{Binding VideoCommand}"
+                        IsEnabled="{Binding IsNotBusy}" />
+
+
+                    <Label Text="USB Video"
+                           HorizontalOptions="Center"/>
+                </VerticalStackLayout>
+
+                <VerticalStackLayout Grid.Column="3"
+                                     Spacing="8"
+                                     HorizontalOptions="Center">
+
+                    <ImageButton
+                        Source="{AppThemeBinding Light=light_tech.png, Dark=dark_tech.png}"
+                        WidthRequest="{Binding ButtonSize}"
+                        HeightRequest="{Binding ButtonSize}"
+                        BackgroundColor="Transparent"
+                        Command="{Binding TechCommand}"
+                        IsEnabled="{Binding IsNotBusy}" />
+
+
+                    <Label Text="Technical"
+                           HorizontalOptions="Center"/>
+                </VerticalStackLayout>
+
+            </Grid>
+        </Grid>
+
+        <!-- BUSY OVERLAY -->
+        <Grid IsVisible="{Binding IsBusy}"
+              BackgroundColor="#80000000"
+              ZIndex="1">
+
+            <ActivityIndicator IsRunning="{Binding IsBusy}"
+                               VerticalOptions="Center"
+                               HorizontalOptions="Center"
+                               WidthRequest="60"
+                               HeightRequest="60" />
+        </Grid>
+
+    </Grid>
+
+</ContentPage>
