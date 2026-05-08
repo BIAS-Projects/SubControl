@@ -13,11 +13,13 @@ namespace SubControlMAUI.ViewModels
     public partial class CommsViewModel : BaseViewModel
     {
         private readonly IMessenger _messenger;
+        private readonly ILogger<CommsViewModel> _logger;
         public CommsViewModel(IMessenger messenger,
-        ILogger<PeriscopeViewModel> logger): base (messenger, logger)
+        ILogger<CommsViewModel> logger)
         {
             Title = "Comms";
             _messenger = messenger;
+            _logger = logger;
 
 
 

@@ -4,7 +4,8 @@
              xmlns:viewModel="clr-namespace:SubControlMAUI.ViewModels"
              x:Class="SubControlMAUI.Pages.I2CSettingsPage"
              x:DataType="viewModel:I2CSettingsViewModel"
-             Title="{Binding Title}">
+             Title="{Binding Title}"
+                 Shell.NavBarIsVisible="True">
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*" />

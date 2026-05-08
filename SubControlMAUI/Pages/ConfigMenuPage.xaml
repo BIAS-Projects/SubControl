@@ -4,7 +4,8 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
     xmlns:vm="clr-namespace:SubControlMAUI.ViewModels"
     x:DataType="vm:ConfigMenuViewModel"
-    Title="{Binding Title}">
+    Title="{Binding Title}"
+        Shell.NavBarIsVisible="True">
 
     <Grid>
 
@@ -28,7 +29,7 @@
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
                         Command="{Binding EthernetCommand}"
-                        IsEnabled="{Binding IsNotBusy}" />
+                        />
 
 
                     <Label Text="Ethernet"
@@ -46,7 +47,7 @@
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
                         Command="{Binding FeaturesCommand}"
-                        IsEnabled="{Binding IsNotBusy}" />
+                        IsEnabled="{Binding IsConnected}" />
 
 
                     <Label Text="USB Features"
@@ -63,7 +64,7 @@
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
                         Command="{Binding VideoCommand}"
-                        IsEnabled="{Binding IsNotBusy}" />
+                        IsEnabled="{Binding IsConnected}" />
 
 
                     <Label Text="USB Video"
@@ -80,7 +81,7 @@
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
                         Command="{Binding TechCommand}"
-                        IsEnabled="{Binding IsNotBusy}" />
+                         />
 
 
                     <Label Text="Technical"

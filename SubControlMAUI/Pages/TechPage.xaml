@@ -4,7 +4,8 @@
              x:Class="SubControlMAUI.Pages.TechPage"
              xmlns:vm="clr-namespace:SubControlMAUI.ViewModels"
              x:DataType="vm:TechViewModel"
-             Title="{Binding Title}">
+             Title="{Binding Title}"
+             Shell.NavBarIsVisible="True">
     <VerticalStackLayout>
         <Label 
             Text="Welcome to .NET MAUI!"

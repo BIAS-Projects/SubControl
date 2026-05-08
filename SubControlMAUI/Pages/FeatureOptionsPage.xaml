@@ -5,20 +5,36 @@
     xmlns:models="clr-namespace:SubControlMAUI.Models"
     xmlns:vm="clr-namespace:SubControlMAUI.ViewModels"
     x:DataType="vm:FeatureOptionViewModel"
-    Title="{Binding Title}">
+    Title="{Binding Title}"
+        Shell.NavBarIsVisible="True">
 
     <Grid Padding="10"
-          RowDefinitions="Auto,*,Auto">
+          RowDefinitions="Auto, Auto,*,Auto">
+        
+        <Label Grid.Row="0"
+                   Margin="0,15,0,15"
+                   FontSize="16">
+            <Label.FormattedText>
+                <FormattedString>
+                    <Span Text="Status: " FontAttributes="Bold"/>
+                    <Span Text="{Binding StatusText}" />
+                </FormattedString>
+            </Label.FormattedText>
+        </Label>
 
-
-        <Button Grid.Row="0"
-                Text="Query System Devices"
+        <ImageButton
+            Grid.Row="1"
+                    Source="{AppThemeBinding Light=light_download.png, Dark=dark_download.png}"
+                    WidthRequest="30"
+                    HeightRequest="30"
+                    BackgroundColor="Transparent"
                 Command="{Binding QueryDevicesCommand}"
                 Margin="0,0,0,10" />
 
 
-        <CollectionView Grid.Row="1"
-                        ItemsSource="{Binding UsbDevices}">
+        <CollectionView Grid.Row="2"
+                        ItemsSource="{Binding UsbDevices}"
+                        IsEnabled="{Binding UsbDetailsDownloaded}">
             <CollectionView.ItemTemplate>
                 <DataTemplate x:DataType="models:UsbDevice">
 
@@ -42,10 +58,28 @@
             </CollectionView.ItemTemplate>
         </CollectionView>
 
-        <Button Grid.Row="2"
-                Text="Save Mapping"
+        <ImageButton
+                    Source="{AppThemeBinding Light=light_save.png, Dark=dark_save.png}"
+                    WidthRequest="30"
+                    HeightRequest="30"
+                    BackgroundColor="Transparent"
+            Grid.Row="3"
                 Command="{Binding SaveCommand}"
+            IsEnabled="{Binding UsbDetailsDownloaded}"
                 Margin="0,10,0,0" />
+
+        <!-- BUSY OVERLAY (on top) -->
+        <Grid IsVisible="{Binding IsBusy}"
+              BackgroundColor="#80000000"
+              ZIndex="1">
+
+            <ActivityIndicator IsRunning="{Binding IsBusy}"
+                               IsVisible="{Binding IsBusy}"
+                               VerticalOptions="Center"
+                               HorizontalOptions="Center"
+                               WidthRequest="60"
+                               HeightRequest="60" />
+        </Grid>
 
     </Grid>
 

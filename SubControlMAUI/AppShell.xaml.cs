@@ -1,23 +1,20 @@
-﻿
-
-
-using SubControlMAUI.Pages;
+﻿using SubControlMAUI.Pages;
 using SubControlMAUI.ViewModels;
 
 namespace SubControlMAUI
 {
     public partial class AppShell : Shell
     {
-        //AppShellViewModel _viewModel;
         MainViewModel _viewModel;
-      //  public AppShell(AppShellViewModel viewModel)
+
         public AppShell(MainViewModel viewModel)
         {
             InitializeComponent();
-            _viewModel = viewModel;
             BindingContext = viewModel;
+            _viewModel = viewModel;
 
-
+            // All pages now need explicit registration since none are Shell tabs
+            //Routing.RegisterRoute(nameof(MainPage), typeof(MainPage));
             Routing.RegisterRoute(nameof(PeriscopePage), typeof(PeriscopePage));
             Routing.RegisterRoute(nameof(RotorPage), typeof(RotorPage));
             Routing.RegisterRoute(nameof(SettingsPage), typeof(SettingsPage));
@@ -25,8 +22,10 @@ namespace SubControlMAUI
             Routing.RegisterRoute(nameof(FeatureOptionsPage), typeof(FeatureOptionsPage));
             Routing.RegisterRoute(nameof(VideoConfigPage), typeof(VideoConfigPage));
             Routing.RegisterRoute(nameof(TechPage), typeof(TechPage));
-            Routing.RegisterRoute(nameof(RotorPage), typeof(RotorPage));
-
+            Routing.RegisterRoute(nameof(RS232SettingsPage), typeof(RS232SettingsPage));
+            Routing.RegisterRoute(nameof(I2CSettingsPage), typeof(I2CSettingsPage));
+            Routing.RegisterRoute(nameof(CutterCommandSettingsPage), typeof(CutterCommandSettingsPage));
+            Routing.RegisterRoute(nameof(PeriscopeCommandSettingsPage), typeof(PeriscopeCommandSettingsPage));
         }
 
         protected override async void OnAppearing()
@@ -34,11 +33,7 @@ namespace SubControlMAUI
             base.OnAppearing();
             this.Window.MinimumHeight = 650;
             this.Window.MinimumWidth = 600;
-
             await _viewModel.GetConfig();
         }
-
-
-
     }
 }

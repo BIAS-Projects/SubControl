@@ -1,75 +1,15 @@
-<?xml version="1.0" encoding="UTF-8" ?>
 <Shell
     x:Class="SubControlMAUI.AppShell"
     xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
     xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
     xmlns:pages="clr-namespace:SubControlMAUI.Pages"
     xmlns:viewModels="clr-namespace:SubControlMAUI.ViewModels"
-    x:DataType="viewModels:AppShellViewModel"
+    x:DataType="viewModels:MainViewModel"
+    Shell.NavBarIsVisible="False"
     Title="SubControlMAUI">
 
-    <FlyoutItem Title="Controls" Icon="submarine.png">
+    <ShellContent
+        ContentTemplate="{DataTemplate pages:MainPage}"
+        Route="MainPage" />
 
-
-
-        <Tab Title="Cutter" Icon="saw.png" IsVisible="{Binding CutterEnabled}">
-            <ShellContent
-                FlyoutItemIsVisible="{Binding CutterEnabled}"
-                ContentTemplate="{DataTemplate pages:MainPage}"
-                Route="MainPage" />
-        </Tab>
-
-        <Tab Title="Periscope" Icon="periscope.png" IsVisible="{Binding PeriscopeEnabled}">
-            <ShellContent
-                ContentTemplate="{DataTemplate pages:PeriscopePage}"
-                Route="PeriscopePage" />
-        </Tab>
-
-    </FlyoutItem>
-
-    <FlyoutItem Title="Settings" Icon="settings.png">
-
-
-        <Tab Title="Feature Settings" Icon="checkbox.png">
-            <ShellContent
-                ContentTemplate="{DataTemplate pages:FeatureOptionsPage}"
-                Route="FeatureSettingsPage" />
-        </Tab>
-
-        <Tab Title="Ethernet Settings" Icon="comms.png">
-            <ShellContent
-                ContentTemplate="{DataTemplate pages:SettingsPage}"
-                Route="SettingsPage" />
-        </Tab>
-        
-        <Tab Title="RS232 Settings" Icon="rs232.png">
-            <ShellContent
-                ContentTemplate="{DataTemplate pages:RS232SettingsPage}"
-                Route="RS232SettingsPage" />
-        </Tab>
-
-        <Tab Title="I2C Settings" Icon="i2c.png">
-            <ShellContent
-                ContentTemplate="{DataTemplate pages:I2CSettingsPage}"
-                Route="I2CSettingsPage" />
-        </Tab>
-
-
-        <Tab Title="Cutter Command Settings" Icon="saw.png" IsVisible="{Binding CutterEnabled}">
-            <ShellContent
-                ContentTemplate="{DataTemplate pages:CutterCommandSettingsPage}"
-                Route="CutterCommandsPage" />
-        </Tab>
-
-        <Tab Title="Periscope Command Settings" Icon="periscope.png" IsVisible="{Binding PeriscopeEnabled}">
-            <ShellContent
-                ContentTemplate="{DataTemplate pages:PeriscopeCommandSettingsPage}"
-                Route="PeriscopeSettingsPage" />
-        </Tab>
-
-    </FlyoutItem>
-
-
-
-    
 </Shell>

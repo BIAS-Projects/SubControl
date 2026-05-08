@@ -4,7 +4,8 @@
              xmlns:viewModel="clr-namespace:SubControlMAUI.ViewModels"
              x:Class="SubControlMAUI.Pages.SettingsPage"
              x:DataType="viewModel:SettingsViewModel"
-             Title="{Binding Title}">
+             Title="{Binding Title}"
+             Shell.NavBarIsVisible="True">
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*" />

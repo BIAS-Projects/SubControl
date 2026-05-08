@@ -13,12 +13,17 @@ namespace SubControlMAUI.ViewModels
     {
         IAlertService _alertService;
         SQLiteService _sqlLiteService;
+        IMessenger _messenger;
+        ILogger<PeriscopeCommandViewModel> _logger;
+
         public PeriscopeCommandViewModel(IAlertService alertService, SQLiteService sqlLiteService, IMessenger messenger,
-        ILogger<PeriscopeViewModel> logger) : base(messenger, logger)
+        ILogger<PeriscopeCommandViewModel> logger)
         {
             Title = "Periscope Commands";
             _alertService = alertService;
             _sqlLiteService = sqlLiteService;
+            _messenger = messenger;
+            _logger = logger;
             LoadSettings();
         }
 

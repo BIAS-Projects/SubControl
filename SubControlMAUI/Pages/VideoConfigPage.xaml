@@ -5,7 +5,8 @@
              xmlns:vm="clr-namespace:SubControlMAUI.ViewModels"
              xmlns:models="clr-namespace:SubControlMAUI.Models"
              x:DataType="vm:VideoConfigViewModel"
-    Title="{Binding Title}">
+    Title="{Binding Title}"
+                 Shell.NavBarIsVisible="True">
     <Grid Padding="10"
         RowDefinitions="Auto,*,Auto">
 

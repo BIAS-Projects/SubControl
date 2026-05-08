@@ -2,18 +2,43 @@
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.Logging;
-using Microsoft.Maui.Graphics;
+using SubControlMAUI.Messages;
 using SubControlMAUI.Pages;
+using SubControlMAUI.Services;
 
 namespace SubControlMAUI.ViewModels;
 
 public partial class ConfigMenuViewModel : BaseViewModel
 {
-    public ConfigMenuViewModel(IMessenger messenger,
-        ILogger<PeriscopeViewModel> logger) : base(messenger, logger)
+
+    ILogger<ConfigMenuViewModel> _logger;
+    INavigationService _navigation;
+    IMessenger _messengerService;
+
+    public ConfigMenuViewModel(IMessenger messengerService,
+        ILogger<ConfigMenuViewModel> logger,
+        INavigationService navigation)
     {
+        _messengerService = messengerService;
+        _logger = logger;
+        _navigation = navigation;
         Title = "Configuration Menu";
+
+
+        _messengerService.Register<TcpIsConnected>(this, (r, msg) =>
+        {
+            //    _alertService.ShowAlertAsync("Information", $"TcpIsConnected: {msg.Value}", "OK");
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                IsConnected = msg.Value;
+            });
+
+        });
+
     }
+
+    [ObservableProperty]
+    public bool isConnected;  
 
     [ObservableProperty]
     public double buttonSize;
@@ -41,31 +66,31 @@ public partial class ConfigMenuViewModel : BaseViewModel
     [RelayCommand]
     private async Task Ethernet()
     {
-        await Shell.Current.GoToAsync(nameof(SettingsPage));
+        await _navigation.GoToAsync(nameof(SettingsPage));
     }
 
     [RelayCommand]
     private async Task Features()
     {
-        await Shell.Current.GoToAsync(nameof(FeatureOptionsPage));
+        await _navigation.GoToAsync(nameof(FeatureOptionsPage));
     }
 
     [RelayCommand]
     private async Task Video()
     {
-        await Shell.Current.GoToAsync(nameof(VideoConfigPage));
+        await _navigation.GoToAsync(nameof(VideoConfigPage));
     }
 
     [RelayCommand]
     private async Task Tech()
     {
-        await Shell.Current.GoToAsync(nameof(TechPage));
+        await _navigation.GoToAsync(nameof(TechPage));
     }
 
     // NAVIGATION (same pattern as your MainViewModel)
     [RelayCommand]
     private async Task GoBack()
     {
-        await Shell.Current.GoToAsync("..");
+        await _navigation.GoToAsync("..");
     }
 }

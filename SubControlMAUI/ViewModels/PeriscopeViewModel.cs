@@ -22,7 +22,7 @@ namespace SubControlMAUI.ViewModels
     
         SQLiteService _sqliteService;
         IAlertService _alertService;
-        ILogger<MainViewModel> _logger;
+        ILogger<PeriscopeViewModel> _logger;
 
         private readonly IMessenger _messenger;
         private readonly TcpSocketService _tcp;
@@ -89,7 +89,7 @@ namespace SubControlMAUI.ViewModels
         //[ObservableProperty]
         //private string cutterCurrent = $"0 {_currentUnit}";
 
-        public PeriscopeViewModel(SQLiteService sqliteService, IAlertService alertService, IMessenger messenger, TcpSocketService tcp, ILogger<MainViewModel> logger) : base(messenger,logger)
+        public PeriscopeViewModel(SQLiteService sqliteService, IAlertService alertService, IMessenger messenger, TcpSocketService tcp, ILogger<PeriscopeViewModel> logger)
         {
             Title = "Periscope";
             _sqliteService = sqliteService;

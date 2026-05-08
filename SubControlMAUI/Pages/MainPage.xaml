@@ -4,7 +4,9 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
     xmlns:vm="clr-namespace:SubControlMAUI.ViewModels"
     x:DataType="vm:MainViewModel"
-    Title="{Binding Title}">
+    Shell.NavBarIsVisible="False"
+    Title="{Binding Title}"
+    >
 
 
 
@@ -12,41 +14,95 @@
 
         <Grid RowDefinitions="50,Auto,Auto,*" Padding="10">
 
-            <!-- Top Row -->
-            <Grid Grid.Row="0" ColumnDefinitions="auto,auto,*,20,50,20" ColumnSpacing="10">
+            <!-- TOP SECTION -->
+            <Grid Grid.Row="0"
+              ColumnDefinitions="Auto,*,20,50,20"
+              ColumnSpacing="10">
 
-            <Button Text="Connect"
+                <!-- CONNECTION CONTROLS -->
+                <Grid Grid.Column="0"
+                  ColumnDefinitions="Auto,Auto"
+                  ColumnSpacing="10">
+
+                    <!-- CONNECT -->
+                    <ImageButton
+                    Source="{AppThemeBinding Light=light_ethernet_on.png, Dark=dark_ethernet_on.png}"
+                    WidthRequest="30"
+                    HeightRequest="30"
+                    BackgroundColor="Transparent"
                     Grid.Column="0"
-                        Command="{Binding ConnectCommand}"
-                        IsEnabled="{Binding IsNotBusy}" />
+                    Command="{Binding ConnectCommand}"
+                    IsEnabled="{Binding IsNotConnected}" />
 
-                <Button Text="Disconnect"
-                        Grid.Column="1"
-                        Command="{Binding DisconnectCommand}"
-                        IsEnabled="{Binding IsNotBusy}" />
+                    <!-- DISCONNECT -->
+                    <ImageButton
+                    Source="{AppThemeBinding Light=light_ethernet_off.png, Dark=dark_ethernet_off.png}"
+                    WidthRequest="30"
+                    HeightRequest="30"
+                    BackgroundColor="Transparent"
+                    Grid.Column="1"
+                    Command="{Binding DisconnectCommand}"
+                    IsEnabled="{Binding IsConnected}" />
 
-            <Image Grid.Column="3"
+                </Grid>
+
+                <!-- SYSTEM CONTROLS ONLY -->
+                <Grid Grid.Column="1"
+                  IsEnabled="{Binding IsConnected}"
+                  ColumnDefinitions="Auto,Auto"
+                  ColumnSpacing="10"
+                  HorizontalOptions="Center">
+
+                    <!-- ENABLE SYSTEM -->
+                    <ImageButton
+                    Source="{AppThemeBinding Light=light_on_button.png, Dark=dark_on_button.png}"
+                    WidthRequest="30"
+                    HeightRequest="30"
+                    BackgroundColor="Transparent"
+                    Grid.Column="0"
+                    IsEnabled="{Binding IsNotSystemEnabled}"
+                    Command="{Binding EnableSystemCommand}" />
+
+                    <!-- DISABLE SYSTEM -->
+                    <ImageButton
+                    Source="{AppThemeBinding Light=light_off_button.png, Dark=dark_off_button.png}"
+                    WidthRequest="30"
+                    HeightRequest="30"
+                    BackgroundColor="Transparent"
+                    Grid.Column="1"
+                    IsEnabled="{Binding IsSystemEnabled}"
+                    Command="{Binding DisableSystemCommand}" />
+
+                </Grid>
+
+                <!-- THEME CONTROLS -->
+                <Image Grid.Column="2"
                    WidthRequest="30"
                    HeightRequest="30"
                    Source="{AppThemeBinding Light=light_sun.png, Dark=dark_sun.png}"
-                     BackgroundColor="Transparent"/>
+                   BackgroundColor="Transparent"/>
 
-
-
-            <Switch Grid.Column="4"
+                <Switch Grid.Column="3"
                     HorizontalOptions="Center"
-                        IsToggled="{Binding IsDarkTheme}"
-                        IsEnabled="{Binding IsNotBusy}"
-                        Toggled="OnThemeSwitchToggled" />
+                    IsToggled="{Binding IsDarkTheme}"
+                    IsEnabled="{Binding IsNotBusy}"
+                    Toggled="OnThemeSwitchToggled" />
 
-            <Image Grid.Column="5"
+                <Image Grid.Column="4"
                    WidthRequest="30"
                    HeightRequest="30"
                    Source="{AppThemeBinding Light=light_moon.png, Dark=dark_moon.png}"
-                       BackgroundColor="Transparent"/>
-       </Grid>
+                   BackgroundColor="Transparent"/>
 
-                <!-- Status -->
+            </Grid>
+
+
+
+
+
+
+
+    <!-- Status -->
             <Label Grid.Row="1"
                    Margin="0,15,0,15"
                    FontSize="16">
@@ -63,7 +119,8 @@
          HeightRequest="1"
          Margin="0,5,0,15"
          Opacity="0.3"
-         Color="{AppThemeBinding Light=#000000, Dark=#FFFFFF}" />
+         Color="{AppThemeBinding Light=#000000, Dark=#FFFFFF}"
+         IsEnabled="{Binding IsConnected}"/>
 
             <!-- Main Buttons -->
             <Grid Grid.Row="3"
@@ -80,7 +137,7 @@
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
                         Command="{Binding VideoCommand}"
-                        IsEnabled="{Binding IsNotBusy}" />
+                        IsEnabled="{Binding IsSystemEnabled}" />
 
                     <BoxView HeightRequest="8"
                      WidthRequest="60"
@@ -97,7 +154,7 @@
                                  HeightRequest="{Binding ButtonSize}"
                                  BackgroundColor="Transparent"
                                  Command="{Binding RotorCommand}"
-                                 IsEnabled="{Binding IsNotBusy}" />
+                                 IsEnabled="{Binding IsSystemEnabled}" />
 
                     <BoxView HeightRequest="8"
                              WidthRequest="60"

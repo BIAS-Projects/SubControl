@@ -4,17 +4,16 @@ namespace SubControlMAUI;
 
 public partial class App : Application
 {
-    private readonly MainPage _mainPage;
+    private readonly AppShell _appShell;
 
-    public App(MainPage mainPage)
+    public App(AppShell appShell)
     {
         InitializeComponent();
-
-        _mainPage = mainPage;
+        _appShell = appShell;
     }
 
     protected override Window CreateWindow(IActivationState? activationState)
     {
-        return new Window(_mainPage);
+        return new Window(_appShell);  
     }
 }

@@ -1,4 +1,5 @@
-﻿using CommunityToolkit.Mvvm.Input;
+﻿using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.Logging;
 using SubControlMAUI.Models;
@@ -17,10 +18,16 @@ namespace SubControlMAUI.ViewModels
         private readonly List<string> _allFunctions = new()
         {"Unselected", "Video", "FLIR"};
 
+        IMessenger _messenger;
+        ILogger<VideoConfigViewModel> _logger;
+
         public VideoConfigViewModel(IMessenger messenger,
-        ILogger<PeriscopeViewModel> logger) : base(messenger, logger)
+        ILogger<VideoConfigViewModel> logger)
         {
             Title = "Feature to USB Mapping";
+
+            _messenger = messenger;
+            _logger = logger;
 
             VideoDevices.Add(new VideoDevice { Name = "USB1" });
             VideoDevices.Add(new VideoDevice { Name = "USB2" });
@@ -32,6 +39,9 @@ namespace SubControlMAUI.ViewModels
                 device.SetSelectionSilently("Unselected");
             }
         }
+
+        [ObservableProperty]
+        public bool dataUploaded = false;
 
         public ObservableCollection<VideoDevice> VideoDevices { get; set; } = new();
 

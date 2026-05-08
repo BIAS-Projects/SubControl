@@ -7,11 +7,15 @@ namespace SubControlMAUI.ViewModels;
 
 public partial class RotorViewModel : BaseViewModel
 {
+    IMessenger _messenger;
+    ILogger<RotorViewModel> _logger;
+
     public RotorViewModel(IMessenger messenger,
-        ILogger<PeriscopeViewModel> logger) : base(messenger, logger)
+        ILogger<RotorViewModel> logger) 
     {
         Title = "Rotor Control";
-
+        _logger = logger;
+        _messenger = messenger;
         ArmAngle = 73;
     }
 

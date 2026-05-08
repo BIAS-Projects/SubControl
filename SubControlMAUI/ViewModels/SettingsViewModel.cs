@@ -19,6 +19,7 @@ namespace SubControlMAUI.ViewModels
         IAlertService _alertService;
         TcpSocketService _tCPService;
         IMessenger _messenger;
+        ILogger<SettingsViewModel> _logger;
 
         [ObservableProperty]
         [NotifyPropertyChangedFor(nameof(IsNotConnected))]
@@ -27,12 +28,13 @@ namespace SubControlMAUI.ViewModels
         public bool IsNotConnected => !IsConnected;
 
         public SettingsViewModel(SQLiteService sQLiteService, IAlertService alertService, TcpSocketService tCPService, IMessenger messenger,
-        ILogger<PeriscopeViewModel> logger) : base(messenger, logger)
+        ILogger<SettingsViewModel> logger) 
         {
             Title = "Ethernet Settings";
             _sqliteService = sQLiteService;
             _alertService = alertService;
             _messenger = messenger;
+            _logger = logger;
             Setup();
             _tCPService = tCPService;
 

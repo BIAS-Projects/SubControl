@@ -8,10 +8,14 @@ namespace SubControlMAUI.ViewModels
 {
     public partial class TechViewModel : BaseViewModel
     {
-        public TechViewModel(IMessenger messenger,
-        ILogger<PeriscopeViewModel> logger) : base(messenger, logger)
-        {
+        IMessenger _messenger;
+        ILogger<TechViewModel> _logger;
 
+        public TechViewModel(IMessenger messenger,
+        ILogger<TechViewModel> logger)
+        {
+            _logger = logger;
+            _messenger = messenger;
             Title = "Technical";
         }
 

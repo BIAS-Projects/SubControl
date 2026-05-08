@@ -82,6 +82,8 @@ namespace SubControlMAUI
 
             builder.Services.AddSingleton<IRtspFrameDecoder, RtspFrameDecoder>();
 
+            builder.Services.AddSingleton<INavigationService, NavigationService>();
+
             return builder.Build();
         }
 

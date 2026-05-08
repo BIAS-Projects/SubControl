@@ -14,13 +14,17 @@ namespace SubControlMAUI.ViewModels
     {
         IAlertService _alertService;
         SQLiteService _sqlLiteService;
+        IMessenger _messenger;
+        ILogger<I2CSettingsViewModel> _logger;
 
         public I2CSettingsViewModel(IAlertService alertService, SQLiteService sqlLiteService, IMessenger messenger,
-        ILogger<PeriscopeViewModel> logger) : base(messenger, logger)
+        ILogger<I2CSettingsViewModel> logger)
         {
             Title = "I2C Settings";
             _alertService = alertService;
             _sqlLiteService = sqlLiteService;
+            _messenger = messenger;
+            _logger = logger;
             LoadSettings();
 
         }

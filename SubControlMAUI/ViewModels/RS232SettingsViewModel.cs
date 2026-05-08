@@ -13,12 +13,17 @@ namespace SubControlMAUI.ViewModels
     {
         IAlertService _alertService;
         SQLiteService _sqlLiteService;
+        IMessenger _messenger;
+        ILogger<RS232SettingsViewModel> _logger;
+
         public RS232SettingsViewModel(IAlertService alertService, SQLiteService sqlLiteService, IMessenger messenger,
-        ILogger<PeriscopeViewModel> logger) : base(messenger, logger)
+        ILogger<RS232SettingsViewModel> logger) 
         {
             Title = "RS232 Settings";
             _alertService = alertService;
             _sqlLiteService = sqlLiteService;
+            _messenger = messenger;
+            _logger = logger;
             LoadSettings();
         }
 

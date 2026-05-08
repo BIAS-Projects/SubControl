@@ -16,12 +16,17 @@ namespace SubControlMAUI.ViewModels
     {
         IAlertService _alertService;
         SQLiteService _sqlLiteService;
+        IMessenger _messenger;
+        ILogger<CutterCommandViewModel> _logger;
+
         public CutterCommandViewModel(IAlertService alertService, SQLiteService sqlLiteService,IMessenger messenger,
-        ILogger<PeriscopeViewModel> logger): base(messenger, logger)
+        ILogger<CutterCommandViewModel> logger)
         {
             Title = "Cutter Commands";
             _alertService = alertService;
             _sqlLiteService = sqlLiteService;
+            _messenger = messenger;
+            _logger = logger;
             LoadSettings();
         }
 
