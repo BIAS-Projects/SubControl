@@ -22,39 +22,33 @@ namespace SubControlMAUI.Services
 
     public class AlertService : IAlertService
     {
-        // ----- async calls (use with "await" - MUST BE ON DISPATCHER THREAD) -----
+        private Page GetCurrentPage() =>
+            Application.Current?.Windows.FirstOrDefault()?.Page
+            ?? throw new InvalidOperationException("No active page found");
 
         public Task ShowAlertAsync(string title, string message, string cancel = "OK")
         {
-            return Application.Current.MainPage.DisplayAlert(title, message, cancel);
+            return MainThread.InvokeOnMainThreadAsync(() =>
+                GetCurrentPage().DisplayAlertAsync(title, message, cancel));
         }
 
-        public Task<bool> ShowConfirmationAsync(string title, string message, string accept = "Yes", string cancel = "No")
+        public Task<bool> ShowConfirmationAsync(string title, string message,
+            string accept = "Yes", string cancel = "No")
         {
-            return Application.Current.MainPage.DisplayAlert(title, message, accept, cancel);
+            return MainThread.InvokeOnMainThreadAsync(() =>
+                GetCurrentPage().DisplayAlertAsync(title, message, accept, cancel));
         }
 
-
-        // ----- "Fire and forget" calls -----
-
-        /// <summary>
-        /// "Fire and forget". Method returns BEFORE showing alert.
-        /// </summary>
         public void ShowAlert(string title, string message, string cancel = "OK")
         {
-            Application.Current.MainPage.Dispatcher.Dispatch(async () =>
-                await ShowAlertAsync(title, message, cancel)
-            );
+            MainThread.BeginInvokeOnMainThread(async () =>
+                await ShowAlertAsync(title, message, cancel));
         }
 
-        /// <summary>
-        /// "Fire and forget". Method returns BEFORE showing alert.
-        /// </summary>
-        /// <param name="callback">Action to perform afterwards.</param>
         public void ShowConfirmation(string title, string message, Action<bool> callback,
-                                     string accept = "Yes", string cancel = "No")
+            string accept = "Yes", string cancel = "No")
         {
-            Application.Current.MainPage.Dispatcher.Dispatch(async () =>
+            MainThread.BeginInvokeOnMainThread(async () =>
             {
                 bool answer = await ShowConfirmationAsync(title, message, accept, cancel);
                 callback(answer);

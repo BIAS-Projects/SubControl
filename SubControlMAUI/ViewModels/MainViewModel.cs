@@ -4,9 +4,11 @@ using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.Logging;
 using SubControlMAUI.Messages;
+using SubControlMAUI.Models;
 using SubControlMAUI.Pages;
 using SubControlMAUI.Services;
 using System.Text;
+using System.Text.Json;
 
 namespace SubControlMAUI.ViewModels;
 
@@ -19,6 +21,12 @@ public partial class MainViewModel : BaseViewModel
     ILogger<MainViewModel> _loggerService;
     private readonly IMessenger _messengerService;
     private readonly TcpSocketService _tcpService;
+
+    private TaskCompletionSource<bool>? _pendingCommand;
+    private string? _pendingCommandName;
+
+    private static string SerialFeature => nameof(FeatureOptionViewModel);
+    private static string CameraFeature => nameof(FeatureOptionViewModel) + "CAMERA";
 
 
     public MainViewModel(SQLiteService sqliteService,
@@ -38,37 +46,29 @@ public partial class MainViewModel : BaseViewModel
         _loggerService = loggerService;
 
 
-        _messengerService.Register<TcpDataReceivedMessage>(this, (r, msg) =>
+        _messengerService.Register<TcpDataReceivedMessage>(this, async (r, msg) =>
         {
+            // Serial feature responses (OPEN commands)
+            if (msg.Value.Function.Equals(SerialFeature))
+            {
+                if (msg.Value.Command == _pendingCommandName)
+                    await ResolvePendingCommandAsync(msg.Value.Data);
+                return;
+            }
 
-            _alertService.ShowAlertAsync("Information", $"TcpDataReceivedMessage: {msg}", "OK");
-
-            //MainThread.BeginInvokeOnMainThread(async () =>
-            //{
-
-            //   // string message = Encoding.UTF8.GetString(msg.Value);
-            //    if (!await HandleTcpReceivedMessage(msg.va))
-            //    {
-            //        StatusText = "Error processing Command: " + message;
-            //    }
-            //    else
-            //    {
-            //        StatusText = "Success processing Command: " + message;
-            //    }
-
-
-            //});
-
+            // Camera feature responses (CHECK FFMPEG, CHECK MTX VERSION)
+            if (msg.Value.Function.Equals(CameraFeature))
+            {
+                if (msg.Value.Command == _pendingCommandName)
+                    await ResolvePendingCommandAsync(msg.Value.Data);
+                return;
+            }
         });
 
         _messengerService.Register<TcpSendRequestMessage>(this, (r, msg) =>
         {
             _alertService.ShowAlertAsync("Information", $"TcpSendRequestMessage: {msg}", "OK");
 
-            //MainThread.BeginInvokeOnMainThread(() =>
-            //{
-            //    StatusText = Encoding.UTF8.GetString(msg.Value);
-            //});
 
         });
 
@@ -100,17 +100,17 @@ public partial class MainViewModel : BaseViewModel
 
         _messengerService.Register<TcpAckTimeoutMessage>(this, (r, msg) =>
         {
-            _alertService.ShowAlertAsync("Information", $"TcpAckTimeoutMessage: {msg}", "OK");
-            //MainThread.BeginInvokeOnMainThread(() =>
-            //    StatusText = $"No response to: {msg.Command}");
+            //   _alertService.ShowAlertAsync("Information", $"TcpAckTimeoutMessage: {msg}", "OK");
+            MainThread.BeginInvokeOnMainThread(() =>
+                StatusText = $"No response to: {msg.Command}");
         });
 
         _messengerService.Register<TcpNackMessage>(this, (r, msg) =>
         {
-            _alertService.ShowAlertAsync("Information", $"TcpNackMessage: {msg}", "OK");
+            //   _alertService.ShowAlertAsync("Information", $"TcpNackMessage: {msg}", "OK");
 
-            //MainThread.BeginInvokeOnMainThread(() =>
-            //    StatusText = $"Server rejected '{msg.Command}': {msg.Reason}");
+            MainThread.BeginInvokeOnMainThread(() =>
+                StatusText = $"Server rejected '{msg.Command}': {msg.Reason}");
         });
 
 
@@ -128,6 +128,52 @@ public partial class MainViewModel : BaseViewModel
 
 
     }
+
+
+    private async Task ResolvePendingCommandAsync(string? json)
+    {
+        if (_pendingCommand is null) return;
+
+        try
+        {
+            var response = JsonSerializer.Deserialize<CommandResponse>(json ?? "",
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            _pendingCommand.TrySetResult(response?.Ok == true);
+        }
+        catch
+        {
+            _pendingCommand.TrySetResult(false);
+        }
+    }
+
+    private async Task<bool> SendAndWaitAsync(
+        string feature, string command, string data, TimeSpan timeout)
+    {
+        _pendingCommandName = command;
+        _pendingCommand = new TaskCompletionSource<bool>();
+
+        var sent = await _tcpService.SendCommandAsync(
+            new TCPMessageBody<string>(feature, command, data), CancellationToken.None);
+
+        if (!sent)
+        {
+            _pendingCommand = null;
+            _pendingCommandName = null;
+            return false;
+        }
+
+        var completed = await Task.WhenAny(
+            _pendingCommand.Task,
+            Task.Delay(timeout));
+
+        var success = completed == _pendingCommand.Task && _pendingCommand.Task.Result;
+
+        _pendingCommand = null;
+        _pendingCommandName = null;
+        return success;
+    }
+
 
     public async Task<bool> HandleTcpReceivedMessage(string message)
     {
@@ -215,19 +261,88 @@ public partial class MainViewModel : BaseViewModel
     }
 
     [RelayCommand]
-    private void EnableSystem()
+    private async Task EnableSystem()
     {
-        if (IsNotConnected)
-            return;
-        IsSystemEnabled = true;
-        StatusText = "System Enabled";
+        if (IsNotConnected) return;
+
+        IsBusy = true;
+        var timeout = TimeSpan.FromSeconds(10);
+
+        try
+        {
+            // 1. CHECK FFMPEG
+            StatusText = "Checking FFmpeg...";
+            if (!await SendAndWaitAsync(CameraFeature, "CHECK FFMPEG", "", timeout))
+            {
+                StatusText = "Enable failed — FFmpeg not available";
+                return;
+            }
+
+            // 2. CHECK MTX VERSION
+            StatusText = "Checking MediaMTX...";
+            if (!await SendAndWaitAsync(CameraFeature, "CHECK MTX VERSION", "", timeout))
+            {
+                StatusText = "Enable failed — MediaMTX not available";
+                return;
+            }
+
+            // 3. OPEN TOM Input
+            StatusText = "Opening TOM Input...";
+            if (!await SendAndWaitAsync(SerialFeature, "OPEN", "TOM Input", timeout))
+            {
+                StatusText = "Enable failed — could not open TOM Input";
+                return;
+            }
+
+            // 4. OPEN TOM Output
+            StatusText = "Opening TOM Output...";
+            if (!await SendAndWaitAsync(SerialFeature, "OPEN", "TOM Output", timeout))
+            {
+                StatusText = "Enable failed — could not open TOM Output";
+                return;
+            }
+
+            // 5. OPEN ROTOR
+            StatusText = "Opening ROTOR...";
+            if (!await SendAndWaitAsync(SerialFeature, "OPEN", "ROTOR", timeout))
+            {
+                StatusText = "Enable failed — could not open ROTOR";
+                return;
+            }
+
+            //Send Tom On command TOMCommands.TurnOnAllSystemsCommand
+
+
+            IsSystemEnabled = true;
+            StatusText = "System Enabled";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     [RelayCommand]
-    private void DisableSystem()
+    private async Task DisableSystem()
     {
-        IsSystemEnabled = false;
-        StatusText = "System Disabled";
+        IsBusy = true;
+        try
+        {
+
+            //Send turn off TOM TOMCommands.TurnOffAllSystemsCommand
+            //CLose TOM input
+            //Close TOM output
+            //Close ROTOR
+
+
+            // CLOSE commands will go here when needed
+            IsSystemEnabled = false;
+            StatusText = "System Disabled";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     [RelayCommand]
@@ -242,6 +357,11 @@ public partial class MainViewModel : BaseViewModel
     [RelayCommand]
     private async Task Video()
     {
+        //OPEN FLIR
+
+        //Check the streams are present
+
+        
         await Shell.Current.GoToAsync(nameof(PeriscopePage));
     }
 

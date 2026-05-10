@@ -5,47 +5,74 @@
              xmlns:vm="clr-namespace:SubControlMAUI.ViewModels"
              xmlns:models="clr-namespace:SubControlMAUI.Models"
              x:DataType="vm:VideoConfigViewModel"
-    Title="{Binding Title}"
-                 Shell.NavBarIsVisible="True">
+             Title="{Binding Title}"
+             Shell.NavBarIsVisible="True">
     <Grid Padding="10"
-        RowDefinitions="Auto,*,Auto">
+          RowDefinitions="Auto,Auto,*,Auto">
 
+        <!-- Status -->
+        <Label Grid.Row="0"
+               Margin="0,15,0,15"
+               FontSize="16">
+            <Label.FormattedText>
+                <FormattedString>
+                    <Span Text="Status: " FontAttributes="Bold"/>
+                    <Span Text="{Binding StatusText}" />
+                </FormattedString>
+            </Label.FormattedText>
+        </Label>
 
-        <Button Grid.Row="0"
-              Text="Query System Devices"
-              Command="{Binding QueryDevicesCommand}"
-              Margin="0,0,0,10" />
+        <!-- Download button -->
+        <ImageButton Grid.Row="1"
+                     Source="{AppThemeBinding Light=light_download.png, Dark=dark_download.png}"
+                     WidthRequest="30"
+                     HeightRequest="30"
+                     BackgroundColor="Transparent"
+                     Command="{Binding QueryDevicesCommand}"
+                     Margin="0,0,0,10" />
 
-
-        <CollectionView Grid.Row="1"
-                      ItemsSource="{Binding VideoDevices}">
+        <!-- Camera list -->
+        <CollectionView Grid.Row="2"
+                        ItemsSource="{Binding Cameras}"
+                        IsEnabled="{Binding CameraDetailsDownloaded}">
             <CollectionView.ItemTemplate>
-                <DataTemplate x:DataType="models:VideoDevice">
-
-                    <Grid ColumnDefinitions="*,*"
-                        Padding="5">
-
-                        <!-- USB Device Name -->
-                        <Label Text="{Binding Name}"
-                             VerticalOptions="Center"
-                             FontAttributes="Bold" />
-
-                        <!-- Function Picker -->
+                <DataTemplate x:DataType="models:CameraDevice">
+                    <Grid ColumnDefinitions="*,*" Padding="5">
+                        <Label Text="{Binding DeviceId}"
+               VerticalOptions="Center"
+               FontAttributes="Bold"
+               LineBreakMode="TailTruncation" />
                         <Picker Grid.Column="1"
-      Title="Select Function"
-      ItemsSource="{Binding AvailableFunctions}"
-      SelectedItem="{Binding SelectedFunction, Mode=TwoWay}" />
-
+                Title="Select Stream"
+                ItemsSource="{Binding AvailableProfiles}"
+                SelectedItem="{Binding SelectedProfile, Mode=TwoWay}" />
                     </Grid>
-
                 </DataTemplate>
             </CollectionView.ItemTemplate>
         </CollectionView>
 
-        <Button Grid.Row="2"
-              Text="Save Mapping"
-              Command="{Binding SaveCommand}"
-              Margin="0,10,0,0" />
+        <!-- Save button -->
+        <ImageButton Grid.Row="3"
+                     Source="{AppThemeBinding Light=light_save.png, Dark=dark_save.png}"
+                     WidthRequest="30"
+                     HeightRequest="30"
+                     BackgroundColor="Transparent"
+                     Command="{Binding SaveCommand}"
+                     IsEnabled="{Binding CameraDetailsDownloaded}"
+                     Margin="0,10,0,0" />
+
+        <!-- Busy overlay -->
+        <Grid Grid.Row="0" Grid.RowSpan="4"
+              IsVisible="{Binding IsBusy}"
+              BackgroundColor="#80000000"
+              ZIndex="1">
+            <ActivityIndicator IsRunning="{Binding IsBusy}"
+                               IsVisible="{Binding IsBusy}"
+                               VerticalOptions="Center"
+                               HorizontalOptions="Center"
+                               WidthRequest="60"
+                               HeightRequest="60" />
+        </Grid>
 
     </Grid>
 </ContentPage>

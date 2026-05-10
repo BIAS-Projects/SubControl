@@ -9,6 +9,9 @@ public partial class UsbDevice : ObservableObject
     [ObservableProperty]
     private string _name;
 
+    [ObservableProperty]
+    private string _description = "";
+
     private string _selectedFunction = "Unselected";
     public string SelectedFunction
     {

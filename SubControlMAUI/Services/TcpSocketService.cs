@@ -23,20 +23,24 @@ namespace SubControlMAUI.Services
         private readonly StringBuilder _incomingBuffer = new();
         private readonly ILogger<TcpSocketService> _logger;
 
-        // 🔥 NEW: Outgoing channel (replaces SemaphoreSlim)
-        private readonly Channel<string> _outgoing =
-            Channel.CreateBounded<string>(new BoundedChannelOptions(100)
-            {
-                FullMode = BoundedChannelFullMode.Wait
-            });
+        //// 🔥 NEW: Outgoing channel (replaces SemaphoreSlim)
+        //private readonly Channel<string> _outgoing =
+        //    Channel.CreateBounded<string>(new BoundedChannelOptions(100)
+        //    {
+        //        FullMode = BoundedChannelFullMode.Wait
+        //    });
 
         // ACK tracking
         private readonly ConcurrentDictionary<string, TaskCompletionSource<bool>> _pendingAcks = new();
+
+        // Change from readonly field to a property recreated on connect
+        private Channel<string> _outgoing;
 
         public TcpSocketService(IMessenger messenger, ILogger<TcpSocketService> logger)
         {
             _logger = logger;
             _messenger = messenger;
+            _outgoing = CreateChannel(); // initial creation
 
             _messenger.Register<TcpSendRequestMessage>(this, async (_, msg) =>
             {
@@ -44,11 +48,21 @@ namespace SubControlMAUI.Services
             });
         }
 
+        private static Channel<string> CreateChannel() =>
+    Channel.CreateBounded<string>(new BoundedChannelOptions(100)
+    {
+        FullMode = BoundedChannelFullMode.Wait
+    });
+
         public async Task StartAsync(string host, int port)
         {
             try
             {
                 _cts = new CancellationTokenSource();
+
+                // Recreate the channel so the writer is fresh after any previous StopAsync
+                _outgoing = CreateChannel();
+
                 _socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
 
                 _messenger.Send(new TcpStatusMessage("Connecting..."));
@@ -58,8 +72,6 @@ namespace SubControlMAUI.Services
                 _messenger.Send(new TcpIsConnected(true));
 
                 _receiveTask = Task.Run(() => ReceiveLoop(_cts.Token));
-
-                // 🔥 NEW: start send loop
                 _sendTask = Task.Run(() => SendLoop(_cts.Token));
             }
             catch (Exception ex)
@@ -68,7 +80,6 @@ namespace SubControlMAUI.Services
                 _messenger.Send(new TcpIsConnected(false));
             }
         }
-
         // ── RECEIVE ──────────────────────────────────────────────────────────
 
         private async Task ReceiveLoop(CancellationToken token)
@@ -181,6 +192,13 @@ namespace SubControlMAUI.Services
             if (_socket?.Connected != true)
             {
                 _messenger.Send(new TcpStatusMessage("Send failed – not connected"));
+                return false;
+            }
+
+            // Guard against writing to a completed channel
+            if (!_outgoing.Writer.TryWrite(string.Empty) && _outgoing.Reader.Completion.IsCompleted)
+            {
+                _messenger.Send(new TcpStatusMessage("Send failed – channel not ready"));
                 return false;
             }
 

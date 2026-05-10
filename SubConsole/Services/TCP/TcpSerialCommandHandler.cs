@@ -72,28 +72,32 @@ public sealed class TcpSerialCommandHandler
             "Handling command {Command} for {Function}",
             message.Command,
             message.Function);
-
         try
         {
-              return message.Command switch
-              {
-                  "LIST DEVICES" => await HandleListDevicesAsync(token),
-                  "LIST REGISTERED" => await HandleListRegisteredAsync(token),
-                  "REGISTER" => await HandleRegisterAsync(message, token),
-                  "UNREGISTER" => await HandleUnregisterAsync(message, token),
-                  "OPEN" => await HandleOpenAsync(message, token),
-                  "CLOSE" => await HandleCloseAsync(message, token),
-                  "WRITE" => await HandleWriteAsync(message, token),
-                  "WRITE TEXT" => await HandleWriteTextAsync(message, token),
-                  //"WRITE FLIR" => await HandleWriteFLIRAsync(message, token),
-                  "DISCOVER" => await HandleDiscoverAsync(message, token),
-                  "LOGGING" => await HandleLoggingAsync(message, token),
-                  "ASSIGN PORT" => HandleAssignPort(message),
-               //   _ => ErrorResponse($"Unknown command: '{message.Command}'")
-                   _ => await UnknownCommand(message.Command)
-              };
+            string data = message.Command switch
+            {
+                "LIST DEVICES" => await HandleListDevicesAsync(token),
+                "LIST REGISTERED" => await HandleListRegisteredAsync(token),
+                "REGISTER" => await HandleRegisterAsync(message, token),
+                "UNREGISTER" => await HandleUnregisterAsync(message, token),
+                "OPEN" => await HandleOpenAsync(message, token),
+                "CLOSE" => await HandleCloseAsync(message, token),
+                "WRITE" => await HandleWriteAsync(message, token),
+                "WRITE TEXT" => await HandleWriteTextAsync(message, token),
+                //"WRITE FLIR"     => await HandleWriteFLIRAsync(message, token),
+                "DISCOVER" => await HandleDiscoverAsync(message, token),
+                "LOGGING" => await HandleLoggingAsync(message, token),
+                "ASSIGN PORT" => HandleAssignPort(message),
+                _ => await UnknownCommand(message.Command)
+            };
+
+            var response = new TCPMessageBody<string>(
+                Function: message.Function,
+                Command: message.Command,
+                Data: data);
+
+            return JsonSerializer.Serialize(response);
         }
-        
         catch (Exception ex)
         {
             _logger.LogError(
@@ -101,7 +105,13 @@ public sealed class TcpSerialCommandHandler
                 "Command {Command} failed for {Function}",
                 message.Command,
                 message.Function);
-            return ErrorResponse(ex.Message);
+
+            var errorResponse = new TCPMessageBody<string>(
+                Function: message.Function,
+                Command: message.Command,
+                Data: ErrorResponse(ex.Message));
+
+            return JsonSerializer.Serialize(errorResponse);
         }
     }
 

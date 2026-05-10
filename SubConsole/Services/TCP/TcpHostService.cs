@@ -82,7 +82,7 @@ public sealed class TcpHostService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
 
-        await BasicTest(stoppingToken);
+   //     await BasicTest(stoppingToken);
 
 
         _logger.LogInformation("TCP server starting on port {Port}", _port);
@@ -337,7 +337,9 @@ public sealed class TcpHostService : BackgroundService
                 // Route to the correct domain handler based on the Function field.
                 // Serial commands use a device function name or "TOM".
                 // Camera commands use the reserved function name "CAMERA".
-                var result = message.Function.Equals("CAMERA", StringComparison.OrdinalIgnoreCase)
+
+                //var result = message.Function.Equals("CAMERA", StringComparison.OrdinalIgnoreCase)
+                var result = message.Function.Contains("CAMERA")
                     ? await _cameraHandler.HandleAsync(message, token)
                     : await _serialHandler.HandleAsync(message, token);
 

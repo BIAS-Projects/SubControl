@@ -45,14 +45,13 @@ public sealed class TcpCameraCommandHandler
     // ── Entry point ───────────────────────────────────────────────────────────
 
     public async Task<string> HandleAsync(
-        TCPMessageBody<string> message, CancellationToken token)
+      TCPMessageBody<string> message, CancellationToken token)
     {
         _logger.LogDebug(
             "Handling camera command {Command}", message.Command);
-
         try
         {
-            return message.Command switch
+            string data = message.Command switch
             {
                 "LIST CAMERAS" => await HandleListCamerasAsync(token),
                 "LIST REGISTERED" => await HandleListRegisteredAsync(token),
@@ -66,15 +65,27 @@ public sealed class TcpCameraCommandHandler
                 "CHECK FFMPEG" => await HandleCheckFfmpegAsync(token),
                 "CHECK MTX VERSION" => await HandleCheckMtxVersionAsync(token),
                 "CHECK MTX STREAMS" => await HandleCheckMtxStreamsAsync(token),
-            //    _ => ErrorResponse($"Unknown camera command: '{message.Command}'")
-                  _ => await UnknownCommand(message.Command)
+                _ => await UnknownCommand(message.Command)
             };
+
+            var response = new TCPMessageBody<string>(
+                Function: message.Function,
+                Command: message.Command,
+                Data: data);
+
+            return JsonSerializer.Serialize(response);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex,
                 "Camera command {Command} threw unexpectedly", message.Command);
-            return ErrorResponse(ex.Message);
+
+            var errorResponse = new TCPMessageBody<string>(
+                Function: message.Function,
+                Command: message.Command,
+                Data: ErrorResponse(ex.Message));
+
+            return JsonSerializer.Serialize(errorResponse);
         }
     }
 

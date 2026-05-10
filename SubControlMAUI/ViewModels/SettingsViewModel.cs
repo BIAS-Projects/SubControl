@@ -27,6 +27,9 @@ namespace SubControlMAUI.ViewModels
 
         public bool IsNotConnected => !IsConnected;
 
+        [ObservableProperty]
+        string statusText = "";
+
         public SettingsViewModel(SQLiteService sQLiteService, IAlertService alertService, TcpSocketService tCPService, IMessenger messenger,
         ILogger<SettingsViewModel> logger) 
         {
@@ -88,16 +91,19 @@ namespace SubControlMAUI.ViewModels
                 int result = await _sqliteService.SaveConfigAsync(true);
                 if (result != 1)
                 {
-                    await _alertService.ShowAlertAsync("Error", $"Error Loading Settings - Settings Not Saved", "OK");
+                    StatusText = $"Error Loading Settings - Settings Not Saved";
+                 //   await _alertService.ShowAlertAsync("Error", $"Error Loading Settings - Settings Not Saved", "OK");
                 }
                 else
                 {
-                    await _alertService.ShowAlertAsync("Success", $"Settings Saved", "OK");
+                    StatusText = $"Settings Saved";
+                  //  await _alertService.ShowAlertAsync("Success", $"Settings Saved", "OK");
 
                 }
             }
             catch (Exception ex)
             {
+                StatusText = $"Error Loading Settings - {ex.Message}";
                 await _alertService.ShowAlertAsync("Error", $"Error Loading Settings - {ex.Message}", "OK");
                 return;
             }
@@ -127,31 +133,34 @@ namespace SubControlMAUI.ViewModels
             //    await _alertService.ShowAlertAsync("Info", $"Listener Started", "OK");
         }
 
-        [RelayCommand]
-        async Task ListenerStop()
-        {
-            // _tCPService.StopListener();
+        //[RelayCommand]
+        //async Task ListenerStop()
+        //{
+        //    // _tCPService.StopListener();
 
-          //  _tCPService.StopAsync();
+        //  //  _tCPService.StopAsync();
 
-            await _alertService.ShowAlertAsync("Info", $"Listener Stopped", "OK");
-        }
+        //    await _alertService.ShowAlertAsync("Info", $"Listener Stopped", "OK");
+        //}
 
         private async Task<bool> ValidateSettings()
         {
             if (string.IsNullOrWhiteSpace(InputIPAddress))
             {
-                await _alertService.ShowAlertAsync("Error", $"IP Address Is Empty", "OK");
+                StatusText = $"IP Address Is Empty";
+               // await _alertService.ShowAlertAsync("Error", $"IP Address Is Empty", "OK");
                 return false;
             }
             if (string.IsNullOrWhiteSpace(Port))
             {
-                await _alertService.ShowAlertAsync("Error", $"Port Is Empty", "OK");
+                StatusText = $"Port Is Empty";
+               // await _alertService.ShowAlertAsync("Error", $"Port Is Empty", "OK");
                 return false;
             }
             if (string.IsNullOrWhiteSpace(UpCommand))
             {
-                await _alertService.ShowAlertAsync("Error", $"Up Command Is Empty", "OK");
+           
+               // await _alertService.ShowAlertAsync("Error", $"Up Command Is Empty", "OK");
                 return false;
             }
             if (string.IsNullOrWhiteSpace(DownCommand))
@@ -172,17 +181,20 @@ namespace SubControlMAUI.ViewModels
 
             if (!IPAddress.TryParse(InputIPAddress, out IPAddress ip))
             {
-                await _alertService.ShowAlertAsync("Error", $"IP Address Is Invalid", "OK");
+                StatusText = $"IP Address Is Invalid";
+               // await _alertService.ShowAlertAsync("Error", $"IP Address Is Invalid", "OK");
                 return false;
             }
             int _port;
             if (!int.TryParse(_sqliteService.config.Port, out _port))
             {
-                await _alertService.ShowAlertAsync("Error", $"Saved Port Is Invalid", "OK");
+                StatusText = $"Port Number Is Invalid";
+            //    await _alertService.ShowAlertAsync("Error", $"Saved Port Is Invalid", "OK");
                 return false;
             }
             if (_port < 0 || _port > 65535)
             {
+                StatusText = $"Port Number Is Out Of Range";
                 await _alertService.ShowAlertAsync("Error", $"Saved Port Is Out Of Range", "OK");
                 return false;
             }

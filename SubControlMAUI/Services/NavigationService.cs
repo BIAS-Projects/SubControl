@@ -29,5 +29,14 @@ namespace SubControlMAUI.Services
                     await Shell.Current.GoToAsync("..");
             });
         }
+
+        public async Task GoToRootAsync()
+        {
+            await MainThread.InvokeOnMainThreadAsync(async () =>
+            {
+                if (Shell.Current is not null)
+                    await Shell.Current.GoToAsync("//MainPage");
+            });
+        }
     }
 }

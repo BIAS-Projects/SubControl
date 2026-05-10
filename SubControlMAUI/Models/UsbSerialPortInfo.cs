@@ -1,15 +1,39 @@
-﻿using System.Text.Json;
+﻿
+using System.Text.Json.Serialization;
 
-namespace SubConsole.Models;
 
 public record UsbSerialPortInfo
 {
-    public string PortName { get; init; } = "";
-    public string VendorId { get; init; } = "";
-    public string ProductId { get; init; } = "";
-    public string SerialNumber { get; init; } = "";
-    public string Description { get; init; } = "";
-    public string DeviceId { get; init; } = "";
+    [JsonPropertyName("key")]
+    public string Key { get; init; } = "";
 
-    public override string ToString() => JsonSerializer.Serialize(this);
+    [JsonPropertyName("vendorId")]
+    public string VendorId { get; init; } = "";
+
+    [JsonPropertyName("productId")]
+    public string ProductId { get; init; } = "";
+
+    [JsonPropertyName("serialNumber")]
+    public string SerialNumber { get; init; } = "";
+
+    [JsonPropertyName("manufacturer")]
+    public string Manufacturer { get; init; } = "";
+
+    [JsonPropertyName("description")]
+    public string Description { get; init; } = "";
+
+    [JsonPropertyName("portPath")]
+    public string PortPath { get; init; } = "";
+}
+
+public record ListDevicesResponse
+{
+    [JsonPropertyName("ok")]
+    public bool Ok { get; init; }
+
+    [JsonPropertyName("data")]
+    public List<UsbSerialPortInfo> Data { get; init; } = new();
+
+    [JsonPropertyName("error")]
+    public string? Error { get; init; }
 }

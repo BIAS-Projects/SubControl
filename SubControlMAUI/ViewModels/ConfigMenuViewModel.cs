@@ -38,7 +38,7 @@ public partial class ConfigMenuViewModel : BaseViewModel
     }
 
     [ObservableProperty]
-    public bool isConnected;  
+    public bool isConnected = true;  
 
     [ObservableProperty]
     public double buttonSize;
