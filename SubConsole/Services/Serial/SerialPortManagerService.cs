@@ -222,8 +222,14 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
 
             if (result.IsSuccess)
             {
+                _logger.LogDebug("Subscribing worker for {Function} - worker count now {Count}",
+                function, _workers.Count);
+
+
                 // Subscribe immediately — no polling gap
                 SubscribeWorkerToBroadcast(function, worker, _appToken);
+
+                _logger.LogDebug("Subscribed worker for {Function}", function);
 
                 _logger.LogInformation(
                     "Completed open port {Function} on {Port} as {Type}: {Success}",
@@ -287,6 +293,9 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
             {
                 await foreach (var msg in worker.ReceivedMessages.ReadAllAsync(token))
                 {
+                    _logger.LogDebug("Fan-in writing to broadcast: {Function} {Text}",
+                    msg.FunctionName, msg.Text);
+
                     await _broadcastChannel.Writer.WriteAsync(msg, token);
                 }
             }
@@ -544,11 +553,17 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
         { SingleWriter = true, SingleReader = false });
 
         // Subscribe this filtered channel to the broadcast
+
         _ = Task.Run(async () =>
         {
             await foreach (var msg in _broadcastChannel.Reader.ReadAllAsync())
             {
-                if (filter.Contains(msg.FunctionName))
+
+                _logger.LogDebug("GetMessageReader received: {Function} {Text}",
+                msg.FunctionName, msg.Text);
+
+                // Empty set = subscribe to ALL (wildcard), non-empty = filter
+                if (filter.Count == 0 || filter.Contains(msg.FunctionName))
                     await filtered.Writer.WriteAsync(msg);
             }
             filtered.Writer.TryComplete();

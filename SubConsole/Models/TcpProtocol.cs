@@ -9,7 +9,8 @@ namespace SubConsole.Models
         public const string EOM = "<|EOM|>";
         public const string ACK = "<|ACK|>";
         public const string NACK = "<|NACK|>";
-        public const string SEP = "|";          // separates ID from body in a frame
+        public const string PUSH = "PUSH";          // ← add this
+        public const string SEP = "|";
         public const string SuccessString = "OK";
         public const string CommandSeparatorChar = ",";
         public const int AckTimeoutMs = 5000;

@@ -246,8 +246,14 @@ public sealed class TcpHostService : BackgroundService
 
         foreach (var client in _clients.Values)
         {
+
+
+
             if (!client.PushChannel.Writer.TryWrite(frame))
             {
+
+                _logger.LogDebug("TryWrite to client {ClientId}: {Result}", client.Id);
+
                 _logger.LogWarning(
                     "Push channel full for client {ClientId} — notification dropped (Function={FunctionName})",
                     client.Id,

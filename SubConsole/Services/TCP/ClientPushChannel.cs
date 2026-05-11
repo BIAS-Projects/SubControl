@@ -60,7 +60,6 @@ public sealed class PushFrame
     {
         var body = Text
             ?? (Payload is not null ? Convert.ToBase64String(Payload) : string.Empty);
-
-        return $"PUSH|{FunctionName}|{body}{eom}";
+        return $"{TcpProtocol.PUSH}{TcpProtocol.SEP}{FunctionName}{TcpProtocol.SEP}{body}{eom}";
     }
 }

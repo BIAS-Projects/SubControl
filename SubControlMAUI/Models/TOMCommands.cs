@@ -21,7 +21,11 @@ namespace SubConsole.Models
 
         public static string TurnOnAllSystemsCommand { get; set; } = $"$PBLUTP,S,PWR,CTRL,ON,15*29";
 
+        public static string TurnOnAllSystemsResponse { get; set; } = $"$PBLUTP,R,PWR,CTRL,ON,15*29";
+
         public static string TurnOffAllSystemsCommand { get; set; } = $"$PBLUTP,S,PWR,CTRL,OFF,15*67";
+
+        public static string TurnOffAllSystemsResponse { get; set; } = $"$PBLUTP,R,PWR,CTRL,OFF,15*67";
 
         public static string GetStatusCommand { get; set; } = $"$PBLUTP,Q,SYS,INFO*25";
 

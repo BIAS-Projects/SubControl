@@ -420,27 +420,25 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
 
         var reg = _registry.GetByDeviceId(deviceId);
         if (reg is null)
-        {
-            _logger.LogWarning(
-                "AddStream failed for {DeviceId}: not registered", deviceId);
             return OperationResult.Failure($"Camera {deviceId} is not registered");
-        }
 
         if (_activePaths.ContainsKey(deviceId))
-        {
-            _logger.LogWarning(
-                "AddStream skipped for {DeviceId}: already active", deviceId);
             return OperationResult.Failure(
                 $"Stream '{reg.StreamPathName}' is already active in MediaMTX");
-        }
 
-        // Build the RunOnDemand command from the stored FFmpeg options and
-        // inject it into the path config before pushing to MTX.
         var command = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
             ? MediaMtxPathConfig.BuildDshowFfmpegCommand(reg.FfmpegOptions, reg.StreamPathName)
             : MediaMtxPathConfig.BuildV4l2FfmpegCommand(reg.FfmpegOptions, reg.StreamPathName);
 
-        var configWithCommand = reg.MtxConfig with { RunOnDemand = command };
+        // Inject the same FFmpeg command into both RunOnInit and RunOnDemand.
+        // RunOnInit starts the stream immediately when the path is registered.
+        // RunOnDemand acts as the restart hook if the init process dies and
+        // a reader subsequently connects.
+        var configWithCommand = reg.MtxConfig with
+        {
+            RunOnInit = command,
+            RunOnDemand = command
+        };
 
         var result = await _mtx.AddPathAsync(reg.StreamPathName, configWithCommand, token);
         if (!result.IsSuccess)
@@ -453,10 +451,9 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
 
         _activePaths[deviceId] = true;
 
-        // Persist the new MTX registration state
-        await _registry.UpdateAsync(deviceId, null,
-            reg.MtxConfig with { RunOnDemand = command });
-
+        // Persist with the resolved commands so UpdateFfmpegOptionsAsync can
+        // patch MTX with a rebuilt command without needing to rebuild from scratch
+        await _registry.UpdateAsync(deviceId, null, configWithCommand);
         reg.IsRegisteredWithMtx = true;
 
         _logger.LogInformation(
@@ -470,7 +467,7 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
 
 
 
-public async Task<OperationResultWithValue<string>> CheckFfmpegAsync(
+    public async Task<OperationResultWithValue<string>> CheckFfmpegAsync(
     CancellationToken token = default)
 {
     try
@@ -674,27 +671,62 @@ public async Task<OperationResultWithValue<string>> GetMediaMtxVersionAsync(
 
     // ── Config management ─────────────────────────────────────────────────────
 
-    public async Task<OperationResult> UpdateFfmpegOptionsAsync(
-        string deviceId, FfmpegCameraOptions ffmpegOptions, CancellationToken token = default)
-    {
-        _logger.LogInformation(
-            "Updating FFmpeg options for camera {DeviceId}", deviceId);
+    //public async Task<OperationResult> UpdateFfmpegOptionsAsync(
+    //    string deviceId, FfmpegCameraOptions ffmpegOptions, CancellationToken token = default)
+    //{
+    //    _logger.LogInformation(
+    //        "Updating FFmpeg options for camera {DeviceId}", deviceId);
 
+    //    var reg = _registry.GetByDeviceId(deviceId);
+    //    if (reg is null)
+    //        return OperationResult.Failure($"Camera {deviceId} is not registered");
+
+    //    var dbResult = await _registry.UpdateAsync(deviceId, ffmpegOptions, null);
+    //    if (!dbResult.IsSuccess)
+    //    {
+    //        _logger.LogError(
+    //            "Failed to persist FFmpeg options for {DeviceId}: {Message}",
+    //            deviceId, dbResult.Message);
+    //        return dbResult;
+    //    }
+
+    //    // If the stream is live, patch MTX with the rebuilt command so the
+    //    // next runOnDemand invocation uses the updated parameters.
+    //    if (_activePaths.ContainsKey(deviceId))
+    //    {
+    //        var newCommand = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+    //            ? MediaMtxPathConfig.BuildDshowFfmpegCommand(ffmpegOptions, reg.StreamPathName)
+    //            : MediaMtxPathConfig.BuildV4l2FfmpegCommand(ffmpegOptions, reg.StreamPathName);
+
+    //        var patch = await _mtx.PatchPathAsync(
+    //            reg.StreamPathName,
+    //            reg.MtxConfig with { RunOnDemand = newCommand },
+    //            token);
+
+    //        if (!patch.IsSuccess)
+    //        {
+    //            _logger.LogWarning(
+    //                "MTX patch after FFmpeg update failed for '{StreamPath}': {Message}",
+    //                reg.StreamPathName, patch.Message);
+    //            return patch;
+    //        }
+    //    }
+
+    //    _logger.LogInformation(
+    //        "Completed updating FFmpeg options for camera {DeviceId}", deviceId);
+    //    return OperationResult.Success();
+    //}
+
+    public async Task<OperationResult> UpdateFfmpegOptionsAsync(
+    string deviceId, FfmpegCameraOptions ffmpegOptions, CancellationToken token = default)
+    {
         var reg = _registry.GetByDeviceId(deviceId);
         if (reg is null)
             return OperationResult.Failure($"Camera {deviceId} is not registered");
 
         var dbResult = await _registry.UpdateAsync(deviceId, ffmpegOptions, null);
-        if (!dbResult.IsSuccess)
-        {
-            _logger.LogError(
-                "Failed to persist FFmpeg options for {DeviceId}: {Message}",
-                deviceId, dbResult.Message);
-            return dbResult;
-        }
+        if (!dbResult.IsSuccess) return dbResult;
 
-        // If the stream is live, patch MTX with the rebuilt command so the
-        // next runOnDemand invocation uses the updated parameters.
         if (_activePaths.ContainsKey(deviceId))
         {
             var newCommand = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
@@ -703,20 +735,12 @@ public async Task<OperationResultWithValue<string>> GetMediaMtxVersionAsync(
 
             var patch = await _mtx.PatchPathAsync(
                 reg.StreamPathName,
-                reg.MtxConfig with { RunOnDemand = newCommand },
+                reg.MtxConfig with { RunOnInit = newCommand, RunOnDemand = newCommand },
                 token);
 
-            if (!patch.IsSuccess)
-            {
-                _logger.LogWarning(
-                    "MTX patch after FFmpeg update failed for '{StreamPath}': {Message}",
-                    reg.StreamPathName, patch.Message);
-                return patch;
-            }
+            if (!patch.IsSuccess) return patch;
         }
 
-        _logger.LogInformation(
-            "Completed updating FFmpeg options for camera {DeviceId}", deviceId);
         return OperationResult.Success();
     }
 

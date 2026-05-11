@@ -67,13 +67,23 @@ public sealed class SerialPortWorker : ISerialWorker
     {
         try
         {
+            StopBits _stopBits = StopBits.One;
+
+
+
             _functionName = _registry.GetFunctionName(PortPath) ?? PortPath; // ← add this
+
+            if (_functionName.Contains("TOM"))
+            {
+                _stopBits = StopBits.Two;
+            }
 
             _port = new SerialPort(PortPath, BaudRate) {
                 WriteTimeout = 2_000,
                 ReadTimeout = 2_000,
                 Encoding = Encoding.UTF8,
-                Handshake = Handshake.None
+                Handshake = Handshake.None,
+                StopBits = _stopBits
             };
             _port.Open();
             _logger.LogInformation(
@@ -273,6 +283,11 @@ public sealed class SerialPortWorker : ISerialWorker
                 Payload      = Encoding.UTF8.GetBytes(line),
                 Text         = line
             };
+
+            _logger.LogDebug("Writing to _received channel: {Line}", line);
+            await _received.Writer.WriteAsync(message, token);
+
+
             _logger.LogDebug(
                 "Received line for {Function} on {Port}: {Line}",
                 _functionName,

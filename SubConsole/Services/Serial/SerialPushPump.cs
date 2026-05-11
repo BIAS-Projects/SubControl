@@ -79,6 +79,11 @@ public sealed class SerialPushPump : BackgroundService
         {
             await foreach (var message in reader.ReadAllAsync(stoppingToken))
             {
+
+
+                _logger.LogDebug("PushPump received: {Function} {Text}",
+    message.FunctionName, message.Text);
+
                 _logger.LogDebug(
                     "Received serial message from {FunctionName}",
                     message.FunctionName);

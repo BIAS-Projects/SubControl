@@ -391,9 +391,16 @@ public partial class VideoConfigViewModel : BaseViewModel
         },
         MtxConfig = new MediaMtxPathConfig
         {
+            // Start immediately when the path is created
+            RunOnInit              = null,   // built server-side from FfmpegOptions
+            RunOnInitRestart       = true,   // restart FFmpeg if it crashes
+
+            // Also keep on-demand as a fallback if init stream dies
             RunOnDemandRestart      = true,
             RunOnDemandStartTimeout = "10s",
-            RunOnDemandCloseAfter   = "10s"
+            RunOnDemandCloseAfter   = "0s",  // never close — keep streaming
+
+            OverridePublisher = true         // allow on-demand to replace init if needed
         }
     },
     new CameraProfile
@@ -413,9 +420,12 @@ public partial class VideoConfigViewModel : BaseViewModel
         },
         MtxConfig = new MediaMtxPathConfig
         {
+            RunOnInit               = null,  // built server-side
+            RunOnInitRestart        = true,
             RunOnDemandRestart      = true,
             RunOnDemandStartTimeout = "10s",
-            RunOnDemandCloseAfter   = "10s"
+            RunOnDemandCloseAfter   = "0s",
+            OverridePublisher       = true
         }
     }
 };

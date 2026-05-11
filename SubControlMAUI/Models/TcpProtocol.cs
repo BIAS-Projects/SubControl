@@ -6,14 +6,13 @@ namespace SubControlMAUI.Models
 {
     public static class TcpProtocol
     {
-
-            public const string EOM = "<|EOM|>";
-            public const string ACK = "<|ACK|>";
-            public const string NACK = "<|NACK|>";
-            public const string SEP = "|";          // separates ID from body in a frame
-            public const string SuccessString = "OK";
-            public const string CommandSeparatorChar = ",";
-            public const int AckTimeoutMs = 5000;
-        
+        public const string EOM = "<|EOM|>";
+        public const string ACK = "<|ACK|>";
+        public const string NACK = "<|NACK|>";
+        public const string PUSH = "PUSH";        
+        public const string SEP = "|";
+        public const string SuccessString = "OK";
+        public const string CommandSeparatorChar = ",";
+        public const int AckTimeoutMs = 5000;
     }
 }

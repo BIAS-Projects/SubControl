@@ -143,40 +143,47 @@ namespace SubControlMAUI.Services
             if (frame.StartsWith(TcpProtocol.ACK + TcpProtocol.SEP))
             {
                 var id = frame[(TcpProtocol.ACK.Length + 1)..];
-
                 if (_pendingAcks.TryRemove(id, out var tcs))
                     tcs.TrySetResult(true);
-
                 return;
             }
 
             if (frame.StartsWith(TcpProtocol.NACK + TcpProtocol.SEP))
             {
                 var parts = frame.Split(TcpProtocol.SEP);
-
-                var id = parts.Length > 3 ? parts[3] : "";
-                var reason = parts.Length > 4 ? parts[4] : "NACK";
-
+                var id = parts.Length > 1 ? parts[1] : "";
+                var reason = parts.Length > 2 ? parts[2] : "NACK";
                 _messenger.Send(new TcpNackMessage(id, string.Empty, reason));
-
                 if (_pendingAcks.TryRemove(id, out var tcs))
                     tcs.TrySetException(new InvalidOperationException($"Server NACK: {reason}"));
-
                 return;
             }
 
+            // PUSH|{functionName}|{text}  — unsolicited device data
+            if (frame.StartsWith(TcpProtocol.PUSH + TcpProtocol.SEP))
+            {
+                var parts = frame.Split(TcpProtocol.SEP, 3);   // max 3 parts
+                var functionName = parts.Length > 1 ? parts[1] : "";
+                var text = parts.Length > 2 ? parts[2] : "";
+
+                var pushBody = new TCPMessageBody<string>(functionName, "PUSH", text);
+                _messenger.Send(new TcpDataReceivedMessage(pushBody));
+                return;
+            }
+
+            // {id}|{json}  — command response
             var sepIdx = frame.IndexOf(TcpProtocol.SEP, StringComparison.Ordinal);
             var body = sepIdx >= 0 ? frame[(sepIdx + 1)..] : frame;
             try
             {
-                TCPMessageBody<string> messageBody = JsonSerializer.Deserialize<TCPMessageBody<string>>(body);
+                var messageBody = JsonSerializer.Deserialize<TCPMessageBody<string>>(body);
                 _messenger.Send(new TcpDataReceivedMessage(messageBody));
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
+                _logger.LogError(ex, "Failed to deserialize frame body: {Body}", body);
                 _messenger.Send(new TcpErrorMessage(ex));
             }
-
         }
 
         // ── SEND WITH ACK ────────────────────────────────────────────────────
