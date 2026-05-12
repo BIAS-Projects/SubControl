@@ -22,13 +22,11 @@ public partial class MainViewModel : BaseViewModel
     ILogger<MainViewModel> _loggerService;
     private readonly IMessenger _messengerService;
     private readonly TcpSocketService _tcpService;
+    public ApplicationStateService AppState { get; }
 
     private TaskCompletionSource<bool>? _pendingCommand;
     private string? _pendingCommandName;
 
-    //private TaskCompletionSource<bool>? _pendingPushConfirm;
-    //private string? _pendingPushConfirmValue;
-    //private string? _pendingPushConfirmFunction;
 
     private TaskCompletionSource<bool>? _pendingPushConfirm;
     private string? _pendingPushConfirmFunction;
@@ -45,7 +43,8 @@ public partial class MainViewModel : BaseViewModel
         IMessenger messengerService,
         TcpSocketService tcpService,
         ILogger<MainViewModel> loggerService,
-        INavigationService navigationService)
+        INavigationService navigationService,
+        ApplicationStateService applicationStateService)
     {
         Title = "Main Menu";
         StatusText = "Disconnected";
@@ -55,6 +54,7 @@ public partial class MainViewModel : BaseViewModel
         _navigationService = navigationService;
         _messengerService = messengerService;
         _loggerService = loggerService;
+        AppState = applicationStateService;
 
 
         _messengerService.Register<TcpDataReceivedMessage>(this, async (r, msg) =>
@@ -158,17 +158,25 @@ public partial class MainViewModel : BaseViewModel
         _messengerService.Register<TcpIsConnected>(this, (r, msg) =>
         {
             //    _alertService.ShowAlertAsync("Information", $"TcpIsConnected: {msg.Value}", "OK");
-            MainThread.BeginInvokeOnMainThread(() =>
-            {
-                IsConnected = msg.Value;
-            });
+            //MainThread.BeginInvokeOnMainThread(() =>
+            //{
+            //    IsConnected = msg.Value;
+            //});
 
         });
 
-
-
-
+        AppState.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(AppState.IsConnected))
+            {
+                OnPropertyChanged(nameof(CanEnableSystem));
+                OnPropertyChanged(nameof(CanDisableSystem));
+            }
+        };
     }
+
+
+
 
 
     private async Task ResolvePendingCommandAsync(string? json)
@@ -254,20 +262,23 @@ public partial class MainViewModel : BaseViewModel
         return true;
     }
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsNotConnected))]
-    bool isConnected = false;
 
-    public bool IsNotConnected => !IsConnected;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsNotSystemEnabled))]
+    [NotifyPropertyChangedFor(nameof(CanEnableSystem))]
+    [NotifyPropertyChangedFor(nameof(CanDisableSystem))]
     public bool isSystemEnabled = false;
 
     public bool IsNotSystemEnabled => !IsSystemEnabled;
 
+    public bool CanEnableSystem => AppState.IsConnected && !IsSystemEnabled;
 
-    [ObservableProperty]
+    public bool CanDisableSystem => AppState.IsConnected && IsSystemEnabled;
+
+
+
+[ObservableProperty]
     private double buttonSize;
 
     [ObservableProperty]
@@ -336,7 +347,7 @@ public partial class MainViewModel : BaseViewModel
     [RelayCommand]
     private async Task EnableSystem()
     {
-        if (IsNotConnected) return;
+        if (AppState.IsNotConnected) return;
 
         IsBusy = true;
 
@@ -380,6 +391,15 @@ public partial class MainViewModel : BaseViewModel
             if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "ROTOR", timeout))
             {
                 StatusText = "Enable failed — could not close ROTOR";
+                //    return;
+            }
+
+
+            // CLOSE FLIR
+            StatusText = "Attempt to close FLIR...";
+            if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "TOM FLIR", timeout))
+            {
+                StatusText = "Enable failed — could not close FLIR";
                 //    return;
             }
 
@@ -436,7 +456,7 @@ public partial class MainViewModel : BaseViewModel
     [RelayCommand]
     private async Task DisableSystem()
     {
-        if (IsNotConnected) return;
+        if (AppState.IsNotConnected) return;
 
         IsBusy = true;
 
@@ -466,7 +486,7 @@ public partial class MainViewModel : BaseViewModel
             }
 
             // CLOSE TOM Output
-            StatusText = "Attempt to close Opening TOM Output...";
+            StatusText = "Attempt to close TOM Output...";
             if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "TOM Output", timeout))
             {
                 StatusText = "Enable failed — could not close TOM Output";
@@ -474,10 +494,18 @@ public partial class MainViewModel : BaseViewModel
             }
 
             // CLOSE ROTOR
-            StatusText = "Attempt to close Opening ROTOR...";
+            StatusText = "Attempt to close ROTOR...";
             if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "ROTOR", timeout))
             {
                 StatusText = "Enable failed — could not close ROTOR";
+                //    return;
+            }
+
+            // CLOSE FLIR
+            StatusText = "Attempt to close FLIR...";
+            if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "TOM FLIR", timeout))
+            {
+                StatusText = "Enable failed — could not close FLIR";
                 //    return;
             }
 
@@ -506,7 +534,7 @@ public partial class MainViewModel : BaseViewModel
     [RelayCommand]
     private async Task Video()
     {
-        if (IsNotConnected) return;
+        if (AppState.IsNotConnected) return;
 
         IsBusy = true;
         try

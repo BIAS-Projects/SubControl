@@ -47,7 +47,7 @@
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
                         Command="{Binding FeaturesCommand}"
-                        IsEnabled="{Binding IsConnected}" />
+                        IsEnabled="{Binding _AppState.IsConnected}" />
 
 
                     <Label Text="USB Features"
@@ -64,7 +64,7 @@
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
                         Command="{Binding VideoCommand}"
-                        IsEnabled="{Binding IsConnected}" />
+                        IsEnabled="{Binding _AppState.IsConnected}" />
 
 
                     <Label Text="USB Video"

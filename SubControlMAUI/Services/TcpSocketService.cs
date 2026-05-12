@@ -22,6 +22,7 @@ namespace SubControlMAUI.Services
 
         private readonly StringBuilder _incomingBuffer = new();
         private readonly ILogger<TcpSocketService> _logger;
+        private ApplicationStateService _applicationStateService;
 
         //// 🔥 NEW: Outgoing channel (replaces SemaphoreSlim)
         //private readonly Channel<string> _outgoing =
@@ -36,10 +37,11 @@ namespace SubControlMAUI.Services
         // Change from readonly field to a property recreated on connect
         private Channel<string> _outgoing;
 
-        public TcpSocketService(IMessenger messenger, ILogger<TcpSocketService> logger)
+        public TcpSocketService(IMessenger messenger, ILogger<TcpSocketService> logger, ApplicationStateService applicationStateService)
         {
             _logger = logger;
             _messenger = messenger;
+            _applicationStateService = applicationStateService;
             _outgoing = CreateChannel(); // initial creation
 
             _messenger.Register<TcpSendRequestMessage>(this, async (_, msg) =>
@@ -71,6 +73,9 @@ namespace SubControlMAUI.Services
                 _messenger.Send(new TcpStatusMessage("Connected"));
                 _messenger.Send(new TcpIsConnected(true));
 
+                _applicationStateService.IsConnected = true;
+                _applicationStateService.ConnectionStatus = "Connected";
+
                 _receiveTask = Task.Run(() => ReceiveLoop(_cts.Token));
                 _sendTask = Task.Run(() => SendLoop(_cts.Token));
             }
@@ -78,6 +83,8 @@ namespace SubControlMAUI.Services
             {
                 _messenger.Send(new TcpErrorMessage(ex));
                 _messenger.Send(new TcpIsConnected(false));
+                _applicationStateService.IsConnected = false;
+                _applicationStateService.ConnectionStatus = "Disconnected";
             }
         }
         // ── RECEIVE ──────────────────────────────────────────────────────────
@@ -112,6 +119,8 @@ namespace SubControlMAUI.Services
                 foreach (var tcs in _pendingAcks.Values)
                     tcs.TrySetCanceled();
 
+                _applicationStateService.IsConnected = false;
+                _applicationStateService.ConnectionStatus = "Disconnected";
                 _messenger.Send(new TcpIsConnected(false));
             }
         }
@@ -309,6 +318,8 @@ namespace SubControlMAUI.Services
                 if (_sendTask != null) await _sendTask;
 
                 _messenger.Send(new TcpStatusMessage("Disconnected"));
+                _applicationStateService.IsConnected = false;
+                _applicationStateService.ConnectionStatus = "Disconnected";
                 _messenger.Send(new TcpIsConnected(false));
             }
             catch { }

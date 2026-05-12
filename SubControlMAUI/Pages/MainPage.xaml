@@ -32,7 +32,7 @@
                     BackgroundColor="Transparent"
                     Grid.Column="0"
                     Command="{Binding ConnectCommand}"
-                    IsEnabled="{Binding IsNotConnected}" />
+                    IsEnabled="{Binding AppState.IsNotConnected}" />
 
                     <!-- DISCONNECT -->
                     <ImageButton
@@ -42,7 +42,7 @@
                     BackgroundColor="Transparent"
                     Grid.Column="1"
                     Command="{Binding DisconnectCommand}"
-                    IsEnabled="{Binding IsConnected}" />
+                    IsEnabled="{Binding AppState.IsConnected}" />
 
                 </Grid>
 
@@ -60,7 +60,7 @@
                     HeightRequest="30"
                     BackgroundColor="Transparent"
                     Grid.Column="0"
-                    IsEnabled="{Binding IsNotSystemEnabled}"
+                    IsEnabled="{Binding CanEnableSystem}"
                     Command="{Binding EnableSystemCommand}" />
 
                     <!-- DISABLE SYSTEM -->
@@ -70,7 +70,7 @@
                     HeightRequest="30"
                     BackgroundColor="Transparent"
                     Grid.Column="1"
-                    IsEnabled="{Binding IsSystemEnabled}"
+                    IsEnabled="{Binding CanDisableSystem}"
                     Command="{Binding DisableSystemCommand}" />
 
                 </Grid>

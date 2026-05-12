@@ -14,10 +14,12 @@ public partial class ConfigMenuViewModel : BaseViewModel
     ILogger<ConfigMenuViewModel> _logger;
     INavigationService _navigation;
     IMessenger _messengerService;
+    public ApplicationStateService AppState { get; }
 
     public ConfigMenuViewModel(IMessenger messengerService,
         ILogger<ConfigMenuViewModel> logger,
-        INavigationService navigation)
+        INavigationService navigation,
+        ApplicationStateService applicationStateService)
     {
         _messengerService = messengerService;
         _logger = logger;
@@ -28,17 +30,16 @@ public partial class ConfigMenuViewModel : BaseViewModel
         _messengerService.Register<TcpIsConnected>(this, (r, msg) =>
         {
             //    _alertService.ShowAlertAsync("Information", $"TcpIsConnected: {msg.Value}", "OK");
-            MainThread.BeginInvokeOnMainThread(() =>
-            {
-                IsConnected = msg.Value;
-            });
+            //MainThread.BeginInvokeOnMainThread(() =>
+            //{
+            //    IsConnected = msg.Value;
+            //});
 
         });
-
+        AppState = applicationStateService;
     }
 
-    [ObservableProperty]
-    public bool isConnected = true;  
+
 
     [ObservableProperty]
     public double buttonSize;

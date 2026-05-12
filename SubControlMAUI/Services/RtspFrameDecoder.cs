@@ -199,13 +199,19 @@ public sealed unsafe class RtspFrameDecoder : IRtspFrameDecoder
             int ret = ffmpeg.avformat_open_input(&fmtCtx, url, null, &opts);
             ffmpeg.av_dict_free(&opts);
 
-            if (ret < 0) { RaiseError($"Cannot open stream '{url}': {AvError(ret)}"); return; }
+            if (ret < 0) {
+                RaiseError($"Cannot open stream '{url}': {AvError(ret)}");
+                return; }
 
             // ------------------------------------------------------------------
             // 2. Stream info
             // ------------------------------------------------------------------
             ret = ffmpeg.avformat_find_stream_info(fmtCtx, null);
-            if (ret < 0) { RaiseError($"Cannot find stream info: {AvError(ret)}"); return; }
+            if (ret < 0) 
+            { 
+                RaiseError($"Cannot find stream info: {AvError(ret)}");
+                return; 
+            }
 
             // ------------------------------------------------------------------
             // 3. Find video stream
@@ -403,7 +409,7 @@ public sealed unsafe class RtspFrameDecoder : IRtspFrameDecoder
             if (frameBuffer != IntPtr.Zero) Marshal.FreeHGlobal(frameBuffer);
 
             _running = false;
-            RaiseStatus("Disconnected");
+            RaiseStatus("Stopped");
         }
     }
 

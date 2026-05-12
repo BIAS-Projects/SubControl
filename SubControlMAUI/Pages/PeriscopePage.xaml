@@ -9,7 +9,8 @@
     Title="{Binding Title}"
         Shell.NavBarIsVisible="True">
 
-    <Grid RowDefinitions="Auto,Auto,*">
+    <Grid RowDefinitions="Auto,Auto,*"
+      IsEnabled="{Binding IsNotBusy}">
 
         <!-- ========================================================= -->
         <!-- STATUS BAR -->
@@ -27,7 +28,7 @@
 
                 <Label Grid.Column="1"
                        Margin="10,0,0,0"
-                       Text="{Binding Status}"
+                       Text="{Binding StatusText}"
                        VerticalOptions="Center"
                        LineBreakMode="TailTruncation" />
 
@@ -51,54 +52,54 @@
                         WidthRequest="{Binding ButtonSize}"
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
-                        Command="{Binding ConnectCommand}"
-                        IsEnabled="{Binding IsNotConnected}" />
+                        Command="{Binding DisplayStandardVideoCommand}"
+                        IsEnabled="{Binding _AppState.IsConnected}" />
 
                 <ImageButton 
                         Source="{AppThemeBinding Light=light_flir.png, Dark=dark_flir.png}"
                         WidthRequest="{Binding ButtonSize}"
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
-                        Command="{Binding DisconnectCommand}"
-                        IsEnabled="{Binding IsConnected}" />
+                        Command="{Binding DisplayFLIRVideoCommand}"
+                        IsEnabled="{Binding _AppState.IsConnected}" />
 
                 <ImageButton 
                         Source="{AppThemeBinding Light=light_dual.png, Dark=dark_dual.png}"
                         WidthRequest="{Binding ButtonSize}"
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
-                        Command="{Binding StartTOMCommand}"
-                        IsEnabled="{Binding IsConnected}" />
+                        Command="{Binding DisplayDualVideoCommand}"
+                        IsEnabled="{Binding _AppState.IsConnected}" />
 
                 <ImageButton
                         Source="{AppThemeBinding Light=light_video_off.png, Dark=dark_video_off.png}"
                         WidthRequest="{Binding ButtonSize}"
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
-                        Command="{Binding StopTOMCommand}"
-                        IsEnabled="{Binding IsConnected}" />
+                        Command="{Binding StopVideoCommand}"
+                        IsEnabled="{Binding IsStreaming}" />
 
                 <ImageButton 
                         Source="{AppThemeBinding Light=light_lens.png, Dark=dark_lens.png}"
                         WidthRequest="{Binding ButtonSize}"
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
-                        Clicked="OnSnapClicked"
-                        IsEnabled="{Binding IsConnected}"/>
+                        Command="{Binding TakeSnapShotCommand}"
+                        IsEnabled="{Binding IsStreaming}"/>
 
                 <ImageButton Source="whitehot.png"
                         WidthRequest="{Binding ButtonSize}"
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
-                        Command="{Binding FLIRWhitehotCommand}"
-                        IsEnabled="{Binding IsConnected}" />
+                        Command="{Binding SetFlirWhitehotCommand}"
+                        IsEnabled="{Binding _AppState.IsConnected}" />
 
                 <ImageButton Source="rainbow.png"
                         WidthRequest="{Binding ButtonSize}"
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
-                        Command="{Binding FLIRRainbowCommand}"
-                        IsEnabled="{Binding IsConnected}" />
+                        Command="{Binding SetFlirRainbowCommand}"
+                        IsEnabled="{Binding _AppState.IsConnected}" />
 
             </HorizontalStackLayout>
 
@@ -111,12 +112,12 @@
         <Grid Grid.Row="2">
 
             <skia:SKCanvasView x:Name="CanvasView"
-                               PaintSurface="OnPaintSurface"
-                               BackgroundColor="Black"
+                   PaintSurface="OnPaintSurface"
+            BackgroundColor="Black"
                                HorizontalOptions="Fill"
                                VerticalOptions="Fill" />
 
-            <!-- Overlay spinner -->
+            <!-- Overlay spinner --><!--
             <ActivityIndicator x:Name="Spinner"
                                IsRunning="{Binding IsBusy}"
                                IsVisible="{Binding IsBusy}"
@@ -124,7 +125,20 @@
                                VerticalOptions="Center"
                                WidthRequest="60"
                                HeightRequest="60"
-                               Color="White" />
+                               Color="White" />-->
+
+            <!-- BUSY OVERLAY (on top) -->
+            <Grid IsVisible="{Binding IsBusy}"
+              BackgroundColor="#80000000"
+              ZIndex="1">
+
+                <ActivityIndicator IsRunning="{Binding IsBusy}"
+                               IsVisible="{Binding IsBusy}"
+                               VerticalOptions="Center"
+                               HorizontalOptions="Center"
+                               WidthRequest="60"
+                               HeightRequest="60" />
+            </Grid>
 
             <!-- FPS Overlay -->
             <Border HorizontalOptions="End"
@@ -135,9 +149,9 @@
                     StrokeThickness="0">
 
                 <Label x:Name="FpsLabel"
-                       Text="-- fps"
-                       TextColor="White"
-                       FontSize="12" />
+                    Text="{Binding Fps, StringFormat='FPS: {0:F1}'}"
+                    TextColor="White"
+                    FontSize="12" />
 
             </Border>
 

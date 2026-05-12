@@ -84,6 +84,8 @@ namespace SubControlMAUI
 
             builder.Services.AddSingleton<INavigationService, NavigationService>();
 
+            builder.Services.AddSingleton<ApplicationStateService>();
+
             return builder.Build();
         }
 

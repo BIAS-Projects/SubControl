@@ -1,454 +1,576 @@
-﻿
+﻿namespace SubControlMAUI.ViewModels;
+
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.Logging;
+using SkiaSharp;
 using SubConsole.Models;
 using SubControlMAUI.Messages;
 using SubControlMAUI.Models;
 using SubControlMAUI.Services;
-using System;
-using System.Collections.Generic;
-using System.Net;
-using System.Text;
+using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Xml.Serialization;
 
-
-namespace SubControlMAUI.ViewModels
+public partial class PeriscopeViewModel : BaseViewModel, IDisposable
 {
-    public partial class PeriscopeViewModel : BaseViewModel
+    private readonly SQLiteService _sqliteService;
+    private readonly IAlertService _alertService;
+    private readonly ILogger<PeriscopeViewModel> _logger;
+    private readonly IMessenger _messengerService;
+    private readonly TcpSocketService _tcpService;
+    private readonly IRtspFrameDecoder _decoder;
+    public ApplicationStateService AppState { get; }
+
+
+    // ---------------------------------------------------------------------
+    // Frame storage
+    // ---------------------------------------------------------------------
+
+    private volatile VideoFrame? _currentFrame;
+    private volatile bool _disposed;
+
+    public VideoFrame? CurrentFrame => _currentFrame;
+
+    // Notify view that a repaint is required
+    public event Action? FrameInvalidated;
+
+    // ---------------------------------------------------------------------
+    // FPS
+    // ---------------------------------------------------------------------
+
+    private int _frameCount;
+    private DateTime _fpsTimer = DateTime.UtcNow;
+
+    [ObservableProperty]
+    private double fps;
+
+    // ---------------------------------------------------------------------
+    // UI state
+    // ---------------------------------------------------------------------
+
+    private static string SerialFeature => nameof(PeriscopeViewModel);
+    private static string CameraFeature => nameof(PeriscopeViewModel) + "CAMERA";
+
+    private TimeSpan timeout = TimeSpan.FromSeconds(10);
+
+
+    [ObservableProperty]
+    private string statusText = "Stopped";
+
+
+    [ObservableProperty]
+    private string rtspVideoUrl = "";
+
+    [ObservableProperty]
+    private string rtspFLIRUrl = "";
+
+    public string MTXRTSPPort { get; set; } = "8554";
+
+    public string VideoEndPoint { get; set; } = "/usbcamera";
+
+    public string FlirEndpoint { get; set; } = "/flir";
+
+    [ObservableProperty]
+    private bool isStreaming;
+
+    private TaskCompletionSource<bool>? _pendingCommand;
+    private string? _pendingCommandName;
+
+
+    private TaskCompletionSource<bool>? _pendingPushConfirm;
+    private string? _pendingPushConfirmFunction;
+    private Func<string, bool>? _pendingPushConfirmPredicate;
+
+    // ---------------------------------------------------------------------
+    // Constructor
+    // ---------------------------------------------------------------------
+
+    public PeriscopeViewModel(
+        SQLiteService sqliteService,
+        IAlertService alertService,
+        IMessenger messengerService,
+        TcpSocketService tcpService,
+        ILogger<PeriscopeViewModel> logger,
+        IRtspFrameDecoder decoder,
+        ApplicationStateService applicationStateService)
     {
+        Title = "Periscope";
 
-    
-        SQLiteService _sqliteService;
-        IAlertService _alertService;
-        ILogger<PeriscopeViewModel> _logger;
+        _sqliteService = sqliteService;
+        _alertService = alertService;
+        _messengerService = messengerService;
+        _tcpService = tcpService;
+        _logger = logger;
+        _decoder = decoder;
+        AppState = applicationStateService;
 
-        private readonly IMessenger _messenger;
-        private readonly TcpSocketService _tcp;
-
-
-
-        [ObservableProperty]
-        private double buttonSize;
-
-        [ObservableProperty]
-        private double layoutSpacing;
-
-        [ObservableProperty]
-        [NotifyPropertyChangedFor(nameof(IsNotConnected))]
-        bool isConnected = false;
-
-        static string _currentUnit = "mA";
-        public bool IsNotConnected => !IsConnected;
-
-        [ObservableProperty]
-        private bool cutterRunning;
-        [ObservableProperty]
-        private List<UsbSerialPortInfo> usbSerialPortInfoList = new List<UsbSerialPortInfo>();
+        StatusText = "";
 
 
-        public bool CanStart => IsConnected && !CutterRunning;
-
-        public bool CanStop => IsConnected && CutterRunning;
-
-        partial void OnIsConnectedChanged(bool value)
+        _messengerService.Register<TcpDataReceivedMessage>(this, async (r, msg) =>
         {
-            OnPropertyChanged(nameof(CanStart));
-            OnPropertyChanged(nameof(CanStop));
-        }
-
-        partial void OnCutterRunningChanged(bool value)
-        {
-            OnPropertyChanged(nameof(CanStart));
-            OnPropertyChanged(nameof(CanStop));
-        }
-
-        //private double _sliderValue;
-        //public double SliderValue
-        //{
-        //    get => _sliderValue;
-        //    set
-        //    {
-        //        if (_sliderValue == value)
-        //            return;
-
-        //        _sliderValue = value;
-        //        OnPropertyChanged();
-
-        //        OnSliderValueChanged(value);
-        //    }
-        //}
-
-        [ObservableProperty]
-        private string status = "Disconnected";
-
-        //[ObservableProperty]
-        //private int cutterSpeed = 50;
-
-        //[ObservableProperty]
-        //private string cutterCurrent = $"0 {_currentUnit}";
-
-        public PeriscopeViewModel(SQLiteService sqliteService, IAlertService alertService, IMessenger messenger, TcpSocketService tcp, ILogger<PeriscopeViewModel> logger)
-        {
-            Title = "Periscope";
-            _sqliteService = sqliteService;
-            _alertService = alertService;
-            _logger = logger;
-
-            _messenger = messenger;
-            _tcp = tcp;
-
-            Status = "Disconnected";
-
-
-
-
-
-
-            _messenger.Register<TcpDataReceivedMessage>(this, (r, msg) =>
+            //Commands
+            if (msg.Value.Function.Equals("TOM FLIR"))
             {
-                MainThread.BeginInvokeOnMainThread(async () =>
-                {
-                    //string message = Encoding.UTF8.GetString(msg.Value);
-                    //if (!await HandleTcpReceivedMessage(message))
-                    //{
-                    //    Status = "Error processing Command: " + message;
-                    //}
-                    //else
-                    //{
-                    //    Status = "Success processing Command: " + message;
-                    //}
-
-
-                });
-
-            });
-
-            _messenger.Register<TcpSendRequestMessage>(this, (r, msg) =>
-            {
-                MainThread.BeginInvokeOnMainThread(() =>
-                {
-              //      Status = Encoding.UTF8.GetString(msg.Value);
-                });
-
-            });
-
-            _messenger.Register<TcpStatusMessage>(this, (r, msg) =>
-            {
-                MainThread.BeginInvokeOnMainThread(() =>
-                {
-                    Status = msg.Value;
-                });
-
-            });
-
-            _messenger.Register<TcpErrorMessage>(this, (r, msg) =>
-            {
-                _logger?.LogError($"TcpErrorMessage : {msg}", msg);
-                MainThread.BeginInvokeOnMainThread(() =>
-                {
-                    Status = msg.Value.Message;
-
-                });
-
-            });
-
-
-
-            _messenger.Register<TcpAckTimeoutMessage>(this, (r, msg) =>
-            {
-
-                MainThread.BeginInvokeOnMainThread(() =>
-                    Status = $"No response to: {msg.Command}");
-            });
-
-            _messenger.Register<TcpNackMessage>(this, (r, msg) =>
-            {
-                MainThread.BeginInvokeOnMainThread(() =>
-                    Status = $"Server rejected '{msg.Command}': {msg.Reason}");
-            });
-
-
-            _messenger.Register<TcpIsConnected>(this, (r, msg) =>
-            {
-
-                MainThread.BeginInvokeOnMainThread(() =>
-                {
-                    IsConnected = msg.Value;
-                    if (!IsConnected)
-                    {
-                        CutterRunning = false;
-                    }
-                });
-
-            });
-
-
-        }
-
-
-        [RelayCommand]
-        async Task StartTOM()
-        {
-            Send("START TOM ALL");
-        }
-
-        [RelayCommand]
-        async Task StopTOM()
-        {
-            Send("STOP TOM ALL");
-        }
-
-        [RelayCommand]
-        async Task FLIRWhitehot()
-        {
-            Send("FLIR WHITEHOT");
-        }
-
-        [RelayCommand]
-        async Task FLIRRainbow()
-        {
-            Send("FLIR RAINBOW");
-        }
-
-        [RelayCommand]
-        async Task GetAllUSBPorts()
-        {
-            Send("GET USB PORTS");
-        }
-
-        [RelayCommand]
-        async Task GetVideoPorts()
-        {
-            Send("GET VIDEO PORTS");
-        }
-
-        [RelayCommand]
-        async Task RotorForward()
-        {
-            Send("ROTOR FORWARD");
-        }
-        [RelayCommand]
-        async Task RotorBackward()
-        {
-            Send("ROTOR BACKWARD");
-        }
-        [RelayCommand]
-        async Task RotorStop()
-        {
-            Send("ROTOR STOP");
-        }
-        [RelayCommand]
-        async Task Right()
-        {
-            Send(_sqliteService.config.CutterRightCommand);
-        }
-
-        public async Task ButtonLoaded()
-        {
-            if (_sqliteService.ConfigLoadedError)
-            {
-                await _alertService.ShowAlertAsync("Error", $"Failed To Load Configuration File, Failed To Load Default Settings, {_sqliteService.LastError}", "OK");
+                if (msg.Value.Command == _pendingCommandName)
+                    await ResolvePendingCommandAsync(msg.Value.Data);
                 return;
             }
 
-            if (_sqliteService.DefaultsLoaded)
-            {
-                await _alertService.ShowAlertAsync("Warning", $"Failed To Load Configuration File, Restoring Default Settings", "OK");
-                _sqliteService.DefaultsLoaded = false;
-            }
-        }
+        });
 
-        public async Task GetConfig()
+        _messengerService.Register<TcpSendRequestMessage>(this, (r, msg) =>
         {
-            if (!await _sqliteService.GetConfigAsync())
+            MainThread.BeginInvokeOnMainThread(() =>
             {
-                if (await _sqliteService.SetDefaultConfig())
-                {
-                    _sqliteService.DefaultsLoaded = true;
+                //      Status = Encoding.UTF8.GetString(msg.Value);
+            });
 
-                }
+        });
 
-            }
+        _messengerService.Register<TcpStatusMessage>(this, (r, msg) =>
+        {
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                StatusText = msg.Value;
+            });
+
+        });
+
+        _messengerService.Register<TcpErrorMessage>(this, (r, msg) =>
+        {
+            _logger?.LogError($"TcpErrorMessage : {msg}", msg);
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                StatusText = msg.Value.Message;
+
+            });
+
+        });
 
 
-        }
 
-
-        [RelayCommand]
-        public async Task Connect()
+        _messengerService.Register<TcpAckTimeoutMessage>(this, (r, msg) =>
         {
 
+            MainThread.BeginInvokeOnMainThread(() =>
+                StatusText = $"No response to: {msg.Command}");
+        });
 
-            IsBusy = true;
-            try
-            {
-
-                //if (!IPAddress.TryParse(_sqliteService.config.IPAddress, out IPAddress ip))
-                //{
-                //    await _alertService.ShowAlertAsync("Error", $"Saved IP Address Is Invalid", "OK");
-                //    return;
-                //}
-                //int _port;
-                //if (!int.TryParse(_sqliteService.config.Port, out _port))
-                //{
-                //    await _alertService.ShowAlertAsync("Error", $"Saved Port Is Invalid", "OK");
-                //    return;
-                //}
-                //if (_port < 0 || _port > 65535)
-                //{
-                //    await _alertService.ShowAlertAsync("Error", $"Saved Port Is Out Of Range", "OK");
-                //    return;
-                //}
-                //await _tcp.StartAsync("127.0.0.1", 9000);
-                await _tcp.StartAsync(_sqliteService.config.IPAddress, Int32.Parse(_sqliteService.config.Port));
-                IsBusy = false;
-            }
-            catch (Exception ex)
-            {
-                await _alertService.ShowAlertAsync("Error", $"{ex.Message}", "OK");
-            }
-
-
-
-        }
-
-        [RelayCommand]
-        public async Task Disconnect()
+        _messengerService.Register<TcpNackMessage>(this, (r, msg) =>
         {
-            IsBusy = true;
-            if (CutterRunning)
-            {
-                await _alertService.ShowAlertAsync("Warning", $"Turn Cutter Off Before Disconnecting", "OK");
-                IsBusy = false;
-                return;
-            }
+            MainThread.BeginInvokeOnMainThread(() =>
+                StatusText = $"Server rejected '{msg.Command}': {msg.Reason}");
+        });
 
-            await _tcp.StopAsync();
-            IsBusy = false;
-        }
 
-        public void Send(string text)
+        _messengerService.Register<TcpIsConnected>(this, (r, msg) =>
         {
-            IsBusy = true;
-            var bytes = System.Text.Encoding.UTF8.GetBytes(text);
-           // _messenger.Send(new TcpSendRequestMessage(bytes));
-            IsBusy = false;
-        }
 
+            //MainThread.BeginInvokeOnMainThread(() =>
+            //{
+            //    AppState.IsConnected = msg.Value;
+            //});
 
-
-        //[RelayCommand]
-        //public async Task CutterOn()
-        //{
-        //    IsBusy = true;
-        //    CutterRunning = true;
-        //    Status = "Cutter Started";
-
-        //    _messenger.Send(new TcpSendRequestMessage(Encoding.UTF8.GetBytes("START")));
-        //    string speed = Math.Round(SliderValue).ToString();
-        //    _messenger.Send(new TcpSendRequestMessage(Encoding.UTF8.GetBytes($"SPEED {speed}")));
-        //    IsBusy = false;
-        //}
-
-
-        //[RelayCommand]
-        //public async Task CutterOff()
-        //{
-        //    IsBusy = true;
-        //    CutterRunning = false;
-        //    Status = "Connected";
-        //    _messenger.Send(new TcpSendRequestMessage(Encoding.UTF8.GetBytes("STOP")));
-        //    IsBusy = false;
-        //}
-
-
-
-
-
-
-        private void OnSliderValueChanged(double value)
-        {
-            if (!IsConnected)
-                return;
-            //change the speed to a whole interger value
-            string speed = Math.Round(value).ToString();
-
-      //      _messenger.Send(new TcpSendRequestMessage(Encoding.UTF8.GetBytes($"SPEED {speed}")));
-
-        }
-
-
-        public async Task<bool> HandleTcpReceivedMessage(string message)
-        {
-            if (string.IsNullOrEmpty(message))
-            { return false; }
-            var command = message.Split(TcpProtocol.CommandSeparatorChar);
-            if (command.Length <= 1)
-            { return false; }
-            switch (command[0])
-            {
-                case "GET USBCOMMPORTS":
-                    try
-                    {
-                        UsbSerialPortInfoList.Clear();
-                        int index = message.IndexOf(',');
-
-                        if (index == -1)
-                        {
-                            return false;
-                        }
-                        string result = message.Substring(++index);
-
-                        var ports = JsonSerializer.Deserialize<List<UsbSerialPortInfo>>(result);
-                        return true;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger?.LogError($"Command : {command} Message: {message} ", command, message);
-                        return false;
-
-                    }
-
-
-                case "GET FEATURES":
-                    // TODO: return feature flags
-                    return true;
-
-                case "START TOM ALL":
-                    return true;
-
-                case "STOP TOM ALL":
-                    // TODO: implement TOM shutdown sequence
-                    return true;
-
-                default: return false;
-            }
-        }
-
-        private static IEnumerable<string> ParseTemplates(string source)
-        {
-            if (source is null)
-            {
-                throw new ArgumentNullException(nameof(source)); //Or an empty enumerable.
-            }
-            var result = new List<string>();
-            int currentIdx = 0;
-            while ((currentIdx = source.IndexOf('{', currentIdx)) > -1)
-            {
-                int closingIdx = source.IndexOf('}', currentIdx);
-                if (closingIdx < 0)
-                {
-                    throw new InvalidOperationException($"Parsing failed, no closing brace for the opening brace found at: {currentIdx}");
-                }
-                result.Add(source.Substring(currentIdx, closingIdx - currentIdx + 1));
-                currentIdx = closingIdx;
-            }
-            return result;
-        }
-
+        });
 
 
     }
+
+
+
+    [ObservableProperty]
+    private double buttonSize;
+
+    [ObservableProperty]
+    private double layoutSpacing;
+
+
+    public async Task InitializeAsync()
+    {
+        try
+        {
+            IsBusy = true;
+
+            var success = await _sqliteService.GetConfigAsync();
+
+            if (!success)
+            {
+                StatusText = "Failed to load config";
+                return;
+            }
+
+            string ipAddress = _sqliteService.config.IPAddress;
+            rtspVideoUrl = "rtsp://localhost:8554/usbcamera";
+            //= ipAddress + ":" + MTXRTSPPort + VideoEndPoint;
+            rtspFLIRUrl = "rtsp://localhost:8554/flir";
+                //ipAddress + ":" + MTXRTSPPort + FlirEndpoint;
+
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+
+
+
+    // ---------------------------------------------------------------------
+    // Lifecycle
+    // ---------------------------------------------------------------------
+
+    public void Start()
+    {
+        _disposed = false;
+
+        _decoder.FrameReady += OnFrameReady;
+        _decoder.StatusChanged += Decoder_StatusChanged;
+        _decoder.ErrorOccurred += OnErrorOccurred;
+    }
+
+    public void Stop()
+    {
+        _disposed = true;
+
+        _decoder.FrameReady -= OnFrameReady;
+        _decoder.StatusChanged -= Decoder_StatusChanged;
+        _decoder.ErrorOccurred -= OnErrorOccurred;
+
+        var old = Interlocked.Exchange(ref _currentFrame, null);
+        old?.Release();
+    }
+
+    public void Dispose()
+    {
+        Stop();
+    }
+
+    // ---------------------------------------------------------------------
+    // Decoder callbacks
+    // ---------------------------------------------------------------------
+
+    private void OnFrameReady(VideoFrame newFrame)
+    {
+        if (_disposed)
+        {
+            newFrame.Release();
+            return;
+        }
+
+        var old = Interlocked.Exchange(ref _currentFrame, newFrame);
+        old?.Release();
+
+        _frameCount++;
+
+        var elapsed = (DateTime.UtcNow - _fpsTimer).TotalSeconds;
+
+        if (elapsed >= 1.0)
+        {
+            var fps = _frameCount / elapsed;
+
+            _frameCount = 0;
+            _fpsTimer = DateTime.UtcNow;
+
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                Fps = fps;
+            });
+        }
+
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            FrameInvalidated?.Invoke();
+        });
+    }
+
+    private void Decoder_StatusChanged(string status)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            StatusText = status;
+
+            bool live = status.StartsWith("●");
+
+            IsStreaming = live;
+            IsBusy = status.StartsWith("Init") ||
+                     status.StartsWith("Connect");
+        });
+    }
+
+    private async void OnErrorOccurred(string error)
+    {
+        MainThread.BeginInvokeOnMainThread(async () =>
+        {
+            StatusText = $"Stream Error: {error}";
+            IsBusy = false;
+            IsStreaming = false;
+
+        });
+    }
+
+    // ---------------------------------------------------------------------
+    // Commands
+    // ---------------------------------------------------------------------
+
+  
+    [RelayCommand]
+    private async Task SetFlirWhitehot()
+    {
+
+
+
+        IsBusy = true;
+        try
+        {
+            StatusText = "Attempting to set FLIR to Whitehot...";
+            if (!await SendAndWaitAsync("TOM FLIR", "WRITE TEXT", FLIR.LUTtoWHITEHOT, timeout))
+            {
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                    StatusText = "Update failed — could not set colour palette";
+                    return;
+                });
+            }
+
+            StatusText = "FLIR set to Whitehot";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task SetFlirRainbow()
+    {
+        IsBusy = true;
+        try
+        {
+            StatusText = "Attempting to set FLIR to Rainbow...";
+            if (!await SendAndWaitAsync("TOM FLIR", "WRITE TEXT", FLIR.LUTtoRAINBOW, timeout))
+            {
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                    StatusText = "Update failed — could not set colour palette";
+                    return;
+                });
+
+
+            }
+            StatusText = "FLIR set to Rainbow";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+        [RelayCommand]
+    private void DisplayStandardVideo()
+    {
+        StartStream(rtspVideoUrl);
+    }
+
+    [RelayCommand]
+    private void DisplayFLIRVideo()
+    {
+        StartStream(rtspFLIRUrl);
+    }
+
+
+    [RelayCommand]
+    private void StopVideo()
+    {
+        _decoder.Stop();
+
+        var old = Interlocked.Exchange(ref _currentFrame, null);
+        old?.Release();
+
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            Fps = 0;
+        });
+
+        FrameInvalidated?.Invoke();
+    }
+
+    [RelayCommand]
+    private async Task TakeSnapShot()
+        {
+            StatusText = "Taking Snapshot...";
+            IsBusy = true;
+
+            try
+            {
+
+                var frame = _currentFrame;
+
+                if (frame is null)
+                    return;
+
+                try
+                {
+                    //var path = Path.Combine(
+                    //    FileSystem.AppDataDirectory,
+                    //    $"snap_{DateTime.Now:yyyyMMdd_HHmmss}.png");
+
+
+                    string path = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
+                        $"snap_{DateTime.Now:yyyyMMdd_HHmmss}.png");
+
+                    var info = new SKImageInfo(
+                        frame.Width,
+                        frame.Height,
+                        SKColorType.Bgra8888,
+                        SKAlphaType.Premul);
+
+                    var gcHandle = GCHandle.Alloc(frame.Data, GCHandleType.Pinned);
+
+                    try
+                    {
+                        using var bmp = new SKBitmap();
+
+                        bmp.InstallPixels(
+                            info,
+                            gcHandle.AddrOfPinnedObject(),
+                            frame.Stride);
+
+                        using var image = SKImage.FromBitmap(bmp);
+
+                        using var png = image.Encode(
+                            SKEncodedImageFormat.Png,
+                            95);
+
+                        await using var fs = File.OpenWrite(path);
+
+                        png.SaveTo(fs);
+                    }
+                    finally
+                    {
+                        gcHandle.Free();
+                    }
+
+                    StatusText = "Snapshot Saved";
+
+                }
+                catch (Exception ex)
+                {
+
+                    StatusText = "Snapshot Failed";
+
+                }
+            }
+            finally
+            {
+                IsBusy = false;
+            }
+        
+    }
+
+    // ---------------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------------
+
+    private void StartStream(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            StatusText = "Please enter a valid RTSP URL.";
+            return;
+        }
+
+        var old = Interlocked.Exchange(ref _currentFrame, null);
+        old?.Release();
+
+        StatusText = "Connecting...";
+        IsBusy = true;
+
+        _decoder.Start(url);
+    }
+
+    private async Task<bool> SendAndWaitAsync(
+     string feature, string command, string data, TimeSpan timeout)
+    {
+        _pendingCommandName = command;
+        var tcs = new TaskCompletionSource<bool>();
+        Interlocked.Exchange(ref _pendingCommand, tcs);  // atomic set
+
+        var sent = await _tcpService.SendCommandAsync(
+            new TCPMessageBody<string>(feature, command, data), CancellationToken.None);
+
+        if (!sent)
+        {
+            Interlocked.Exchange(ref _pendingCommand, null);  // atomic clear
+            _pendingCommandName = null;
+            return false;
+        }
+
+        var completed = await Task.WhenAny(tcs.Task, Task.Delay(timeout));
+
+        Interlocked.Exchange(ref _pendingCommand, null);  // atomic clear
+        _pendingCommandName = null;
+
+        return completed == tcs.Task && tcs.Task.Result;
+    }
+
+    private async Task<bool> SendAndWaitForPushAsync(
+        string sendFeature, string sendCommand, string sendData,
+        string confirmFunction, Func<string, bool> confirmPredicate,
+        TimeSpan timeout)
+    {
+        _pendingPushConfirmFunction = confirmFunction;
+        _pendingPushConfirmPredicate = confirmPredicate;
+        var confirmTcs = new TaskCompletionSource<bool>();
+        Interlocked.Exchange(ref _pendingPushConfirm, confirmTcs);
+
+        var sent = await _tcpService.SendCommandAsync(
+            new TCPMessageBody<string>(sendFeature, sendCommand, sendData),
+            CancellationToken.None);
+
+        if (!sent)
+        {
+            Interlocked.Exchange(ref _pendingPushConfirm, null);
+            _pendingPushConfirmFunction = null;
+            _pendingPushConfirmPredicate = null;
+            return false;
+        }
+
+        var completed = await Task.WhenAny(confirmTcs.Task, Task.Delay(timeout));
+
+        Interlocked.Exchange(ref _pendingPushConfirm, null);
+        _pendingPushConfirmFunction = null;
+        _pendingPushConfirmPredicate = null;
+
+        return completed == confirmTcs.Task && confirmTcs.Task.Result;
+    }
+
+    private async Task ResolvePendingCommandAsync(string? json)
+    {
+        // Capture atomically — local copy is thread-safe from this point on
+        var pending = Interlocked.CompareExchange(ref _pendingCommand, null, null);
+        if (pending is null) return;
+
+        try
+        {
+            var response = JsonSerializer.Deserialize<CommandResponse>(
+                json ?? "",
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            pending.TrySetResult(response?.Ok == true);
+        }
+        catch
+        {
+            pending.TrySetResult(false);
+        }
+    }
+
+
 }
