@@ -2,6 +2,7 @@
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.Logging;
+
 using SubConsole.Models;
 using SubControlMAUI.Messages;
 using SubControlMAUI.Models;
@@ -13,344 +14,308 @@ namespace SubControlMAUI.ViewModels;
 
 public partial class RotorViewModel : BaseViewModel
 {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Immutable holder for a single pending push-confirm operation.
+    // Swapping the whole object atomically via Interlocked.CompareExchange means
+    // there is no torn-state window where a new TCS is paired with an old predicate.
+    // ─────────────────────────────────────────────────────────────────────────
+    private sealed class PendingConfirm
+    {
+        public string Function { get; }
+        public Func<string, bool> Predicate { get; }
+        public TaskCompletionSource<bool> Tcs { get; }
 
-    private readonly ILogger<RotorViewModel> _loggerService;
-    private readonly IMessenger _messengerService;
-    private readonly TcpSocketService _tcpService;
+        public PendingConfirm(string function, Func<string, bool> predicate)
+        {
+            Function = function;
+            Predicate = predicate;
+            Tcs = new TaskCompletionSource<bool>(
+                            TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+    }
+    // ── services ──────────────────────────────────────────────────────────────
+    private readonly ILogger<RotorViewModel> _logger;
+    private readonly IMessenger _messenger;
+    private readonly TcpSocketService _tcp;
     private readonly IAlertService _alertService;
 
     public ApplicationStateService AppState { get; }
 
-    private TaskCompletionSource<bool>? _pendingCommand;
-    private string? _pendingCommandName;
-
-    // ── fields — all together at the top ─────────────────────────────────────
+    // ── command serialisation ─────────────────────────────────────────────────
+    // Only one command (or poll) may be in-flight at a time.
     private readonly SemaphoreSlim _commandLock = new(1, 1);
-    private TaskCompletionSource<bool>? _pendingPushConfirm;
-    private string? _pendingPushConfirmFunction;
-    private Func<string, bool>? _pendingPushConfirmPredicate;
-    private Guid _pendingPushConfirmId;
 
-    private TaskCompletionSource<string>? _pendingResponse;
-    private string? _pendingResponseFunction;
-    private Func<string, bool>? _pendingResponsePredicate;
-    private Guid _pendingResponseId;
+    // ── pending operation (atomic swap, no torn state) ────────────────────────
+    // Written only inside _commandLock; read from any thread via Interlocked.
+    private PendingConfirm? _pendingConfirm;
 
-
-
-    private TimeSpan timeout = TimeSpan.FromSeconds(10);
-
-
+    // ── polling ───────────────────────────────────────────────────────────────
     private CancellationTokenSource? _pollingCts;
-
-    private readonly TimeSpan _pollingInterval =
-        TimeSpan.FromSeconds(2);
-
+    private readonly TimeSpan _pollingInterval = TimeSpan.FromMilliseconds(500);
     private bool _isPageVisible;
 
+    // ── UI-update throttle ────────────────────────────────────────────────────
+    // Prevents the dispatcher queue from being flooded by high-frequency packets.
+    private long _lastStatusTick;
+    private const long StatusThrottleMs = 100;
+
+    // ── protocol timeouts ─────────────────────────────────────────────────────
+    // Poll timeout is short so the lock is released quickly between polls,
+    // keeping the command path responsive.
+    private readonly TimeSpan _commandTimeout = TimeSpan.FromSeconds(10);
+    private readonly TimeSpan _pollTimeout = TimeSpan.FromSeconds(1.5);
+    // How long a user command will wait for a poll to finish before giving up.
+    // Needs to be >= _pollingInterval + _pollTimeout to let one full poll cycle
+    // complete before a command is rejected.
+    private readonly TimeSpan _lockWaitTimeout = TimeSpan.FromSeconds(2);
+
+    // ─────────────────────────────────────────────────────────────────────────
     public RotorViewModel(
-        IMessenger messengerService,
-        ILogger<RotorViewModel> loggerService,
-        TcpSocketService tcpService,
-        ApplicationStateService applicationStateService,
-        IAlertService alertService
-        ) 
+        IMessenger messenger,
+        ILogger<RotorViewModel> logger,
+        TcpSocketService tcp,
+        ApplicationStateService appState,
+        IAlertService alertService)
     {
         Title = "Rotor Control";
-        _loggerService = loggerService;
-        _messengerService = messengerService;
-        AppState = applicationStateService;
-        _tcpService = tcpService;
+        _logger = logger;
+        _messenger = messenger;
+        AppState = appState;
+        _tcp = tcp;
         _alertService = alertService;
         ArmAngle = 73;
-
-
-       
         StatusText = "";
 
-        //    int counter = 0;
+        RegisterMessages();
+    }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Message registration
+    // ─────────────────────────────────────────────────────────────────────────
+    private void RegisterMessages()
+    {
+        // IMPORTANT: the handler is NOT async – it fires a background Task so
+        // exceptions are observable and handlers never overlap concurrently.
+        _messenger.Register<TcpDataReceivedMessage>(this, (_, msg) =>
+            _ = HandleTcpDataAsync(msg));
 
-        _messengerService.Register<TcpDataReceivedMessage>(this, async (r, msg) =>
+        _messenger.Register<TcpSendRequestMessage>(this, (_, _) => { /* intentionally empty */ });
+
+        _messenger.Register<TcpStatusMessage>(this, (_, msg) =>
+            SetStatus(msg.Value));
+
+        _messenger.Register<TcpErrorMessage>(this, (_, msg) =>
         {
-            if (!msg.Value.Function.Equals("ROTOR", StringComparison.OrdinalIgnoreCase))
-                return;
+            _logger.LogError("TcpErrorMessage: {Message}", msg.Value.Message);
+            SetStatus(msg.Value.Message);
+        });
 
-            var data = msg.Value.Data?.Trim();
+        _messenger.Register<TcpAckTimeoutMessage>(this, (_, msg) =>
+            SetStatus($"No response to: {msg.Command}"));
 
-            StatusText = data ?? "";
+        _messenger.Register<TcpNackMessage>(this, (_, msg) =>
+            SetStatus($"Server rejected '{msg.Command}': {msg.Reason}"));
 
+        _messenger.Register<TcpIsConnected>(this, (_, msg) =>
+        {
+            if (!msg.Value)
+                MainThread.BeginInvokeOnMainThread(async () =>
+                    await Shell.Current.GoToAsync("//MainPage"));
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Core TCP data handler – runs on a ThreadPool thread, not the UI thread.
+    // All shared state mutations go through _pendingConfirm (atomic swap).
+    // ─────────────────────────────────────────────────────────────────────────
+    private Task HandleTcpDataAsync(TcpDataReceivedMessage msg)
+    {
+        try
+        {
+            var function = msg.Value.Function;
+            var raw = msg.Value.Data;
+
+            if (!function.Equals("ROTOR", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogTrace("ROTOR handler: ignored function='{Function}'", function);
+                return Task.CompletedTask;
+            }
+
+            var data = raw?.Trim();
             if (string.IsNullOrWhiteSpace(data))
-                return;
+            {
+                _logger.LogTrace("ROTOR handler: empty data, ignored");
+                return Task.CompletedTask;
+            }
 
-            // =========================================================
-            // HEADER CHECK (Rotor.Headers)
-            // =========================================================
-
+            // ── protocol framing checks ───────────────────────────────────────
             bool hasValidHeader = Rotor.Headers.Any(h =>
                 data.StartsWith(h, StringComparison.OrdinalIgnoreCase));
-
-            if (!hasValidHeader)
-                return;
-
-            // =========================================================
-            // TERMINATOR CHECK (Rotor.Terminators)
-            // =========================================================
 
             bool hasValidTerminator = Rotor.Terminators.Any(t =>
                 data.EndsWith(t, StringComparison.OrdinalIgnoreCase));
 
-            if (!hasValidTerminator)
-                return;
-
-            // =========================================================
-            // PUSH CONFIRM MATCH
-            // =========================================================
-
-            if (_pendingPushConfirm is { } confirmTcs
-                && _pendingPushConfirmId != Guid.Empty
-                && msg.Value.Function.Equals(_pendingPushConfirmFunction, StringComparison.OrdinalIgnoreCase)
-                && _pendingPushConfirmPredicate?.Invoke(data) == true)
+            if (!hasValidHeader || !hasValidTerminator)
             {
-                confirmTcs.TrySetResult(true);
+                _logger.LogWarning(
+                    "ROTOR handler: frame rejected — data='{Data}' header={H} terminator={T}",
+                    data, hasValidHeader, hasValidTerminator);
+                return Task.CompletedTask;
             }
 
-            // =========================================================
-            // RESPONSE MATCH
-            // =========================================================
-
-            if (_pendingResponse is { } responseTcs
-                && _pendingResponseId != Guid.Empty
-                && msg.Value.Function.Equals(_pendingResponseFunction, StringComparison.OrdinalIgnoreCase)
-                && _pendingResponsePredicate?.Invoke(data) == true)
+            // ── throttled UI status update ────────────────────────────────────
+            long now = Environment.TickCount64;
+            if (Interlocked.Read(ref _lastStatusTick) is var last
+                && (now - last) >= StatusThrottleMs)
             {
-                responseTcs.TrySetResult(data);
+                Interlocked.Exchange(ref _lastStatusTick, now);
+                SetStatus(data);
             }
-        });
 
-        //_messengerService.Register<TcpDataReceivedMessage>(this, async (r, msg) =>
-        //{
-        //    if (!msg.Value.Function.Equals("ROTOR")) return;
+            // ── encoder poll response ─────────────────────────────────────────
+            if (MatchesCommandCode(data, "MRL"))
+                UpdateEncoderAngle(data);
 
-        //    StatusText = $"{msg.Value.Data}";
+            // ── push-confirm match ────────────────────────────────────────────
+            var pending = Interlocked.CompareExchange(ref _pendingConfirm, null, null);
 
-        //    var data = msg.Value.Data?.Trim();
+            _logger.LogDebug(
+                "ROTOR handler: data='{Data}' len={Len} code='{Code}' pending={Pending}",
+                data,
+                data.Length,
+                data.Length >= 5 ? data.Substring(2, Math.Min(3, data.Length - 2)) : "??",
+                pending is null ? "none" : $"waiting for function='{pending.Function}'");
 
-        //    if (string.IsNullOrWhiteSpace(data)
-        //        || !data.StartsWith("#", StringComparison.OrdinalIgnoreCase)
-        //        || !data.EndsWith("W", StringComparison.OrdinalIgnoreCase))
-        //        return;
-
-        //    if (_pendingPushConfirm is { } confirmTcs
-        //        && _pendingPushConfirmId != Guid.Empty
-        //        && msg.Value.Function == _pendingPushConfirmFunction
-        //        && _pendingPushConfirmPredicate?.Invoke(data) == true)
-        //    {
-        //        confirmTcs.TrySetResult(true);
-        //    }
-        //    if (_pendingResponse is { } responseTcs
-        //        && _pendingResponseId != Guid.Empty
-        //        && msg.Value.Function == _pendingResponseFunction
-        //        && _pendingResponsePredicate?.Invoke(data) == true)
-        //    {
-        //        responseTcs.TrySetResult(data);
-        //    }
-        //});
-
-        _messengerService.Register<TcpSendRequestMessage>(this, (r, msg) =>
-        {
-            MainThread.BeginInvokeOnMainThread(() =>
+            if (pending is not null)
             {
-                //      Status = Encoding.UTF8.GetString(msg.Value);
-            });
+                bool functionMatch = function.Equals(pending.Function, StringComparison.OrdinalIgnoreCase);
+                bool predicateMatch = pending.Predicate(data);
 
-        });
+                _logger.LogDebug(
+                    "ROTOR handler: confirm check — functionMatch={FM} predicateMatch={PM}",
+                    functionMatch, predicateMatch);
 
-        _messengerService.Register<TcpStatusMessage>(this, (r, msg) =>
+                if (functionMatch && predicateMatch)
+                {
+                    _logger.LogInformation(
+                        "ROTOR handler: confirm signalled for data='{Data}'", data);
+                    pending.Tcs.TrySetResult(true);
+                }
+            }
+        }
+        catch (Exception ex)
         {
-            MainThread.BeginInvokeOnMainThread(() =>
-            {
-                StatusText = msg.Value;
-            });
+            _logger.LogError(ex, "HandleTcpDataAsync threw unexpectedly");
+        }
 
-        });
-
-        _messengerService.Register<TcpErrorMessage>(this, (r, msg) =>
-        {
-            _loggerService?.LogError($"TcpErrorMessage : {msg}", msg);
-            MainThread.BeginInvokeOnMainThread(() =>
-            {
-                StatusText = msg.Value.Message;
-
-            });
-
-        });
-
-
-
-        _messengerService.Register<TcpAckTimeoutMessage>(this, (r, msg) =>
-        {
-
-            MainThread.BeginInvokeOnMainThread(() =>
-                StatusText = $"No response to: {msg.Command}");
-        });
-
-        _messengerService.Register<TcpNackMessage>(this, (r, msg) =>
-        {
-            MainThread.BeginInvokeOnMainThread(() =>
-                StatusText = $"Server rejected '{msg.Command}': {msg.Reason}");
-        });
-
-
-        _messengerService.Register<TcpIsConnected>(this, (r, msg) =>
-        {
-            MainThread.BeginInvokeOnMainThread(async () =>
-            {
-                if (!msg.Value)
-                    await Shell.Current.GoToAsync("//MainPage");
-            });
-        });
-
-
+        return Task.CompletedTask;
     }
 
-    [ObservableProperty]
-    private double buttonSize;
-
-    [ObservableProperty]
-    private double layoutSpacing;
-
-
-    [ObservableProperty]
-    private string statusText = "Stopped";
-
-    // =====================================================
-    // ANGLE
-    // =====================================================
-
-    [ObservableProperty]
-    private double armAngle;
-
-
+    // ─────────────────────────────────────────────────────────────────────────
+    // Observable properties
+    // ─────────────────────────────────────────────────────────────────────────
+    [ObservableProperty] private double buttonSize;
+    [ObservableProperty] private double layoutSpacing;
+    [ObservableProperty] private string statusText = "Stopped";
+    [ObservableProperty] private double armAngle;
 
     partial void OnArmAngleChanged(double value)
     {
         value = Math.Clamp(value, 0, 180);
-
-        // TODO:
-        // Send command to hardware here
-
-        // Example:
-        //
-        // Send($"ROTOR ANGLE {(int)value}");
+        // TODO: send angle to hardware if required
     }
 
-    // =====================================================
-    // COMMANDS
-    // =====================================================
-
+    // ─────────────────────────────────────────────────────────────────────────
+    // Commands – all follow the same pattern:
+    //   1. Wait briefly for the lock (queues behind an in-progress poll)
+    //   2. Set IsBusy
+    //   3. Send + wait for push-confirm
+    //   4. Release lock in finally
+    //
+    // Protocol (Sidus Solutions): the device echoes the command mnemonic back
+    // with the current encoder position in the data field, e.g.
+    //   Sent:     #AMST0000W   (stop)
+    //   Response: #AMST5186W   (stopped at encoder count 5186)
+    // MML (move-to-location) responses echo MML with the target position.
+    // MMF/MMB responses echo MMF/MMB.
+    // ─────────────────────────────────────────────────────────────────────────
     [RelayCommand]
     private async Task Park()
-    {
-        // Cancel any in-progress poll to free the lock quickly
-        _pollInterruptCts?.Cancel();
-
-        // Now wait briefly for the lock (poll should release almost immediately)
-        if (!await _commandLock.WaitAsync(TimeSpan.FromSeconds(2)))
-        {
-            StatusText = "Command already in progress";
-            return;
-        }
-
-        IsBusy = true;
-
-        try
-        {
-
-            //        var sent = await _tcpService.SendCommandAsync(
-            //new TCPMessageBody<string>("ROTOR", "WRITE TEXT", Rotor.ParkMotorA), CancellationToken.None);
-
-            StatusText = "Parking rotor...";
-            if (!await SendAndWaitForPushAsyncInner(
-                    "ROTOR", "WRITE TEXT", Rotor.ParkMotorA,
-                    "ROTOR",
-                    data => MatchesResponse(data, Rotor.ParkMotorA),
-                    timeout))
-            {
-                StatusText = "Park rotor command failed";
-                return;
-            }
-            StatusText = "Rotor parked command confirmed";
-        }
-        finally
-        {
-
-            IsBusy = false;
-            _commandLock.Release();
-        }
-    }
+        => await RunCommandAsync(
+               "Parking rotor...",
+               "Rotor parking...",
+               "Park rotor command failed",
+               Rotor.ParkMotorA,
+               // Protocol sends MML twice: first is ACK, second is arrival.
+               // We confirm on the first (ACK) and release the lock immediately
+               // so the user can reposition or stop during the move.
+               data => MatchesCommandCode(data, "MML"));
 
     [RelayCommand]
     private async Task Deploy()
-    {
-        // Cancel any in-progress poll to free the lock quickly
-        _pollInterruptCts?.Cancel();
+        => await RunCommandAsync(
+               "Deploying rotor...",
+               "Rotor deploying...",
+               "Deploy rotor command failed",
+               Rotor.DeployMotorA,
+               data => MatchesCommandCode(data, "MML"));
 
-        // Now wait briefly for the lock (poll should release almost immediately)
-        if (!await _commandLock.WaitAsync(TimeSpan.FromSeconds(2)))
-        {
-            StatusText = "Command already in progress";
-            return;
-        }
+    [RelayCommand]
+    private async Task Forward()
+        => await RunCommandAsync(
+               "Driving rotor forward...",
+               "Rotor forward command confirmed",
+               "Forward rotor command failed",
+               Rotor.PanMotorAForward,
+               data => MatchesCommandCode(data, "MMF"));
 
-        IsBusy = true;
-        try
-        {
-            StatusText = "Deploying rotor...";
-            if (!await SendAndWaitForPushAsyncInner(
-                    "ROTOR", "WRITE TEXT", Rotor.DeployMotorA,
-                    "ROTOR",
-                    data => MatchesResponse(data, Rotor.DeployMotorA),
-                    timeout))
-            {
-                StatusText = "Deploy rotor command failed";
-                return;
-            }
-            StatusText = "Rotor deploy command confirmed";
-        }
-        finally
-        {
-            IsBusy = false;
-            _commandLock.Release();
-        }
-    }
-
+    [RelayCommand]
+    private async Task Backward()
+        => await RunCommandAsync(
+               "Driving rotor backward...",
+               "Rotor backward command confirmed",
+               "Backward rotor command failed",
+               Rotor.PanMotorABackward,
+               data => MatchesCommandCode(data, "MMB"));
 
     [RelayCommand]
     private async Task Stop()
-    {
-        _pollInterruptCts?.Cancel();
+        => await RunCommandAsync(
+               "Stopping rotor...",
+               "Rotor stop command confirmed",
+               "Stop rotor command failed",
+               Rotor.StopPanMotorA,
+               data => MatchesCommandCode(data, "MST"));
 
-        if (!await _commandLock.WaitAsync(TimeSpan.FromSeconds(2)))
+    // ─────────────────────────────────────────────────────────────────────────
+    // Shared command runner
+    // ─────────────────────────────────────────────────────────────────────────
+    private async Task RunCommandAsync(
+        string pendingMessage,
+        string successMessage,
+        string failureMessage,
+        string payload,
+        Func<string, bool> confirmPredicate)
+    {
+        // Wait briefly so commands can queue behind a poll rather than
+        // immediately failing when the user taps while a poll is in-flight.
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
         {
-            StatusText = "Command already in progress";
+            SetStatus("Command already in progress");
             return;
         }
 
         IsBusy = true;
         try
         {
-            StatusText = "Stopping rotor...";  // also fix the copy-paste "Deploying" message
-            if (!await SendAndWaitForPushAsyncInner(
-                    "ROTOR", "WRITE TEXT", Rotor.StopPanMotorA,
-                    "ROTOR",
-                    data => MatchesCommand(data, "MST"),  // <-- match on command code, not full string
-                    timeout))
-            {
-                StatusText = "Stop rotor command failed";
-                return;
-            }
-            StatusText = "Rotor stop command confirmed";
+            SetStatus(pendingMessage);
+
+            bool ok = await SendAndWaitForConfirmAsync(
+                "ROTOR", "WRITE TEXT", payload,
+                "ROTOR", confirmPredicate,
+                _commandTimeout);
+
+            SetStatus(ok ? successMessage : failureMessage);
         }
         finally
         {
@@ -359,176 +324,66 @@ public partial class RotorViewModel : BaseViewModel
         }
     }
 
-
-    // ── helpers ────────────────────────────────────────────────────────────────
-    private static bool MatchesResponse(string received, string expected)
-        => received.Trim() == expected.TrimEnd('\r', '\n');
-
-    private static bool MatchesCommand(string received, string expected)
-    => received.Contains(expected);
-
-
-    private async Task<bool> SendAndWaitForPushAsync(
-        string sendFeature, string sendCommand, string sendData,
-        string confirmFunction, Func<string, bool> confirmPredicate,
+    // ─────────────────────────────────────────────────────────────────────────
+    // Send a command and wait for a matching push-confirm.
+    // Must be called while holding _commandLock.
+    // Uses a single atomic swap for the PendingConfirm object, so there is no
+    // window where TCS, function, predicate, and id are mismatched.
+    // ─────────────────────────────────────────────────────────────────────────
+    private async Task<bool> SendAndWaitForConfirmAsync(
+        string sendFeature,
+        string sendCommand,
+        string sendData,
+        string confirmFunction,
+        Func<string, bool> confirmPredicate,
         TimeSpan timeout)
     {
-        await _commandLock.WaitAsync();
+        // Install the pending operation atomically BEFORE sending, so we cannot
+        // miss a fast response that arrives before WhenAny is evaluated.
+        var op = new PendingConfirm(confirmFunction, confirmPredicate);
+        Interlocked.Exchange(ref _pendingConfirm, op);
+
         try
         {
-            var operationId = Guid.NewGuid();
-            _pendingPushConfirmFunction = confirmFunction;
-            _pendingPushConfirmPredicate = confirmPredicate;
-            _pendingPushConfirmId = operationId;
-
-            var confirmTcs = new TaskCompletionSource<bool>();
-            Interlocked.Exchange(ref _pendingPushConfirm, confirmTcs);
-
-            var sent = await _tcpService.SendCommandAsync(
+            bool sent = await _tcp.SendCommandAsync(
                 new TCPMessageBody<string>(sendFeature, sendCommand, sendData),
                 CancellationToken.None);
 
             if (!sent)
-            {
-                Interlocked.Exchange(ref _pendingPushConfirm, null);
-                _pendingPushConfirmFunction = null;
-                _pendingPushConfirmPredicate = null;
-                _pendingPushConfirmId = Guid.Empty;
                 return false;
-            }
 
-            var completed = await Task.WhenAny(confirmTcs.Task, Task.Delay(timeout));
+            var completed = await Task.WhenAny(op.Tcs.Task, Task.Delay(timeout));
 
-            Interlocked.Exchange(ref _pendingPushConfirm, null);
-            _pendingPushConfirmFunction = null;
-            _pendingPushConfirmPredicate = null;
-            _pendingPushConfirmId = Guid.Empty;
-
-            return completed == confirmTcs.Task && confirmTcs.Task.Result;
+            return completed == op.Tcs.Task && op.Tcs.Task.Result;
         }
         finally
         {
-            _commandLock.Release();
+            // Clear only if we are still the active operation (another command
+            // could theoretically have replaced us, though the lock prevents it).
+            Interlocked.CompareExchange(ref _pendingConfirm, null, op);
         }
     }
 
-
-    private async Task<bool> SendAndWaitForPushAsyncInner(
-    string sendFeature, string sendCommand, string sendData,
-    string confirmFunction, Func<string, bool> confirmPredicate,
-    TimeSpan timeout)
-    {
-        var operationId = Guid.NewGuid();
-        _pendingPushConfirmFunction = confirmFunction;
-        _pendingPushConfirmPredicate = confirmPredicate;
-        _pendingPushConfirmId = operationId;
-
-        var confirmTcs = new TaskCompletionSource<bool>();
-        Interlocked.Exchange(ref _pendingPushConfirm, confirmTcs);
-
-        var sent = await _tcpService.SendCommandAsync(
-            new TCPMessageBody<string>(sendFeature, sendCommand, sendData),
-            CancellationToken.None);
-
-        if (!sent)
-        {
-            Interlocked.Exchange(ref _pendingPushConfirm, null);
-            _pendingPushConfirmFunction = null;
-            _pendingPushConfirmPredicate = null;
-            _pendingPushConfirmId = Guid.Empty;
-            return false;
-        }
-
-        var completed = await Task.WhenAny(confirmTcs.Task, Task.Delay(timeout));
-
-        Interlocked.Exchange(ref _pendingPushConfirm, null);
-        _pendingPushConfirmFunction = null;
-        _pendingPushConfirmPredicate = null;
-        _pendingPushConfirmId = Guid.Empty;
-
-        return completed == confirmTcs.Task && confirmTcs.Task.Result;
-    }
-
-    private async Task<bool> SendAndWaitAsync(
- string feature, string command, string data, TimeSpan timeout)
-    {
-        _pendingCommandName = command;
-        var tcs = new TaskCompletionSource<bool>();
-        Interlocked.Exchange(ref _pendingCommand, tcs);  // atomic set
-
-        var sent = await _tcpService.SendCommandAsync(
-            new TCPMessageBody<string>(feature, command, data), CancellationToken.None);
-
-        if (!sent)
-        {
-            Interlocked.Exchange(ref _pendingCommand, null);  // atomic clear
-            _pendingCommandName = null;
-            return false;
-        }
-
-        var completed = await Task.WhenAny(tcs.Task, Task.Delay(timeout));
-
-        Interlocked.Exchange(ref _pendingCommand, null);  // atomic clear
-        _pendingCommandName = null;
-
-        return completed == tcs.Task && tcs.Task.Result;
-    }
-
- //   private readonly SemaphoreSlim _commandLock = new(1, 1);
-
-
-
-    private async Task ResolvePendingCommandAsync(string? json)
-    {
-        // Capture atomically — local copy is thread-safe from this point on
-        var pending = Interlocked.CompareExchange(ref _pendingCommand, null, null);
-        if (pending is null) return;
-
-        try
-        {
-            var response = JsonSerializer.Deserialize<CommandResponse>(
-                json ?? "",
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-            pending.TrySetResult(response?.Ok == true);
-        }
-        catch
-        {
-            pending.TrySetResult(false);
-        }
-    }
-
-
+    // ─────────────────────────────────────────────────────────────────────────
+    // Polling
+    // ─────────────────────────────────────────────────────────────────────────
     public void OnAppearing()
     {
         _isPageVisible = true;
 
         _pollingCts?.Cancel();
-
         _pollingCts = new CancellationTokenSource();
-
         _ = StartPollingAsync(_pollingCts.Token);
     }
 
     public void OnDisappearing()
     {
         _isPageVisible = false;
-
         _pollingCts?.Cancel();
         _pollingCts?.Dispose();
-
         _pollingCts = null;
     }
-    private void CleanupPendingResponse()
-    {
-        Interlocked.Exchange(ref _pendingResponse, null);
 
-        _pendingResponseFunction = null;
-        _pendingResponsePredicate = null;
-        _pendingResponseId = Guid.Empty;
-    }
-
-    //Stopped with cancellation token in OnDisappearing
     private async Task StartPollingAsync(CancellationToken token)
     {
         while (!token.IsCancellationRequested)
@@ -536,9 +391,7 @@ public partial class RotorViewModel : BaseViewModel
             try
             {
                 if (_isPageVisible && !IsBusy)
-                {
                     await PollEncoderAsync(token);
-                }
             }
             catch (OperationCanceledException)
             {
@@ -546,10 +399,8 @@ public partial class RotorViewModel : BaseViewModel
             }
             catch (Exception ex)
             {
-                _loggerService.LogError(ex,
-                    "Rotor polling failed");
-
-                StatusText = ex.Message;
+                _logger.LogError(ex, "Rotor polling failed");
+                SetStatus(ex.Message);
             }
 
             try
@@ -563,129 +414,113 @@ public partial class RotorViewModel : BaseViewModel
         }
     }
 
-    private CancellationTokenSource? _pollInterruptCts;
-
+    // Polls the encoder by acquiring the lock, sending, and waiting for the MRL
+    // response before releasing.  This prevents poll responses from interleaving
+    // with command responses and stops the "firehose" of unacknowledged requests.
     private async Task PollEncoderAsync(CancellationToken token)
     {
-        if (!await _commandLock.WaitAsync(0))
+        // Skip this poll cycle if a command is in progress.
+        if (!await _commandLock.WaitAsync(TimeSpan.Zero, token))
             return;
 
-        _pollInterruptCts = new CancellationTokenSource();
-        IsBusy = true;
         try
         {
-            var response = await SendAndWaitForResponseAsync(
-                "ROTOR", "WRITE TEXT", Rotor.EncoderLocationA,
-                "ROTOR",
-                data => MatchesCommand(data, "MRL"),
-                timeout,
-                _pollInterruptCts.Token);  // <-- pass token here
+            var op = new PendingConfirm("ROTOR", data => MatchesCommandCode(data, "MRL"));
+            Interlocked.Exchange(ref _pendingConfirm, op);
 
-            if (string.IsNullOrWhiteSpace(response))
-                StatusText = "Encoder timeout";
-            else
-                UpdateEncoderAngle(response);
+            try
+            {
+                bool sent = await _tcp.SendCommandAsync(
+                    new TCPMessageBody<string>("ROTOR", "WRITE TEXT", Rotor.EncoderLocationA),
+                    token);
+
+                if (!sent)
+                    return;
+
+                // Short timeout so the lock is released quickly between poll cycles,
+                // keeping the command path responsive. UpdateEncoderAngle signals
+                // the TCS as soon as the MRL packet arrives.
+                var completed = await Task.WhenAny(op.Tcs.Task, Task.Delay(_pollTimeout, token));
+
+                if (completed != op.Tcs.Task)
+                    _logger.LogWarning("Encoder poll timed out");
+            }
+            finally
+            {
+                Interlocked.CompareExchange(ref _pendingConfirm, null, op);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Page is going away – normal, not an error.
         }
         finally
         {
-            _pollInterruptCts = null;
-            IsBusy = false;
             _commandLock.Release();
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Encoder angle parsing
+    // ─────────────────────────────────────────────────────────────────────────
     private void UpdateEncoderAngle(string response)
     {
         try
         {
-            // Expected:
-            // #AMRL6274R
-
+            // Expected format: #AMRL6274R  (fixed-width: 2 prefix + 3 cmd + 4 digits + 1 terminator)
             response = response.Trim();
-
-            if (response.Length < 10)
-                return;
+            if (response.Length < 10) return;
 
             string command = response.Substring(2, 3);
-
-            if (!command.Equals(
-                    "MRL",
-                    StringComparison.OrdinalIgnoreCase))
-                return;
+            if (!command.Equals("MRL", StringComparison.OrdinalIgnoreCase)) return;
 
             string digits = response.Substring(5, 4);
+            if (!int.TryParse(digits, out int encoder)) return;
 
-            if (!int.TryParse(digits, out int encoder))
-                return;
+            double degrees = Math.Clamp((encoder - 5000) * 0.0879, 0, 180);
 
-            double degrees =
-                (encoder - 5000) * 0.0879;
-
-            degrees = Math.Clamp(degrees, 0, 180);
-
-            MainThread.BeginInvokeOnMainThread(() =>
-            {
-                ArmAngle = degrees;
-
-                StatusText =
-                    $"Rotor position: {degrees:F1}°";
-            });
+            MainThread.BeginInvokeOnMainThread(() => ArmAngle = degrees);
         }
         catch (Exception ex)
         {
-            _loggerService.LogWarning(ex,
-                "Failed parsing encoder response '{Response}'",
-                response);
+            _logger.LogWarning(ex, "Failed parsing encoder response '{Response}'", response);
         }
     }
 
-    private async Task<string?> SendAndWaitForResponseAsync(
-        string sendFeature,
-        string sendCommand,
-        string sendData,
-        string responseFunction,
-        Func<string, bool> responsePredicate,
-        TimeSpan timeout,
-        CancellationToken cancellationToken = default)  // <-- add this
+    // ─────────────────────────────────────────────────────────────────────────
+    // Helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>Exact match (ignoring trailing CR/LF) for command responses.</summary>
+    private static bool MatchesResponse(string received, string expected)
+        => received.Trim().Equals(expected.TrimEnd('\r', '\n'), StringComparison.Ordinal);
+
+    /// <summary>Substring match for 3-character command codes embedded in a packet.</summary>
+    private static bool MatchesCommand(string received, string command)
+        => received.Contains(command, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Structural match for the 3-character command code at bytes [2..4] of the
+    /// fixed-width protocol frame (#AMRL6274R / #AMST5186W etc.).
+    /// Safer than Contains() — an MRL packet can never match "MST" and vice versa.
+    /// </summary>
+    private static bool MatchesCommandCode(string received, string code)
     {
-        var operationId = Guid.NewGuid();
-
-        _pendingResponseFunction = responseFunction;
-        _pendingResponsePredicate = responsePredicate;
-        _pendingResponseId = operationId;
-
-        var responseTcs = new TaskCompletionSource<string>();
-        Interlocked.Exchange(ref _pendingResponse, responseTcs);
-
-        var sent = await _tcpService.SendCommandAsync(
-            new TCPMessageBody<string>(sendFeature, sendCommand, sendData),
-            CancellationToken.None);
-
-        if (!sent)
-        {
-            CleanupPendingResponse();
-            return null;
-        }
-
-        try
-        {
-            var completed = await Task.WhenAny(
-                responseTcs.Task,
-                Task.Delay(timeout, cancellationToken));
-
-            CleanupPendingResponse();
-
-            if (completed != responseTcs.Task)
-                return null;
-
-            return await responseTcs.Task;
-        }
-        catch (OperationCanceledException)
-        {
-            CleanupPendingResponse();
-            return null;
-        }
+        received = received.Trim();
+        // Minimum frame: 2 prefix + 3 code + 4 digits + 1 terminator = 10 chars
+        return received.Length >= 10
+            && received.Substring(2, 3).Equals(code, StringComparison.OrdinalIgnoreCase);
     }
-        //private static bool MatchesResponse(string received, string expected)
-        //=> received.Trim() == expected.TrimEnd('\r', '\n');
+
+    /// <summary>
+    /// Thread-safe status update, marshalled to the UI thread.
+    /// Callers do NOT need to wrap in BeginInvokeOnMainThread themselves.
+    /// </summary>
+    private void SetStatus(string text)
+    {
+        if (MainThread.IsMainThread)
+            StatusText = text;
+        else
+            MainThread.BeginInvokeOnMainThread(() => StatusText = text);
     }
+}
