@@ -81,7 +81,8 @@ public sealed class SerialPortWorker : ISerialWorker
             _port = new SerialPort(PortPath, BaudRate) {
                 WriteTimeout = 2_000,
                 ReadTimeout = 2_000,
-                Encoding = Encoding.UTF8,
+                //Encoding = Encoding.UTF8,
+                Encoding = Encoding.ASCII,
                 Handshake = Handshake.None,
                 StopBits = _stopBits
             };
@@ -96,6 +97,7 @@ public sealed class SerialPortWorker : ISerialWorker
                 .CreateLinkedTokenSource(appToken, _cts.Token).Token;
 
             _readerTask = Task.Run(() => ReadLoopAsync(linked), linked);
+            _writerTask = Task.Run(() => WriteLoopAsync(linked), linked);
 
             _startedTcs.TrySetResult();
             _logger.LogInformation(
@@ -139,74 +141,99 @@ public sealed class SerialPortWorker : ISerialWorker
 
     // ── Write ─────────────────────────────────────────────────────────────────
 
-    public async Task<OperationResult> WriteAsync(byte[] data, CancellationToken token = default)
-    {
-        _logger.LogDebug(
-            "Writing {ByteCount} bytes to {Function} on {Port}",
-        _functionName,
+
+    public async Task<OperationResult> WriteAsync(
+    byte[] data,
+    CancellationToken token = default)
+{
+    _logger.LogDebug(
+        "Queueing {ByteCount} bytes to {Function} on {Port}",
         data.Length,
+        _functionName,
         PortPath);
 
-        var port = _port; // snapshot — avoids null ref if DisposeAsync runs concurrently
-        if (port is null || !port.IsOpen)
-            return OperationResult.Failure($"Serial port {PortPath} is not open");
+    if (_port is null || !_port.IsOpen)
+        return OperationResult.Failure(
+            $"Serial port {PortPath} is not open");
 
-        try
-        {
-            await port.BaseStream.WriteAsync(data, token).ConfigureAwait(false);
-            _logger.LogInformation(
-                "Completed serial write {Function} on {Port}: {Success}",
-                _functionName,
-                PortPath,
-                true);
-            return OperationResult.Success();
-        }
-        catch (OperationCanceledException)
-        {
-            return OperationResult.Failure("Operation cancelled");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex,
-                "Error on serial write {Function} on {Port}: {Success}",
-                _functionName,
-                PortPath,
-                false);
-            return OperationResult.Failure($"Write failed on {PortPath}: {ex.Message}");
-        }
-    
-        
+    var enqueued = await EnqueueAsync(data, token)
+        .ConfigureAwait(false);
 
-        //Queuing system
-        //if (_sendQueue.Writer.TryWrite(data))
-        //{
-        //    return OperationResult.Success();
-        //}
-        //else
-        //{
-        //    return OperationResult.Failure($"Write queue for Serial port {_port} is full");
-        //}
-        //Queue if _sendQueue is full
-        //var enqueued = await EnqueueAsync(data, token).ConfigureAwait(false);
-        //return enqueued ? OperationResult.Success() : OperationResult.Failure($"Failed to Enqueue data on {PortPath}");
+    return enqueued
+        ? OperationResult.Success()
+        : OperationResult.Failure(
+            $"Failed to enqueue data on {PortPath}");
+}
 
-    }
-
-    //private async Task<bool> EnqueueAsync(byte[] data, CancellationToken token)
+    //public async Task<OperationResult> WriteAsync(byte[] data, CancellationToken token = default)
     //{
+    //    _logger.LogDebug(
+    //        "Writing {ByteCount} bytes to {Function} on {Port}",
+    //    _functionName,
+    //    data.Length,
+    //    PortPath);
+
+    //    var port = _port; // snapshot — avoids null ref if DisposeAsync runs concurrently
+    //    if (port is null || !port.IsOpen)
+    //        return OperationResult.Failure($"Serial port {PortPath} is not open");
+
     //    try
     //    {
-    //        await _sendQueue.Writer.WriteAsync(data, token).ConfigureAwait(false);
-    //        return true;
+    //        await port.BaseStream.WriteAsync(data, token).ConfigureAwait(false);
+    //        _logger.LogInformation(
+    //            "Completed serial write {Function} on {Port}: {Success}",
+    //            _functionName,
+    //            PortPath,
+    //            true);
+    //        return OperationResult.Success();
     //    }
-    //    catch (OperationCanceledException) { return false; }
-    //    catch (ChannelClosedException) { return false; }
+    //    catch (OperationCanceledException)
+    //    {
+    //        return OperationResult.Failure("Operation cancelled");
+    //    }
+    //    catch (Exception ex)
+    //    {
+    //        _logger.LogWarning(ex,
+    //            "Error on serial write {Function} on {Port}: {Success}",
+    //            _functionName,
+    //            PortPath,
+    //            false);
+    //        return OperationResult.Failure($"Write failed on {PortPath}: {ex.Message}");
+    //    }
+
+
+
+    //    //Queuing system
+    //    //if (_sendQueue.Writer.TryWrite(data))
+    //    //{
+    //    //    return OperationResult.Success();
+    //    //}
+    //    //else
+    //    //{
+    //    //    return OperationResult.Failure($"Write queue for Serial port {_port} is full");
+    //    //}
+    //    //Queue if _sendQueue is full
+    //    //var enqueued = await EnqueueAsync(data, token).ConfigureAwait(false);
+    //    //return enqueued ? OperationResult.Success() : OperationResult.Failure($"Failed to Enqueue data on {PortPath}");
+
     //}
 
+    private async Task<bool> EnqueueAsync(byte[] data, CancellationToken token)
+    {
+        try
+        {
+            await _sendQueue.Writer.WriteAsync(data, token).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) { return false; }
+        catch (ChannelClosedException) { return false; }
+    }
+
+  //  public Task<OperationResult> WriteTextAsync(string text, CancellationToken token = default)
+    //    => WriteAsync(Encoding.UTF8.GetBytes(text), token);
+
     public Task<OperationResult> WriteTextAsync(string text, CancellationToken token = default)
-        => WriteAsync(Encoding.UTF8.GetBytes(text), token);
-
-
+    => WriteAsync(Encoding.ASCII.GetBytes(text), token);
 
     // ── Read loop (serial → channel) ─────────────────────────────────────────
 
@@ -230,7 +257,13 @@ public sealed class SerialPortWorker : ISerialWorker
 
                 if (count <= 0) continue;
 
-                var text = Encoding.UTF8.GetString(buffer, 0, count);
+              //  var text = Encoding.UTF8.GetString(buffer, 0, count);
+                var text = Encoding.ASCII.GetString(buffer, 0, count);
+                _logger.LogDebug(
+                    "RAW {Function} BYTES: {Bytes}",
+                    _functionName,
+                    BitConverter.ToString(buffer, 0, count));
+
                 await ProcessIncomingTextAsync(text, token).ConfigureAwait(false);
             }
             return OperationResult.Success();
@@ -260,65 +293,351 @@ public sealed class SerialPortWorker : ISerialWorker
         }
     }
 
+    //private async Task ProcessIncomingTextAsync(string chunk, CancellationToken token)
+    //{
+    //    _lineBuffer.Append(chunk);
+
+    //    while (true)
+    //    {
+    //        var current = _lineBuffer.ToString();
+    //        var nl = current.IndexOf('\n');
+    //        if (nl < 0) break;
+
+    //        var line = current[..nl].TrimEnd('\r');
+    //        _lineBuffer.Remove(0, nl + 1);
+
+    //      //  var functionName = _registry.GetFunctionName(PortPath);
+    //     //   var primaryFunction = functionNames.Count > 0 ? functionNames[0] : PortPath;
+
+    //        var message = new SerialMessage
+    //        {
+    //            FunctionName = _functionName,
+    //            PortPath     = PortPath,
+    //            Payload      = Encoding.UTF8.GetBytes(line),
+    //            Text         = line
+    //        };
+
+
+
+    //        _logger.LogDebug(
+    //            "Received line for {Function} on {Port}: {Line}",
+    //            _functionName,
+    //            PortPath,
+    //            line);
+    //        await _received.Writer.WriteAsync(message, token).ConfigureAwait(false);
+    //    }
+    //}
+
+    // ── Write loop (channel → serial) ────────────────────────────────────────
+
+    private async Task WriteLoopAsync(CancellationToken token)
+    {
+        try
+        {
+            await foreach (var data in _sendQueue.Reader.ReadAllAsync(token))
+            {
+                if (_port is null || !_port.IsOpen) break;
+
+                try
+                {
+                    await _port.BaseStream.WriteAsync(data, token).ConfigureAwait(false);
+}
+                catch (Exception ex) when(ex is not OperationCanceledException)
+{
+    _logger.LogWarning(ex, "Write error on {Port}", PortPath);
+}
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
     private async Task ProcessIncomingTextAsync(string chunk, CancellationToken token)
     {
         _lineBuffer.Append(chunk);
 
+
+      //  ROTOR has custom framing
+        if (_functionName == "ROTOR")
+        {
+            _logger.LogDebug("Customer processing for {FunctionName}", _functionName);
+            await ProcessRotorFramesAsync(token)
+                .ConfigureAwait(false);
+
+            return;
+        }
+
+
         while (true)
         {
             var current = _lineBuffer.ToString();
-            var nl = current.IndexOf('\n');
-            if (nl < 0) break;
 
-            var line = current[..nl].TrimEnd('\r');
+  
+            // =========================================================
+            // DEFAULT framing
+            // Standard newline-delimited protocols
+            // =========================================================
+
+            int nl = current.IndexOf('\n');
+
+            if (nl < 0)
+                return;
+
+            string defaultLine = current[..nl].TrimEnd('\r');
+
             _lineBuffer.Remove(0, nl + 1);
 
-          //  var functionName = _registry.GetFunctionName(PortPath);
-         //   var primaryFunction = functionNames.Count > 0 ? functionNames[0] : PortPath;
-
-            var message = new SerialMessage
+            var defaultMessage = new SerialMessage
             {
                 FunctionName = _functionName,
-                PortPath     = PortPath,
-                Payload      = Encoding.UTF8.GetBytes(line),
-                Text         = line
+                PortPath = PortPath,
+             //   Payload = Encoding.UTF8.GetBytes(defaultLine),
+                Payload = Encoding.ASCII.GetBytes(defaultLine),
+                Text = defaultLine
             };
-
-            _logger.LogDebug("Writing to _received channel: {Line}", line);
-            await _received.Writer.WriteAsync(message, token);
-
 
             _logger.LogDebug(
                 "Received line for {Function} on {Port}: {Line}",
                 _functionName,
                 PortPath,
-                line);
-            await _received.Writer.WriteAsync(message, token).ConfigureAwait(false);
+                defaultLine);
+
+            await _received.Writer
+                .WriteAsync(defaultMessage, token)
+                .ConfigureAwait(false);
         }
     }
 
-    // ── Write loop (channel → serial) ────────────────────────────────────────
+    private bool TryParseRotorFrame(
+    string frame,
+    out string normalized,
+    out string error)
+    {
+        normalized = string.Empty;
+        error = string.Empty;
 
-    //private async Task WriteLoopAsync(CancellationToken token)
-    //{
-    //    try
-    //    {
-    //        await foreach (var data in _sendQueue.Reader.ReadAllAsync(token))
-    //        {
-    //            if (_port is null || !_port.IsOpen) break;
+        frame = frame.Trim();
 
-    //            try
-    //            {
-    //                await _port.BaseStream.WriteAsync(data, token).ConfigureAwait(false);
-    //            }
-    //            catch (Exception ex) when (ex is not OperationCanceledException)
-    //            {
-    //                _logger.LogWarning(ex, "Write error on {Port}", PortPath);
-    //            }
-    //        }
-    //    }
-    //    catch (OperationCanceledException) { }
-    //}
+        // Minimum valid size
+        if (frame.Length < 10)
+        {
+            error = "Frame too short";
+            return false;
+        }
+
+        // -------------------------------------------------
+        // HEADER
+        // -------------------------------------------------
+
+        string header = frame[..1];
+
+        if (!Rotor.Headers.Any(h =>
+            h.Equals(header, StringComparison.OrdinalIgnoreCase)))
+        {
+            error = $"Invalid header '{header}'";
+            return false;
+        }
+
+        // -------------------------------------------------
+        // TERMINATOR
+        // -------------------------------------------------
+
+        string terminator = frame[^1..];
+
+        if (!Rotor.Terminators.Any(t =>
+            t.Equals(terminator, StringComparison.OrdinalIgnoreCase)))
+        {
+            error = $"Invalid terminator '{terminator}'";
+            return false;
+        }
+
+        // -------------------------------------------------
+        // NODE
+        // -------------------------------------------------
+
+        string node = frame.Substring(1, 1);
+
+        if (!node.Equals(Rotor.Node,
+            StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning(
+                "ROTOR: replacing invalid node '{Old}' with '{New}'",
+                node,
+                Rotor.Node);
+
+            node = Rotor.Node;
+        }
+
+        // -------------------------------------------------
+        // COMMAND
+        // -------------------------------------------------
+
+        string command = frame.Substring(2, 3);
+
+        if (!Rotor.Commands.Any(c =>
+            c.Equals(command,
+                StringComparison.OrdinalIgnoreCase)))
+        {
+            error = $"Invalid command '{command}'";
+            return false;
+        }
+
+        // -------------------------------------------------
+        // NUMERIC
+        // -------------------------------------------------
+
+        string digits = frame.Substring(5, 4);
+
+        if (!int.TryParse(digits, out _))
+        {
+            error = $"Invalid numeric block '{digits}'";
+            return false;
+        }
+
+        // -------------------------------------------------
+        // NORMALIZE
+        // -------------------------------------------------
+
+        normalized =
+            $"{header.ToUpper()}" +
+            $"{Rotor.Node.ToUpper()}" +
+            $"{command.ToUpper()}" +
+            $"{digits}" +
+            $"{terminator.ToUpper()}";
+
+        return true;
+    }
+    private async Task ProcessRotorFramesAsync(CancellationToken token)
+    {
+        while (!token.IsCancellationRequested)
+        {
+            var current = _lineBuffer.ToString();
+
+            if (string.IsNullOrWhiteSpace(current))
+                return;
+
+            // =========================================================
+            // 1. FIND HEADER
+            // =========================================================
+
+            int start = -1;
+
+            foreach (var header in Rotor.Headers)
+            {
+                int idx = current.IndexOf(
+                    header,
+                    StringComparison.OrdinalIgnoreCase);
+
+                if (idx >= 0 && (start < 0 || idx < start))
+                {
+                    start = idx;
+                }
+            }
+
+            if (start < 0)
+            {
+                _logger.LogError(
+                    "ROTOR: no valid header found. Discarding buffer: '{Buffer}'",
+                    current.Replace("\r", "\\r").Replace("\n", "\\n"));
+
+                _lineBuffer.Clear();
+                return;
+            }
+
+            if (start > 0)
+            {
+                _logger.LogWarning(
+                    "ROTOR: discarding noise before frame: '{Noise}'",
+                    current[..start].Replace("\r", "\\r").Replace("\n", "\\n"));
+
+                _lineBuffer.Remove(0, start);
+                current = _lineBuffer.ToString();
+            }
+
+            // =========================================================
+            // 2. FIND TERMINATOR (back-to-front scan)
+            // =========================================================
+
+            int terminatorIndex = -1;
+
+            for (int i = current.Length - 1; i >= 0; i--)
+            {
+                char ch = current[i];
+
+                if (Rotor.Terminators.Contains(ch.ToString()))
+                {
+                    terminatorIndex = i;
+                    break;
+                }
+            }
+
+            if (terminatorIndex < 0)
+            {
+                _logger.LogDebug(
+                    "ROTOR: waiting for terminator. Buffer: '{Buffer}'",
+                    current.Replace("\r", "\\r").Replace("\n", "\\n"));
+
+                return;
+            }
+
+            // =========================================================
+            // 3. EXTRACT FRAME
+            // =========================================================
+
+            string frame = current[..(terminatorIndex + 1)];
+
+            int consumeUntil = terminatorIndex + 1;
+
+            while (consumeUntil < current.Length &&
+                   (current[consumeUntil] == '\r' || current[consumeUntil] == '\n'))
+            {
+                consumeUntil++;
+            }
+
+            _lineBuffer.Remove(0, consumeUntil);
+
+            frame = frame.Trim();
+
+            if (string.IsNullOrWhiteSpace(frame))
+                return;
+
+            // =========================================================
+            // 4. VALIDATE FRAME
+            // =========================================================
+
+            if (!TryParseRotorFrame(
+                    frame,
+                    out var normalized,
+                    out var error))
+            {
+                _logger.LogError(
+                    "ROTOR: discarding invalid frame '{Frame}': {Error}",
+                    frame,
+                    error);
+
+                return;
+            }
+
+            // =========================================================
+            // 5. ACCEPTED FRAME
+            // =========================================================
+
+            _logger.LogDebug(
+                "ROTOR: accepted frame '{Frame}'",
+                normalized);
+
+            var message = new SerialMessage
+            {
+                FunctionName = _functionName,
+                PortPath = PortPath,
+                Payload = Encoding.ASCII.GetBytes(normalized),
+                Text = normalized
+            };
+
+            await _received.Writer
+                .WriteAsync(message, token)
+                .ConfigureAwait(false);
+        }
+    }
 
     // ── Disposal ──────────────────────────────────────────────────────────────
 

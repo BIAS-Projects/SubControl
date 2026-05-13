@@ -568,7 +568,7 @@ public partial class MainViewModel : BaseViewModel
             StatusText = "Opening FLIR control port...";
             if (!await SendAndWaitAsync(SerialFeature, "OPEN", "TOM FLIR", timeout))
             {
-                StatusText = "Warning — FLIR control port unavailable, video may still work";
+                StatusText = "Warning — FLIR control port unavailable";
                 return;
             }
 

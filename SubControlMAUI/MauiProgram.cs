@@ -80,7 +80,7 @@ namespace SubControlMAUI
             builder.Services.AddSingleton<TcpSocketService>();
             builder.Services.AddSingleton<IMessenger>(WeakReferenceMessenger.Default);
 
-            builder.Services.AddSingleton<IRtspFrameDecoder, RtspFrameDecoder>();
+            builder.Services.AddTransient<IRtspFrameDecoder, RtspFrameDecoder>();
 
             builder.Services.AddSingleton<INavigationService, NavigationService>();
 

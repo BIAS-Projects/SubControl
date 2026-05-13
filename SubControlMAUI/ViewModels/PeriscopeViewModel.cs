@@ -36,6 +36,13 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
     // Notify view that a repaint is required
     public event Action? FrameInvalidated;
 
+    private readonly IRtspFrameDecoder _decoder2;
+    private volatile VideoFrame? _currentFrame2;
+    private volatile bool _isDualStream;
+
+    public VideoFrame? CurrentFrame2 => _currentFrame2;
+    public bool IsDualStream => _isDualStream;
+
     // ---------------------------------------------------------------------
     // FPS
     // ---------------------------------------------------------------------
@@ -94,7 +101,8 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
         TcpSocketService tcpService,
         ILogger<PeriscopeViewModel> logger,
         IRtspFrameDecoder decoder,
-        ApplicationStateService applicationStateService)
+        IRtspFrameDecoder decoder2,
+    ApplicationStateService applicationStateService)
     {
         Title = "Periscope";
 
@@ -105,6 +113,7 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
         _logger = logger;
         _decoder = decoder;
         AppState = applicationStateService;
+        _decoder2 = decoder2;
 
         StatusText = "";
 
@@ -168,12 +177,11 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
 
         _messengerService.Register<TcpIsConnected>(this, (r, msg) =>
         {
-
-            //MainThread.BeginInvokeOnMainThread(() =>
-            //{
-            //    AppState.IsConnected = msg.Value;
-            //});
-
+            MainThread.BeginInvokeOnMainThread(async () =>
+            {
+                if (!msg.Value)
+                    await Shell.Current.GoToAsync("//MainPage");
+            });
         });
 
 
@@ -233,6 +241,10 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
         _decoder.FrameReady += OnFrameReady;
         _decoder.StatusChanged += Decoder_StatusChanged;
         _decoder.ErrorOccurred += OnErrorOccurred;
+
+        _decoder2.FrameReady += OnFrameReady2;
+        _decoder2.StatusChanged += Decoder_StatusChanged;
+        _decoder2.ErrorOccurred += OnErrorOccurred;
     }
 
     public void Stop()
@@ -243,8 +255,14 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
         _decoder.StatusChanged -= Decoder_StatusChanged;
         _decoder.ErrorOccurred -= OnErrorOccurred;
 
+        _decoder2.FrameReady -= OnFrameReady2;
+        _decoder2.StatusChanged -= Decoder_StatusChanged;
+        _decoder2.ErrorOccurred -= OnErrorOccurred;
+
         var old = Interlocked.Exchange(ref _currentFrame, null);
         old?.Release();
+        var old2 = Interlocked.Exchange(ref _currentFrame2, null);
+        old2?.Release();
     }
 
     public void Dispose()
@@ -290,6 +308,17 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
         });
     }
 
+    private void OnFrameReady2(VideoFrame newFrame)
+    {
+        if (_disposed) { newFrame.Release(); return; }
+
+        var old = Interlocked.Exchange(ref _currentFrame2, newFrame);
+        old?.Release();
+
+        MainThread.BeginInvokeOnMainThread(() => FrameInvalidated?.Invoke());
+    }
+
+
     private void Decoder_StatusChanged(string status)
     {
         MainThread.BeginInvokeOnMainThread(() =>
@@ -319,7 +348,23 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
     // Commands
     // ---------------------------------------------------------------------
 
-  
+    [RelayCommand]
+    private void DisplayDualVideo()
+    {
+        _isDualStream = true;
+
+        var old = Interlocked.Exchange(ref _currentFrame, null);
+        old?.Release();
+        var old2 = Interlocked.Exchange(ref _currentFrame2, null);
+        old2?.Release();
+
+        StatusText = "Connecting dual stream...";
+        IsBusy = true;
+
+        _decoder.Start(rtspVideoUrl);
+        _decoder2.Start(rtspFLIRUrl);
+    }
+
     [RelayCommand]
     private async Task SetFlirWhitehot()
     {
@@ -372,85 +417,127 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
         }
     }
 
-        [RelayCommand]
+    [RelayCommand]
     private void DisplayStandardVideo()
     {
+        _isDualStream = false;
+        _decoder2.Stop();
         StartStream(rtspVideoUrl);
     }
+
 
     [RelayCommand]
     private void DisplayFLIRVideo()
     {
+        _isDualStream = false;
+        _decoder2.Stop();
         StartStream(rtspFLIRUrl);
     }
+
 
 
     [RelayCommand]
     private void StopVideo()
     {
+        _isDualStream = false;
         _decoder.Stop();
+        _decoder2.Stop();
 
         var old = Interlocked.Exchange(ref _currentFrame, null);
         old?.Release();
+        var old2 = Interlocked.Exchange(ref _currentFrame2, null);
+        old2?.Release();
 
-        MainThread.BeginInvokeOnMainThread(() =>
-        {
-            Fps = 0;
-        });
-
+        MainThread.BeginInvokeOnMainThread(() => Fps = 0);
         FrameInvalidated?.Invoke();
     }
 
     [RelayCommand]
     private async Task TakeSnapShot()
+    {
+        StatusText = "Taking Snapshot...";
+        IsBusy = true;
+
+        try
         {
-            StatusText = "Taking Snapshot...";
-            IsBusy = true;
-
-            try
+            if (_isDualStream)
             {
+                var frame1 = _currentFrame;
+                var frame2 = _currentFrame2;
 
-                var frame = _currentFrame;
-
-                if (frame is null)
+                if (frame1 is null && frame2 is null)
                     return;
 
                 try
                 {
-                    //var path = Path.Combine(
-                    //    FileSystem.AppDataDirectory,
-                    //    $"snap_{DateTime.Now:yyyyMMdd_HHmmss}.png");
+                    string path = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
+                        $"snap_dual_{DateTime.Now:yyyyMMdd_HHmmss}.png");
 
+                    // Use whichever frame is available for dimensions
+                    int w1 = frame1?.Width ?? 0, h1 = frame1?.Height ?? 0;
+                    int w2 = frame2?.Width ?? 0, h2 = frame2?.Height ?? 0;
 
+                    int totalWidth = w1 + w2;
+                    int totalHeight = Math.Max(h1, h2);
+
+                    if (totalWidth <= 0 || totalHeight <= 0)
+                        return;
+
+                    var compositeInfo = new SKImageInfo(
+                        totalWidth, totalHeight,
+                        SKColorType.Bgra8888, SKAlphaType.Premul);
+
+                    using var surface = SKSurface.Create(compositeInfo);
+                    var canvas = surface.Canvas;
+                    canvas.Clear(SKColors.Black);
+
+                    // Draw frame1 on the left
+                    if (frame1 is not null)
+                        DrawFrameToCanvas(canvas, frame1,
+                            new SKRect(0, 0, w1, totalHeight));
+
+                    // Draw frame2 on the right
+                    if (frame2 is not null)
+                        DrawFrameToCanvas(canvas, frame2,
+                            new SKRect(w1, 0, w1 + w2, totalHeight));
+
+                    using var image = surface.Snapshot();
+                    using var png = image.Encode(SKEncodedImageFormat.Png, 95);
+                    await using var fs = File.OpenWrite(path);
+                    png.SaveTo(fs);
+
+                    StatusText = "Dual Snapshot Saved";
+                }
+                catch (Exception ex)
+                {
+                    StatusText = "Snapshot Failed";
+                }
+            }
+            else
+            {
+                // Original single-stream snapshot
+                var frame = _currentFrame;
+                if (frame is null) return;
+
+                try
+                {
                     string path = Path.Combine(
                         Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
                         $"snap_{DateTime.Now:yyyyMMdd_HHmmss}.png");
 
                     var info = new SKImageInfo(
-                        frame.Width,
-                        frame.Height,
-                        SKColorType.Bgra8888,
-                        SKAlphaType.Premul);
+                        frame.Width, frame.Height,
+                        SKColorType.Bgra8888, SKAlphaType.Premul);
 
                     var gcHandle = GCHandle.Alloc(frame.Data, GCHandleType.Pinned);
-
                     try
                     {
                         using var bmp = new SKBitmap();
-
-                        bmp.InstallPixels(
-                            info,
-                            gcHandle.AddrOfPinnedObject(),
-                            frame.Stride);
-
+                        bmp.InstallPixels(info, gcHandle.AddrOfPinnedObject(), frame.Stride);
                         using var image = SKImage.FromBitmap(bmp);
-
-                        using var png = image.Encode(
-                            SKEncodedImageFormat.Png,
-                            95);
-
+                        using var png = image.Encode(SKEncodedImageFormat.Png, 95);
                         await using var fs = File.OpenWrite(path);
-
                         png.SaveTo(fs);
                     }
                     finally
@@ -459,20 +546,48 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
                     }
 
                     StatusText = "Snapshot Saved";
-
                 }
                 catch (Exception ex)
                 {
-
                     StatusText = "Snapshot Failed";
-
                 }
             }
-            finally
-            {
-                IsBusy = false;
-            }
-        
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    // Shared by TakeSnapShot — mirrors the letterboxing logic in PeriscopePage.xaml.cs
+    private static void DrawFrameToCanvas(SKCanvas canvas, VideoFrame frame, SKRect destRect)
+    {
+        float scaleX = destRect.Width / frame.Width;
+        float scaleY = destRect.Height / frame.Height;
+        float scale = Math.Min(scaleX, scaleY);
+
+        float drawW = frame.Width * scale;
+        float drawH = frame.Height * scale;
+        float offsetX = destRect.Left + (destRect.Width - drawW) / 2f;
+        float offsetY = destRect.Top + (destRect.Height - drawH) / 2f;
+
+        var centredRect = new SKRect(offsetX, offsetY, offsetX + drawW, offsetY + drawH);
+
+        var handle = GCHandle.Alloc(frame.Data, GCHandleType.Pinned);
+        try
+        {
+            using var bmp = new SKBitmap();
+            bmp.InstallPixels(
+                new SKImageInfo(frame.Width, frame.Height, SKColorType.Bgra8888, SKAlphaType.Premul),
+                handle.AddrOfPinnedObject(),
+                frame.Stride);
+
+            canvas.DrawBitmap(bmp, centredRect);
+        }
+        finally
+        {
+            handle.Free();
+        }
     }
 
     // ---------------------------------------------------------------------

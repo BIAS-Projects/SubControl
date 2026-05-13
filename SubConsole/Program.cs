@@ -14,7 +14,7 @@ using SubConsole.Services.TCP;
 using SubConsole.Services.Video;
 using System.Runtime.InteropServices;
 
-var levelSwitch = new LoggingLevelSwitch(LogEventLevel.Information);
+var levelSwitch = new LoggingLevelSwitch(LogEventLevel.Debug);
 try
 {
     Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "logs"));

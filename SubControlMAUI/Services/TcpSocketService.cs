@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using SubControlMAUI.Messages;
 using SubControlMAUI.Models;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -176,6 +177,9 @@ namespace SubControlMAUI.Services
                 var text = parts.Length > 2 ? parts[2] : "";
 
                 var pushBody = new TCPMessageBody<string>(functionName, "PUSH", text);
+
+                Debug.WriteLine($"TCPSocketService PUSH {functionName} {text}");
+
                 _messenger.Send(new TcpDataReceivedMessage(pushBody));
                 return;
             }

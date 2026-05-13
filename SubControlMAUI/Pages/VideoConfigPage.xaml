@@ -8,7 +8,8 @@
              Title="{Binding Title}"
              Shell.NavBarIsVisible="True">
     <Grid Padding="10"
-          RowDefinitions="Auto,Auto,*,Auto">
+          RowDefinitions="Auto,Auto,*,Auto"
+          IsEnabled="{Binding IsNotBusy}">
 
         <!-- Status -->
         <Label Grid.Row="0"
@@ -29,7 +30,8 @@
                      HeightRequest="30"
                      BackgroundColor="Transparent"
                      Command="{Binding QueryDevicesCommand}"
-                     Margin="0,0,0,10" />
+                     Margin="0,0,0,10" 
+                      IsEnabled="{Binding AppState.IsConnected}"/>
 
         <!-- Camera list -->
         <CollectionView Grid.Row="2"
@@ -59,19 +61,19 @@
                      BackgroundColor="Transparent"
                      Command="{Binding SaveCommand}"
                      IsEnabled="{Binding CameraDetailsDownloaded}"
-                     Margin="0,10,0,0" />
+                     Margin="0,10,0,0"/>
 
         <!-- Busy overlay -->
-        <Grid Grid.Row="0" Grid.RowSpan="4"
-              IsVisible="{Binding IsBusy}"
-              BackgroundColor="#80000000"
-              ZIndex="1">
+        <Grid IsVisible="{Binding IsBusy}"
+      BackgroundColor="#80000000"
+      Grid.RowSpan="4"
+      ZIndex="1">
             <ActivityIndicator IsRunning="{Binding IsBusy}"
-                               IsVisible="{Binding IsBusy}"
-                               VerticalOptions="Center"
-                               HorizontalOptions="Center"
-                               WidthRequest="60"
-                               HeightRequest="60" />
+                       IsVisible="{Binding IsBusy}"
+                       VerticalOptions="Center"
+                       HorizontalOptions="Center"
+                       WidthRequest="60"
+                       HeightRequest="60" />
         </Grid>
 
     </Grid>

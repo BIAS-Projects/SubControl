@@ -24,6 +24,7 @@ public partial class FeatureOptionViewModel : BaseViewModel
     private IAlertService _alertService;
     private TcpSocketService _tcpService;
     private CancellationTokenSource _cts = new();
+    public ApplicationStateService AppState { get; }
 
     private bool _isRebuilding = false;
     [ObservableProperty]
@@ -39,14 +40,15 @@ public partial class FeatureOptionViewModel : BaseViewModel
     new FunctionToPortEntry { FunctionName = "TOM AHRS",   BaudRate = "115200", WorkerType = SerialWorkerType.Text.ToString() },
     new FunctionToPortEntry { FunctionName = "TOM GNSS",   BaudRate = "115200", WorkerType = SerialWorkerType.Text.ToString() },
     new FunctionToPortEntry { FunctionName = "TOM FLIR",   BaudRate = "921600", WorkerType = SerialWorkerType.Flir.ToString() },
-    new FunctionToPortEntry { FunctionName = "ROTOR",      BaudRate = "115200", WorkerType = SerialWorkerType.Text.ToString() },
+    new FunctionToPortEntry { FunctionName = "ROTOR",      BaudRate = "9600", WorkerType = SerialWorkerType.Text.ToString() },
 };
 
     public FeatureOptionViewModel(IMessenger messengerService,
         ILogger<FeatureOptionViewModel> loggerService,
         INavigationService navigationService, 
         IAlertService alertService,
-        TcpSocketService tcpService)
+        TcpSocketService tcpService,
+        ApplicationStateService applicationStateService)
     {
 
         _messengerService = messengerService;
@@ -54,6 +56,7 @@ public partial class FeatureOptionViewModel : BaseViewModel
         _navigationService = navigationService;
         _alertService = alertService;
         _tcpService = tcpService;
+        AppState = applicationStateService;
 
         Title = "Feature to USB Mapping";
 
@@ -99,7 +102,7 @@ public partial class FeatureOptionViewModel : BaseViewModel
 
 
 
-            await _alertService.ShowAlertAsync("Information", $"TcpDataReceivedMessage: {msg.Value}", "OK");
+      //      await _alertService.ShowAlertAsync("Information", $"TcpDataReceivedMessage: {msg.Value}", "OK");
         });
 
         _messengerService.Register<TcpSendRequestMessage>(this, async (r, msg) =>
@@ -108,7 +111,7 @@ public partial class FeatureOptionViewModel : BaseViewModel
 
          //   await MainThread.InvokeOnMainThreadAsync(async () =>
          //   {
-                await _alertService.ShowAlertAsync("Information", $"TcpSendRequestMessage: {msg.Value}", "OK");
+         //       await _alertService.ShowAlertAsync("Information", $"TcpSendRequestMessage: {msg.Value}", "OK");
          //   });
 
         });

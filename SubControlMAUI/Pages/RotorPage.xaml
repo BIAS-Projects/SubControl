@@ -17,23 +17,29 @@
 
         <Grid RowDefinitions="Auto,Auto,*,Auto"
               Padding="20">
+            <!-- ========================================================= -->
+            <!-- STATUS BAR -->
+            <!-- ========================================================= -->
 
-            <!-- STATUS -->
+            <Border Grid.Row="0"
+                StrokeThickness="0"
+                Padding="12,8">
 
-            <Label Grid.Row="0"
-                   HorizontalOptions="Center"
-                   FontSize="24"
-                   FontAttributes="Bold">
+                <Grid ColumnDefinitions="Auto,*">
 
-                <Label.FormattedText>
-                    <FormattedString>
-                        <Span Text="Current: "/>
-                        <Span Text="{Binding ArmAngle, StringFormat='{0:F0}'}"/>
-                        <Span Text="°"/>
-                    </FormattedString>
-                </Label.FormattedText>
+                    <Label Text="Status:"
+                       FontAttributes="Bold"
+                       VerticalOptions="Center" />
 
-            </Label>
+                    <Label Grid.Column="1"
+                       Margin="10,0,0,0"
+                       Text="{Binding StatusText}"
+                       VerticalOptions="Center"
+                       LineBreakMode="TailTruncation" />
+
+                </Grid>
+
+            </Border>
 
             <!-- SLIDER -->
 
@@ -84,7 +90,8 @@
                         Text="◀"
                         FontSize="36"
                         HeightRequest="80"
-                        Command="{Binding LeftCommand}" />
+                        Command="{Binding ParkCommand}"
+                        IsEnabled="{Binding IsNotBusy}"/>
 
                 <!-- STOP -->
 
@@ -94,7 +101,9 @@
                         HeightRequest="80"
                         BackgroundColor="#cc3333"
                         TextColor="White"
-                        Command="{Binding StopCommand}" />
+                        Command="{Binding StopCommand}"
+                        IsEnabled="{Binding IsNotBusy}"
+                        />
 
                 <!-- RIGHT -->
 
@@ -102,17 +111,18 @@
                         Text="▶"
                         FontSize="36"
                         HeightRequest="80"
-                        Command="{Binding RightCommand}" />
+                        Command="{Binding DeployCommand}"
+                        IsEnabled="{Binding IsNotBusy}"/>
 
             </Grid>
 
         </Grid>
 
-        <!-- ===================================================== -->
-        <!-- BUSY OVERLAY -->
-        <!-- ===================================================== -->
+         <!--===================================================== 
+         BUSY OVERLAY 
+         =====================================================--> 
 
-        <Grid IsVisible="{Binding IsBusy}"
+        <!--<Grid IsVisible="{Binding IsBusy}"
               BackgroundColor="#80000000"
               ZIndex="10">
 
@@ -123,7 +133,7 @@
                 WidthRequest="60"
                 HeightRequest="60"/>
 
-        </Grid>
+        </Grid>-->
 
     </Grid>
 

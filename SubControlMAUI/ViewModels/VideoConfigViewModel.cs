@@ -19,6 +19,7 @@ public partial class VideoConfigViewModel : BaseViewModel
     private readonly IAlertService _alertService;
     private readonly TcpSocketService _tcpService;
     private readonly CancellationTokenSource _cts = new();
+    public ApplicationStateService AppState { get; }
 
     // The routing feature name the server uses to identify this client
     private static string Feature => nameof(VideoConfigViewModel) + "CAMERA";
@@ -42,13 +43,15 @@ public partial class VideoConfigViewModel : BaseViewModel
         ILogger<VideoConfigViewModel> loggerService,
         INavigationService navigationService,
         IAlertService alertService,
-        TcpSocketService tcpService)
+        TcpSocketService tcpService,
+        ApplicationStateService applicationStateService)
     {
         _messengerService = messengerService;
         _loggerService = loggerService;
         _navigationService = navigationService;
         _alertService = alertService;
         _tcpService = tcpService;
+        AppState = applicationStateService;
 
         Title = "Camera Stream Configuration";
 
@@ -108,6 +111,7 @@ public partial class VideoConfigViewModel : BaseViewModel
                     await Shell.Current.GoToAsync("//MainPage");
             });
         });
+
     }
 
     // ── Commands ──────────────────────────────────────────────────────────────

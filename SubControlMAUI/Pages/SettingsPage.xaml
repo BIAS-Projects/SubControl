@@ -69,16 +69,17 @@
 
 
         <!-- BUSY OVERLAY (on top) -->
+        <!-- Busy overlay -->
         <Grid IsVisible="{Binding IsBusy}"
-              BackgroundColor="#80000000"
-              ZIndex="1">
-
+      BackgroundColor="#80000000"
+      Grid.RowSpan="5"
+      ZIndex="1">
             <ActivityIndicator IsRunning="{Binding IsBusy}"
-                               IsVisible="{Binding IsBusy}"
-                               VerticalOptions="Center"
-                               HorizontalOptions="Center"
-                               WidthRequest="60"
-                               HeightRequest="60" />
+                       IsVisible="{Binding IsBusy}"
+                       VerticalOptions="Center"
+                       HorizontalOptions="Center"
+                       WidthRequest="60"
+                       HeightRequest="60" />
         </Grid>
 
     </Grid>
