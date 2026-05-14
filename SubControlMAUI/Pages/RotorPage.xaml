@@ -47,7 +47,8 @@
                     Margin="0,30,0,30"
                     Minimum="0"
                     Maximum="180"
-                    Value="{Binding ArmAngle, Mode=TwoWay}" />
+                    Value="{Binding ArmAngle, Mode=TwoWay}"
+                    IsEnabled="False"/>
 
             <!-- CENTER VISUAL -->
 
@@ -99,8 +100,8 @@
                         Text="STOP"
                         FontSize="24"
                         HeightRequest="80"
-                        BackgroundColor="#cc3333"
-                        TextColor="White"
+                   
+          
                         Command="{Binding StopCommand}"
                         IsEnabled="{Binding IsNotBusy}"
                         />
