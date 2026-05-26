@@ -25,10 +25,10 @@ namespace SubControlMAUI.ViewModels;
 //   - Corrupt frames : "Frame rejected" warning
 //   - Mis-ordering   : RECV timestamps out of order relative to SEND timestamps
 // ─────────────────────────────────────────────────────────────────────────────
-public partial class RotorViewModel : BaseViewModel
+public partial class RotatorViewModel : BaseViewModel
 {
     // ── services ──────────────────────────────────────────────────────────────
-    private readonly ILogger<RotorViewModel> _logger;
+    private readonly ILogger<RotatorViewModel> _logger;
     private readonly IMessenger _messenger;
     private readonly TcpSocketService _tcp;
     private readonly IAlertService _alertService;
@@ -57,14 +57,14 @@ public partial class RotorViewModel : BaseViewModel
     private const long CommandDebounceMs = 400;
 
     // ─────────────────────────────────────────────────────────────────────────
-    public RotorViewModel(
+    public RotatorViewModel(
         IMessenger messenger,
-        ILogger<RotorViewModel> logger,
+        ILogger<RotatorViewModel> logger,
         TcpSocketService tcp,
         ApplicationStateService appState,
         IAlertService alertService)
     {
-        Title = "Rotor Control";
+        Title = "Rotator Control";
         _logger = logger;
         _messenger = messenger;
         AppState = appState;
@@ -144,28 +144,28 @@ public partial class RotorViewModel : BaseViewModel
             var recvSeq = Interlocked.Increment(ref _recvSeq);
             var ts = DateTimeOffset.Now;
 
-            // Log every packet so non-ROTOR traffic is visible too.
+            // Log every packet so non-ROTATOR traffic is visible too.
             _logger.LogDebug(
                 "[RECV R#{Seq:D5} {Ts:HH:mm:ss.fff}] function='{Function}' raw='{Raw}'",
                 recvSeq, ts, function, raw?.Trim());
 
-            if (!function.Equals("ROTOR", StringComparison.OrdinalIgnoreCase))
+            if (!function.Equals("ROTATOR", StringComparison.OrdinalIgnoreCase))
                 return Task.CompletedTask;
 
             var data = raw?.Trim();
             if (string.IsNullOrWhiteSpace(data))
             {
                 _logger.LogWarning(
-                    "[RECV R#{Seq:D5}] ROTOR packet has empty data — possible framing error",
+                    "[RECV R#{Seq:D5}] ROTATOR packet has empty data — possible framing error",
                     recvSeq);
                 return Task.CompletedTask;
             }
 
             // ── framing validation ────────────────────────────────────────────
-            bool hasValidHeader = Rotor.Headers.Any(h =>
+            bool hasValidHeader = Rotator.Headers.Any(h =>
                 data.StartsWith(h, StringComparison.OrdinalIgnoreCase));
 
-            bool hasValidTerminator = Rotor.Terminators.Any(t =>
+            bool hasValidTerminator = Rotator.Terminators.Any(t =>
                 data.EndsWith(t, StringComparison.OrdinalIgnoreCase));
 
             if (!hasValidHeader || !hasValidTerminator)
@@ -240,23 +240,23 @@ public partial class RotorViewModel : BaseViewModel
     // ─────────────────────────────────────────────────────────────────────────
     [RelayCommand]
     private async Task Park()
-        => await FireCommandAsync("Park", Rotor.ParkMotorA);
+        => await FireCommandAsync("Park", Rotator.ParkMotorA);
 
     [RelayCommand]
     private async Task Deploy()
-        => await FireCommandAsync("Deploy", Rotor.DeployMotorA);
+        => await FireCommandAsync("Deploy", Rotator.DeployMotorA);
 
     [RelayCommand]
     private async Task Forward()
-        => await FireCommandAsync("Forward", Rotor.PanMotorAForward);
+        => await FireCommandAsync("Forward", Rotator.PanMotorAForward);
 
     [RelayCommand]
     private async Task Backward()
-        => await FireCommandAsync("Backward", Rotor.PanMotorABackward);
+        => await FireCommandAsync("Backward", Rotator.PanMotorABackward);
 
     [RelayCommand]
     private async Task Stop()
-        => await FireCommandAsync("Stop", Rotor.StopPanMotorA);
+        => await FireCommandAsync("Stop", Rotator.StopPanMotorA);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Core send helper – debounced to prevent device input buffer flooding.
@@ -288,7 +288,7 @@ public partial class RotorViewModel : BaseViewModel
         IsBusy = true;
 
         bool sent = await _tcp.SendCommandAsync(
-            new TCPMessageBody<string>("ROTOR", "WRITE TEXT", payload),
+            new TCPMessageBody<string>("ROTATOR", "WRITE TEXT", payload),
             CancellationToken.None);
 
         if (sent)
@@ -367,10 +367,10 @@ public partial class RotorViewModel : BaseViewModel
 
         _logger.LogInformation(
             "[SEND S#{Seq:D5} {Ts:HH:mm:ss.fff}] command='PollEncoder' payload='{Payload}'",
-            seq, DateTimeOffset.Now, Rotor.EncoderLocationA.TrimEnd('\r', '\n'));
+            seq, DateTimeOffset.Now, Rotator.EncoderLocationA.TrimEnd('\r', '\n'));
 
         bool sent = await _tcp.SendCommandAsync(
-            new TCPMessageBody<string>("ROTOR", "WRITE TEXT", Rotor.EncoderLocationA),
+            new TCPMessageBody<string>("ROTATOR", "WRITE TEXT", Rotator.EncoderLocationA),
             token);
 
         if (!sent)

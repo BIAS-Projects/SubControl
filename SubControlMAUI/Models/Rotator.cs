@@ -4,7 +4,7 @@ using System.Text;
 
 namespace SubControlMAUI.Models
 {
-    public static class Rotor
+    public static class Rotator
     {
         private static double _encoderScalingFactor = 0.0879;
 
@@ -41,6 +41,9 @@ namespace SubControlMAUI.Models
   //      public static string StopPanMotorA { get; set; } = $"#AMLF7101W\r\n";
 
         public static string EncoderLocationA { get; set; } = $"#AMRL0000R\r\n";
+
+        public static string GetFirmwareVersion { get; set; } = $"##AMRV0000R\r\n";
+
 
         public static int ConvertDegreesToCommandValue (int degrees)
         {

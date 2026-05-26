@@ -5,6 +5,7 @@ namespace SubControlMAUI;
 public partial class App : Application
 {
     private readonly AppShell _appShell;
+    public static event Action? ThemeChanged;
 
     public App(AppShell appShell)
     {
@@ -14,6 +15,16 @@ public partial class App : Application
 
     protected override Window CreateWindow(IActivationState? activationState)
     {
-        return new Window(_appShell);  
+        var window = new Window(_appShell);
+
+        if (Application.Current is not null)
+        {
+            Application.Current.RequestedThemeChanged += (_, _) =>
+            {
+                ThemeChanged?.Invoke();
+            };
+        }
+
+        return window;
     }
 }

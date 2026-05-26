@@ -130,7 +130,12 @@
                   VerticalOptions="Center">
 
                 <VerticalStackLayout Grid.Column="0" Spacing="8" HorizontalOptions="Center">
-
+                    <ImageButton Source="{Binding VideoEnableButtonImage}"
+                                WidthRequest="30"
+                                HeightRequest="30"
+                                 BackgroundColor="Transparent"
+                                 Command="{Binding ToggleVideoEnable}"
+                                 IsEnabled="{Binding IsConnected}" />
                     <ImageButton
                         Source="{AppThemeBinding Light=light_video.png, Dark=dark_video.png}"
                         WidthRequest="{Binding ButtonSize}"
@@ -147,25 +152,34 @@
                     <Label Text="Video" HorizontalOptions="Center"/>
                 </VerticalStackLayout>
 
-                <!-- ROTOR -->
+                <!-- ROTATOR -->
                 <VerticalStackLayout Grid.Column="1" Spacing="8" HorizontalOptions="Center">
-                    <ImageButton Source="{AppThemeBinding Light=light_robot_arm.png, Dark=dark_robot_arm.png}"
+                    <ImageButton Source="{Binding RotatorEnableButtonImage}"
+                                WidthRequest="30"
+                                HeightRequest="30"
+                                 BackgroundColor="Transparent"
+                                 Command="{Binding ToggleRotatorEnable}"
+                                 IsEnabled="{Binding IsConnected}" />
+
+                    <ImageButton Source="{AppThemeBinding Light=light_roundabout.png, Dark=dark_roundabout.png}"
                                  WidthRequest="{Binding ButtonSize}"
                                  HeightRequest="{Binding ButtonSize}"
                                  BackgroundColor="Transparent"
-                                 Command="{Binding RotorCommand}"
+                                 Command="{Binding RotatorCommand}"
                                  IsEnabled="{Binding IsSystemEnabled}" />
 
                     <BoxView HeightRequest="8"
                              WidthRequest="60"
                              CornerRadius="4"
-                             Color="{Binding RotorStatusColor}" />
+                             Color="{Binding RotatorStatusColor}" />
 
-                    <Label Text="Rotor" HorizontalOptions="Center"/>
+                    <Label Text="Rotator" HorizontalOptions="Center"/>
                 </VerticalStackLayout>
 
                 <!-- SETTINGS -->
                 <VerticalStackLayout Grid.Column="2" Spacing="8" HorizontalOptions="Center">
+
+                    
                     <ImageButton Source="{AppThemeBinding Light=light_settings.png, Dark=dark_settings.png}"
                                  WidthRequest="{Binding ButtonSize}"
                                  HeightRequest="{Binding ButtonSize}"

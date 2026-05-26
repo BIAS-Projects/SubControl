@@ -356,11 +356,11 @@ public sealed class SerialPortWorker : ISerialWorker
         _lineBuffer.Append(chunk);
 
 
-      //  ROTOR has custom framing
-        if (_functionName == "ROTOR")
+      //  ROTATOR has custom framing
+        if (_functionName == "ROTATOR")
         {
             _logger.LogDebug("Customer processing for {FunctionName}", _functionName);
-            await ProcessRotorFramesAsync(token)
+            await ProcessRotatorFramesAsync(token)
                 .ConfigureAwait(false);
 
             return;
@@ -407,7 +407,7 @@ public sealed class SerialPortWorker : ISerialWorker
         }
     }
 
-    private bool TryParseRotorFrame(
+    private bool TryParseRotatorFrame(
     string frame,
     out string normalized,
     out string error)
@@ -430,7 +430,7 @@ public sealed class SerialPortWorker : ISerialWorker
 
         string header = frame[..1];
 
-        if (!Rotor.Headers.Any(h =>
+        if (!Rotator.Headers.Any(h =>
             h.Equals(header, StringComparison.OrdinalIgnoreCase)))
         {
             error = $"Invalid header '{header}'";
@@ -443,7 +443,7 @@ public sealed class SerialPortWorker : ISerialWorker
 
         string terminator = frame[^1..];
 
-        if (!Rotor.Terminators.Any(t =>
+        if (!Rotator.Terminators.Any(t =>
             t.Equals(terminator, StringComparison.OrdinalIgnoreCase)))
         {
             error = $"Invalid terminator '{terminator}'";
@@ -456,15 +456,15 @@ public sealed class SerialPortWorker : ISerialWorker
 
         string node = frame.Substring(1, 1);
 
-        if (!node.Equals(Rotor.Node,
+        if (!node.Equals(Rotator.Node,
             StringComparison.OrdinalIgnoreCase))
         {
             _logger.LogWarning(
-                "ROTOR: replacing invalid node '{Old}' with '{New}'",
+                "ROTATOR: replacing invalid node '{Old}' with '{New}'",
                 node,
-                Rotor.Node);
+                Rotator.Node);
 
-            node = Rotor.Node;
+            node = Rotator.Node;
         }
 
         // -------------------------------------------------
@@ -473,7 +473,7 @@ public sealed class SerialPortWorker : ISerialWorker
 
         string command = frame.Substring(2, 3);
 
-        if (!Rotor.Commands.Any(c =>
+        if (!Rotator.Commands.Any(c =>
             c.Equals(command,
                 StringComparison.OrdinalIgnoreCase)))
         {
@@ -499,14 +499,14 @@ public sealed class SerialPortWorker : ISerialWorker
 
         normalized =
             $"{header.ToUpper()}" +
-            $"{Rotor.Node.ToUpper()}" +
+            $"{Rotator.Node.ToUpper()}" +
             $"{command.ToUpper()}" +
             $"{digits}" +
             $"{terminator.ToUpper()}";
 
         return true;
     }
-    private async Task ProcessRotorFramesAsync(CancellationToken token)
+    private async Task ProcessRotatorFramesAsync(CancellationToken token)
     {
         while (!token.IsCancellationRequested)
         {
@@ -521,7 +521,7 @@ public sealed class SerialPortWorker : ISerialWorker
 
             int start = -1;
 
-            foreach (var header in Rotor.Headers)
+            foreach (var header in Rotator.Headers)
             {
                 int idx = current.IndexOf(
                     header,
@@ -536,7 +536,7 @@ public sealed class SerialPortWorker : ISerialWorker
             if (start < 0)
             {
                 _logger.LogError(
-                    "ROTOR: no valid header found. Discarding buffer: '{Buffer}'",
+                    "ROTATOR: no valid header found. Discarding buffer: '{Buffer}'",
                     current.Replace("\r", "\\r").Replace("\n", "\\n"));
 
                 _lineBuffer.Clear();
@@ -546,7 +546,7 @@ public sealed class SerialPortWorker : ISerialWorker
             if (start > 0)
             {
                 _logger.LogWarning(
-                    "ROTOR: discarding noise before frame: '{Noise}'",
+                    "ROTATOR: discarding noise before frame: '{Noise}'",
                     current[..start].Replace("\r", "\\r").Replace("\n", "\\n"));
 
                 _lineBuffer.Remove(0, start);
@@ -563,7 +563,7 @@ public sealed class SerialPortWorker : ISerialWorker
             {
                 char ch = current[i];
 
-                if (Rotor.Terminators.Contains(ch.ToString()))
+                if (Rotator.Terminators.Contains(ch.ToString()))
                 {
                     terminatorIndex = i;
                     break;
@@ -573,7 +573,7 @@ public sealed class SerialPortWorker : ISerialWorker
             if (terminatorIndex < 0)
             {
                 _logger.LogDebug(
-                    "ROTOR: waiting for terminator. Buffer: '{Buffer}'",
+                    "ROTATOR: waiting for terminator. Buffer: '{Buffer}'",
                     current.Replace("\r", "\\r").Replace("\n", "\\n"));
 
                 return;
@@ -604,13 +604,13 @@ public sealed class SerialPortWorker : ISerialWorker
             // 4. VALIDATE FRAME
             // =========================================================
 
-            if (!TryParseRotorFrame(
+            if (!TryParseRotatorFrame(
                     frame,
                     out var normalized,
                     out var error))
             {
                 _logger.LogError(
-                    "ROTOR: discarding invalid frame '{Frame}': {Error}",
+                    "ROTATOR: discarding invalid frame '{Frame}': {Error}",
                     frame,
                     error);
 
@@ -622,7 +622,7 @@ public sealed class SerialPortWorker : ISerialWorker
             // =========================================================
 
             _logger.LogDebug(
-                "ROTOR: accepted frame '{Frame}'",
+                "ROTATOR: accepted frame '{Frame}'",
                 normalized);
 
             var message = new SerialMessage

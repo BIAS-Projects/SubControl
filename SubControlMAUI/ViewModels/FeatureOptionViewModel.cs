@@ -35,12 +35,12 @@ public partial class FeatureOptionViewModel : BaseViewModel
 
     private readonly List<FunctionToPortEntry> _allFunctions = new()
 {
-    new FunctionToPortEntry { FunctionName = "TOM Input",  BaudRate = "115200", WorkerType = SerialWorkerType.Text.ToString() },
-    new FunctionToPortEntry { FunctionName = "TOM Output", BaudRate = "115200", WorkerType = SerialWorkerType.Text.ToString() },
-    new FunctionToPortEntry { FunctionName = "TOM AHRS",   BaudRate = "115200", WorkerType = SerialWorkerType.Text.ToString() },
-    new FunctionToPortEntry { FunctionName = "TOM GNSS",   BaudRate = "115200", WorkerType = SerialWorkerType.Text.ToString() },
-    new FunctionToPortEntry { FunctionName = "TOM FLIR",   BaudRate = "921600", WorkerType = SerialWorkerType.Flir.ToString() },
-    new FunctionToPortEntry { FunctionName = "ROTOR",      BaudRate = "9600", WorkerType = SerialWorkerType.Text.ToString() },
+    new FunctionToPortEntry { FunctionName = Feature.TOMInput,  BaudRate = "115200", WorkerType = SerialWorkerType.Text.ToString() },
+    new FunctionToPortEntry { FunctionName = Feature.TOMOutput, BaudRate = "115200", WorkerType = SerialWorkerType.Text.ToString() },
+    new FunctionToPortEntry { FunctionName = Feature.TOMAHRS,   BaudRate = "115200", WorkerType = SerialWorkerType.Text.ToString() },
+    new FunctionToPortEntry { FunctionName = Feature.TOMGNSS,   BaudRate = "115200", WorkerType = SerialWorkerType.Text.ToString() },
+    new FunctionToPortEntry { FunctionName = Feature.TOMFLIR,   BaudRate = "921600", WorkerType = SerialWorkerType.Flir.ToString() },
+    new FunctionToPortEntry { FunctionName = Feature.RotatorName,      BaudRate = "9600", WorkerType = SerialWorkerType.Text.ToString() },
 };
 
     public FeatureOptionViewModel(IMessenger messengerService,

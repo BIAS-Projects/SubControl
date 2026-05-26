@@ -2,11 +2,11 @@ using SubControlMAUI.ViewModels;
 
 namespace SubControlMAUI.Pages;
 
-public partial class RotorPage : ContentPage
+public partial class RotatorPage : ContentPage
 {
-    private readonly RotorViewModel _viewModel;
+    private readonly RotatorViewModel _viewModel;
 
-    public RotorPage(RotorViewModel viewModel)
+    public RotatorPage(RotatorViewModel viewModel)
     {
         InitializeComponent();
 

@@ -69,8 +69,8 @@ namespace SubControlMAUI
             builder.Services.AddSingleton<TechPage>();
             builder.Services.AddSingleton<TechViewModel>();
 
-            builder.Services.AddSingleton<RotorPage>();
-            builder.Services.AddSingleton<RotorViewModel>();
+            builder.Services.AddSingleton<RotatorPage>();
+            builder.Services.AddSingleton<RotatorViewModel>();
 
 
             builder.Services.AddSingleton<SQLiteService>();

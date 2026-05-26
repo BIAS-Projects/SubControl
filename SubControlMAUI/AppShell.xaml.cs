@@ -16,7 +16,7 @@ namespace SubControlMAUI
             // All pages now need explicit registration since none are Shell tabs
             //Routing.RegisterRoute(nameof(MainPage), typeof(MainPage));
             Routing.RegisterRoute(nameof(PeriscopePage), typeof(PeriscopePage));
-            Routing.RegisterRoute(nameof(RotorPage), typeof(RotorPage));
+            Routing.RegisterRoute(nameof(RotatorPage), typeof(RotatorPage));
             Routing.RegisterRoute(nameof(SettingsPage), typeof(SettingsPage));
             Routing.RegisterRoute(nameof(ConfigMenuPage), typeof(ConfigMenuPage));
             Routing.RegisterRoute(nameof(FeatureOptionsPage), typeof(FeatureOptionsPage));

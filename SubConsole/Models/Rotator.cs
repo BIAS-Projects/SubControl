@@ -5,7 +5,7 @@ using System.Text;
 
 namespace SubConsole.Models
 {
-    public static class Rotor
+    public static class Rotator
     {
 
         public static string[] Terminators = {"R", "W" }; // lower case until the motor is "homed"

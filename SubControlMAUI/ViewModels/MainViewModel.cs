@@ -8,6 +8,7 @@ using SubControlMAUI.Messages;
 using SubControlMAUI.Models;
 using SubControlMAUI.Pages;
 using SubControlMAUI.Services;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 
@@ -32,11 +33,48 @@ public partial class MainViewModel : BaseViewModel
     private string? _pendingPushConfirmFunction;
     private Func<string, bool>? _pendingPushConfirmPredicate;
 
-    private static string SerialFeature => nameof(FeatureOptionViewModel);
-    private static string CameraFeature => nameof(FeatureOptionViewModel) + "CAMERA";
+    //private static string SerialFeature => nameof(FeatureOptionViewModel);
+    //private static string CameraFeature => nameof(FeatureOptionViewModel) + "CAMERA";
+
+    private static string SerialFeature => nameof(MainViewModel);
+    private static string CameraFeature => nameof(MainViewModel) + "CAMERA";
+
 
     private TimeSpan timeout = TimeSpan.FromSeconds(10);
 
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RotatorEnableButtonImage))]
+    private bool isRotatorEnabled;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(VideoEnableButtonImage))]
+    private bool isVideoEnabled;
+
+    [ObservableProperty]
+    private bool isConnected;
+
+    public string RotatorEnableButtonImage =>
+        $"{ThemePrefix}_{(IsRotatorEnabled ? "on" : "off")}_button.png";
+
+    public string VideoEnableButtonImage =>
+    $"{ThemePrefix}_{(IsVideoEnabled ? "on" : "off")}_button.png";
+
+    private static string ThemePrefix =>
+        Application.Current?.RequestedTheme == AppTheme.Dark
+            ? "dark"
+            : "light";
+
+    public enum Status
+    {
+        Unknown,
+        CommOpen,
+        CommClosed,
+        Enabled,
+        Disabled
+    }
+
+    Dictionary<Status, Color> statusColours;
 
     public MainViewModel(SQLiteService sqliteService,
         IAlertService alertService,
@@ -59,6 +97,8 @@ public partial class MainViewModel : BaseViewModel
 
         _messengerService.Register<TcpDataReceivedMessage>(this, async (r, msg) =>
         {
+            //if (!msg.Value.Function.Equals(nameof(MainViewModel))) return;
+
             // Serial feature responses (OPEN commands)
             if (msg.Value.Function.Equals(SerialFeature))
             {
@@ -171,8 +211,29 @@ public partial class MainViewModel : BaseViewModel
             {
                 OnPropertyChanged(nameof(CanEnableSystem));
                 OnPropertyChanged(nameof(CanDisableSystem));
+                IsConnected = AppState.IsConnected;
             }
         };
+
+        statusColours = new Dictionary<Status, Color>
+        {
+            { Status.CommOpen, Colors.Orange },
+            { Status.CommClosed, Colors.Red },
+            { Status.Enabled, Colors.Green },
+            { Status.Disabled, Colors.Orange },
+            { Status.Unknown, Colors.Gray }
+        };
+
+
+        videoStatusColor = statusColours[Status.Unknown];
+        rotatorStatusColor = statusColours[Status.Unknown];
+
+        App.ThemeChanged += () =>
+        {
+            OnPropertyChanged(nameof(RotatorEnableButtonImage));
+            OnPropertyChanged(nameof(VideoEnableButtonImage));
+        };
+
     }
 
 
@@ -278,6 +339,7 @@ public partial class MainViewModel : BaseViewModel
 
 
 
+
 [ObservableProperty]
     private double buttonSize;
 
@@ -294,38 +356,149 @@ public partial class MainViewModel : BaseViewModel
 
     // Status indicators (colors as strings or Color)
     [ObservableProperty]
-    private string videoStatusColor = "Red";
+    private Color videoStatusColor;
 
     [ObservableProperty]
-    private string rotorStatusColor = "Red";
+    private Color rotatorStatusColor;
 
-    // Commands
     [RelayCommand]
     private async Task Connect()
     {
-
-
         IsBusy = true;
         try
         {
-            await _tcpService.StartAsync(_sqliteService.config.IPAddress, Int32.Parse(_sqliteService.config.Port));
+            await _tcpService.StartAsync(
+                _sqliteService.config.IPAddress,
+                int.Parse(_sqliteService.config.Port));
 
-            //StatusText = "Connected";
-            //VideoStatusColor = "Green";
-            //RotorStatusColor = "Blue";
+            if (!AppState.IsConnected)
+            {
+                StatusText = "Connection failed";
+                return;
+            }
+
+            StatusText = "Querying device capabilities...";
+
+            var serialFunctions = await QuerySerialRegisteredAsync();
+
+            foreach (var feature in AppState.Features.ToList())
+            {
+                bool fitted = serialFunctions.Contains(feature.Name);
+                feature.IsFitted = fitted;
+                feature.IsCommPortOpen = false;
+                feature.IsEnabled = false;
+                AppState.UpdateFeature(feature);
+            }
+
+            // Try to open TOM Input comm port if fitted
+            var tomInput = AppState.GetFeatureByName(Feature.TOMInput);
+            if (tomInput?.IsFitted == true)
+            {
+                StatusText = "Opening TOM Input...";
+                if (await OpenFeatureCommPort(Feature.TOMInput))
+                {
+                    tomInput.IsCommPortOpen = true;
+                    AppState.UpdateFeature(tomInput);
+                }
+            }
+
+            // Try to open Rotator comm port if fitted
+            var rotator = AppState.GetFeatureByName(Feature.RotatorName);
+            if (rotator?.IsFitted == true)
+            {
+                StatusText = "Opening Rotator...";
+                if (await OpenFeatureCommPort(Feature.RotatorName))
+                {
+                    rotator.IsCommPortOpen = true;
+                    AppState.UpdateFeature(rotator);
+                }
+            }
+
+            // Update status colours based on final feature state
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                VideoStatusColor = tomInput switch
+                {
+                    null => statusColours[Status.Unknown],
+                    { IsFitted: false } => statusColours[Status.Unknown],
+                    { IsCommPortOpen: true } => statusColours[Status.CommOpen],
+                    _ => statusColours[Status.CommClosed]
+                };
+
+                RotatorStatusColor = rotator switch
+                {
+                    null => statusColours[Status.Unknown],
+                    { IsFitted: false } => statusColours[Status.Unknown],
+                    { IsCommPortOpen: true } => statusColours[Status.CommOpen],
+                    _ => statusColours[Status.CommClosed]
+                };
+            });
+
+            StatusText = "Connected";
         }
         catch (Exception ex)
         {
-            StatusText =$"Error: {ex.Message}";
+            StatusText = $"Error: {ex.Message}";
         }
         finally
         {
             IsBusy = false;
         }
-
-
-
     }
+
+    private async Task<HashSet<string>> QuerySerialRegisteredAsync()
+    {
+        var tcs = new TaskCompletionSource<string?>();
+        const string command = "LIST REGISTERED";
+
+        void Handler(object r, TcpDataReceivedMessage msg)
+        {
+            if (msg.Value.Function.Equals(SerialFeature) &&
+                msg.Value.Command.Equals(command))
+            {
+                tcs.TrySetResult(msg.Value.Data);
+            }
+        }
+
+        _messengerService.Register<TcpDataReceivedMessage>(tcs, Handler);
+
+        try
+        {
+            var sent = await _tcpService.SendCommandAsync(
+                new TCPMessageBody<string>(SerialFeature, command, ""),
+                CancellationToken.None);
+
+            if (!sent) return new HashSet<string>();
+
+            var completed = await Task.WhenAny(tcs.Task, Task.Delay(timeout));
+            if (completed != tcs.Task) return new HashSet<string>();
+
+            var json = tcs.Task.Result;
+            if (string.IsNullOrWhiteSpace(json)) return new HashSet<string>();
+
+            var response = JsonSerializer.Deserialize<ListRegisteredResponse>(
+                json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            return response?.Ok == true && response.Data is not null
+                ? response.Data
+                    .Select(e => e.FunctionName)
+                    .Where(n => !string.IsNullOrWhiteSpace(n))
+                    .ToHashSet()
+                : new HashSet<string>();
+        }
+        catch
+        {
+            return new HashSet<string>();
+        }
+        finally
+        {
+            _messengerService.Unregister<TcpDataReceivedMessage>(tcs);
+        }
+    }
+
+
+
+
 
     [RelayCommand]
     private async Task Disconnect()
@@ -335,8 +508,8 @@ public partial class MainViewModel : BaseViewModel
         {
             await _tcpService.StopAsync();
             StatusText = "Disconnected";
-            VideoStatusColor = "Red";
-            RotorStatusColor = "Orange";
+            VideoStatusColor = statusColours[Status.Unknown];
+            RotatorStatusColor = statusColours[Status.Unknown];
         }
         finally
         {
@@ -386,11 +559,11 @@ public partial class MainViewModel : BaseViewModel
              //   return;
             }
 
-            // CLOSE ROTOR
-            StatusText = "Attempt to close Opening ROTOR...";
-            if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "ROTOR", timeout))
+            // CLOSE ROTATOR
+            StatusText = "Attempt to close Opening ROTATOR...";
+            if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "ROTATOR", timeout))
             {
-                StatusText = "Enable failed — could not close ROTOR";
+                StatusText = "Enable failed — could not close ROTATOR";
                 //    return;
             }
 
@@ -420,11 +593,11 @@ public partial class MainViewModel : BaseViewModel
                 return;
             }
 
-            // OPEN ROTOR
-            StatusText = "Opening ROTOR...";
-            if (!await SendAndWaitAsync(SerialFeature, "OPEN", "ROTOR", timeout))
+            // OPEN ROTATOR
+            StatusText = "Opening ROTATOR...";
+            if (!await SendAndWaitAsync(SerialFeature, "OPEN", "ROTATOR", timeout))
             {
-                StatusText = "Enable failed — could not open ROTOR";
+                StatusText = "Enable failed — could not open ROTATOR";
             //    return;
             }
 
@@ -493,11 +666,11 @@ public partial class MainViewModel : BaseViewModel
                 //   return;
             }
 
-            // CLOSE ROTOR
-            StatusText = "Attempt to close ROTOR...";
-            if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "ROTOR", timeout))
+            // CLOSE ROTATOR
+            StatusText = "Attempt to close ROTATOR...";
+            if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "ROTATOR", timeout))
             {
-                StatusText = "Enable failed — could not close ROTOR";
+                StatusText = "Enable failed — could not close ROTATOR";
                 //    return;
             }
 
@@ -522,7 +695,366 @@ public partial class MainViewModel : BaseViewModel
         }
     }
 
-    [RelayCommand]
+    private async Task GlobalToggleEnable()
+    {
+        foreach(Feature feature in AppState.Features)
+        {
+            if(feature.Name.Equals(Feature.RotatorName))
+            {
+                if(await EnableFeature(feature.Name))
+                {
+                    RotatorStatusColor = statusColours[Status.Enabled];
+                }
+               else
+                {
+                    RotatorStatusColor = statusColours[Status.Disabled];
+                }
+            }
+            if (feature.Name.Equals(Feature.TOMInput))
+            {
+                if (await EnableFeature(feature.Name))
+                {
+                    RotatorStatusColor = statusColours[Status.Enabled];
+                }
+                else
+                {
+                    RotatorStatusColor = statusColours[Status.Disabled];
+                }
+            }
+        }
+    }
+
+    private async Task<Color> ToggleCommPortOpen(Feature feature)
+    {
+        if (!feature.IsFitted)
+            return statusColours[Status.Unknown];
+
+        if (!feature.IsCommPortOpen)
+        {
+            if (!await OpenFeatureCommPort(feature.Name))
+            {
+                return statusColours[Status.CommClosed];
+            }
+            feature.IsCommPortOpen = true;
+            if (!AppState.UpdateFeature(feature))
+            {
+                StatusText = $"Error updating application state for: {feature.Name}";
+            }
+            return statusColours[Status.CommOpen];
+        }
+
+        if (!await CloseFeatureCommPort(feature.Name))
+        {
+            return statusColours[Status.CommClosed];
+        }
+        feature.IsCommPortOpen = false;
+        if (!AppState.UpdateFeature(feature))
+        {
+            StatusText = $"Error updating application state for: {feature.Name}";
+        }
+        return statusColours[Status.CommClosed];
+
+    }
+
+    private async Task<Color> ToggleEnable(Feature feature)
+    {
+        if (!feature.IsFitted)
+            return statusColours[Status.Unknown];
+
+        if (!feature.IsEnabled)
+        {
+            if (!await EnableFeature(feature.Name))
+            {
+                return statusColours[Status.Disabled];
+            }
+            feature.IsEnabled = true;
+            if (!AppState.UpdateFeature(feature))
+            {
+                StatusText = $"Error updating application state for: {feature.Name}";
+            }
+            return statusColours[Status.Enabled];
+        }
+
+        if (!await DisableFeature(feature.Name))
+        {
+            return statusColours[Status.Disabled];
+        }
+        feature.IsEnabled = false;
+        feature.IsCommPortOpen = false;
+        if (!AppState.UpdateFeature(feature))
+        {
+            StatusText = $"Error updating application state for: {feature.Name}";
+        }
+        return statusColours[Status.CommClosed];
+
+    }
+
+
+
+    //Probably want to separate this into two functions
+    private async Task<Color> ChangeFeatureState(Feature feature)
+    {
+        if (!feature.IsFitted)
+            return statusColours[Status.Unknown];
+        if (!feature.IsCommPortOpen)
+        { 
+            if (!await OpenFeatureCommPort(feature.Name))
+            {
+                feature.IsCommPortOpen = false;
+                if (!AppState.UpdateFeature(feature))
+                {
+                    StatusText = $"Error updating application state for: {feature.Name}";
+                }
+                return statusColours[Status.CommClosed];
+            }
+            feature.IsCommPortOpen = true;
+            if (!AppState.UpdateFeature(feature))
+            {
+                StatusText = $"Error updating application state for: {feature.Name}";
+            }
+            return statusColours[Status.CommOpen];
+        }
+        if(!feature.IsEnabled)
+        {
+            if (!await EnableFeature(feature.Name))
+            {
+                feature.IsEnabled = false;
+                if (!AppState.UpdateFeature(feature))
+                {
+                    StatusText = $"Error updating application state for: {feature.Name}";
+                }
+                return statusColours[Status.Disabled];
+            }
+            feature.IsEnabled = true;
+            if (!AppState.UpdateFeature(feature))
+            {
+                StatusText = $"Error updating application state for: {feature.Name}";
+            }
+            return statusColours[Status.Enabled];
+        }
+        StatusText = $"Feature state not found for: {feature.Name}";
+        return statusColours[Status.Unknown];
+    }
+
+
+
+
+
+    private async Task<bool> OpenFeatureCommPort(string featureName)
+    {
+        IsBusy = true;
+        if (AppState.IsNotConnected) return false;
+        try
+        {
+
+            StatusText = $"Opening {featureName}...";
+            if (!await SendAndWaitAsync(SerialFeature, "OPEN", featureName, timeout))
+            {
+                StatusText = $"{featureName} comm port open failed";
+                return false;
+            }
+            StatusText = $"{featureName} comm port opened";
+            return true;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private async Task<bool> CloseFeatureCommPort(string featureName)
+    {
+        IsBusy = true;
+        if (AppState.IsNotConnected) return false;
+        try
+        {
+            StatusText = $"Closing {featureName}...";
+            if (!await SendAndWaitAsync(SerialFeature, "CLOSE", featureName, timeout))
+            {
+                StatusText = $"{featureName} comm port close failed";
+                return false;
+            }
+            StatusText = $"{featureName} comm port closed";
+            return true;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private async Task<bool> EnableFeature (string featureName)
+    {
+        IsBusy = true;
+
+        if (AppState.IsNotConnected) return false;
+
+        Feature feature = AppState.GetFeatureByName(featureName);
+
+        StatusText = $"Enabling {featureName}...";
+
+        if (feature is null)
+        {
+            StatusText = $"Feature: {featureName} is not supported";
+            return false;
+        }
+
+        if(!feature.IsCommPortOpen)
+        {
+            StatusText = $"Feature: {featureName} communications port is closed";
+            return false;
+        }
+
+
+        try
+        {
+            if(featureName.Equals(Feature.RotatorName))
+            {
+                if(await EnableRotator())
+                {
+                    StatusText = $"Feature: {featureName} Enabled";
+                    return true;
+                }
+            }
+            if (featureName.Equals(Feature.VideoName))
+            {
+                if (await EnableVideo())
+                {
+                    StatusText = $"Feature: {featureName} Enabled";
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private async Task<bool> EnableRotator()
+    {
+        if (!await SendAndWaitForPushAsync(
+                Feature.RotatorName,
+                "WRITE TEXT",
+                Models.Rotator.GetFirmwareVersion,
+                Feature.RotatorName,
+                response => response.Contains("AMRV"),
+                timeout))
+        {
+            StatusText = "Rotator enable failed";
+            return false;
+        }
+        return true;
+    }
+
+    private async Task<bool> EnableVideo ()
+    {
+        // CHECK FFMPEG
+        StatusText = "Checking FFmpeg...";
+        if (!await SendAndWaitAsync(CameraFeature, "CHECK FFMPEG", "", timeout))
+        {
+            StatusText = "Enable failed — FFmpeg not available";
+            return false;
+        }
+
+        // CHECK MTX VERSION
+        StatusText = "Checking MediaMTX...";
+        if (!await SendAndWaitAsync(CameraFeature, "CHECK MTX VERSION", "", timeout))
+        {
+            StatusText = "Enable failed — MediaMTX not available";
+            return false ;
+        }
+
+        if (!await SendAndWaitForPushAsync(
+                "TOM Input", "WRITE TEXT", TOMCommands.TurnOnAllSystemsCommand,
+                "TOM Output", IsTomPowerOn,
+                timeout))
+        {
+            StatusText = "Enable failed — TOM did not confirm power on";
+            return false;
+        }
+        return true;
+
+    }
+
+    private async Task<bool> DisableFeature(string featureName)
+    {
+        IsBusy = true;
+
+        if (AppState.IsNotConnected) return false;
+
+        Feature feature = AppState.GetFeatureByName(featureName);
+
+        StatusText = $"Disabling {featureName}...";
+
+        if (feature is null)
+        {
+            StatusText = $"Feature: {featureName} is not supported";
+            return false;
+        }
+
+        if (feature.IsCommPortOpen)
+        {
+            StatusText = $"Feature: {featureName} communications port is closed";
+            return false;
+        }
+
+
+        try
+        {
+            if (featureName.Equals(Feature.RotatorName))
+            {
+                StatusText = $"Feature: {featureName} Disabled";
+                return true;
+                
+            }
+            if (featureName.Equals(Feature.VideoName))
+            {
+                if (await DisableVideo())
+                {
+                    StatusText = $"Feature: {featureName} Disabled";
+                    return true;
+                }
+            }
+            return false;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+
+    private async Task<bool> DisableVideo()
+    {
+
+        if (!await SendAndWaitForPushAsync(
+                Feature.TOMInput, "WRITE TEXT", TOMCommands.TurnOffAllSystemsCommand,
+                Feature.TOMOutput, IsTomPowerOff,
+                timeout))
+        {
+            StatusText = "Disable failed — TOM did not confirm power off";
+        }
+        return true;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        [RelayCommand]
     private void ToggleTheme(bool value)
     {
         IsDarkTheme = value;
@@ -583,9 +1115,9 @@ public partial class MainViewModel : BaseViewModel
     }
 
     [RelayCommand]
-    private async Task Rotor()
+    private async Task Rotator()
     {
-        await Shell.Current.GoToAsync(nameof(RotorPage));
+        await Shell.Current.GoToAsync(nameof(RotatorPage));
     }
 
     [RelayCommand]
@@ -643,5 +1175,38 @@ public partial class MainViewModel : BaseViewModel
         public bool AutoAdd { get; init; } = true;
     }
 
+
+    [RelayCommand]
+    private void ToggleVideoEnable()
+    {
+        IsVideoEnabled = !IsVideoEnabled;
+    }
+
+    [RelayCommand]
+    private void ToggleRotatorEnable()
+    {
+        IsRotatorEnabled = !IsRotatorEnabled;
+    }
+
+
+
+
+
+    private sealed class SerialRegisteredEntry
+    {
+        public string FunctionName { get; init; } = "";
+        public string CurrentPort { get; init; } = "";
+    }
+
+    private sealed class CameraRegisteredEntry
+    {
+        public string StreamPathName { get; init; } = "";
+    }
+
+    private sealed class ListCameraRegisteredResponse
+    {
+        public bool Ok { get; init; }
+        public List<CameraRegisteredEntry>? Data { get; init; }
+    }
 
 }
