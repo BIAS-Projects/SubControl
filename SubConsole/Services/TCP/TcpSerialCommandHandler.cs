@@ -189,41 +189,71 @@ public sealed class TcpSerialCommandHandler
         {
             return ErrorResponse($"HandleRegisterAsync JSON DeserializeException: {message.Data} {ex.Message}");
         }
-        if(entry is null)
-        {
+
+        if (entry is null)
             return ErrorResponse($"HandleRegisterAsync invalid JSON: {message.Data}");
-        }
-        if(String.IsNullOrWhiteSpace(entry.DeviceKey))
-        {
+        if (string.IsNullOrWhiteSpace(entry.DeviceKey))
             return ErrorResponse("HandleRegisterAsync DeviceKey cannot be empty");
-        }
-        if (String.IsNullOrWhiteSpace(entry.FunctionName))
-        {
+        if (string.IsNullOrWhiteSpace(entry.FunctionName))
             return ErrorResponse("HandleRegisterAsync FunctionName cannot be empty");
-        }
-        if (String.IsNullOrWhiteSpace(entry.BaudRate))
-        {
+        if (string.IsNullOrWhiteSpace(entry.BaudRate))
             return ErrorResponse("HandleRegisterAsync Baudrate cannot be empty");
-        }
         if (!int.TryParse(entry.BaudRate, out baudrate))
-        {
             return ErrorResponse("HandleRegisterAsync BaudRate must be numeric");
-        }
-        if (String.IsNullOrWhiteSpace(entry.WorkerType))
-        {
+        if (string.IsNullOrWhiteSpace(entry.WorkerType))
             return ErrorResponse("HandleRegisterAsync WorkerType cannot be empty");
-        }
         if (!Enum.TryParse<SerialWorkerType>(entry.WorkerType, out serialWorkerType))
-        {
             return ErrorResponse($"HandleRegisterAsync WorkerType must be a registered type: {entry.WorkerType} submitted");
+
+        // If this device key is already registered, unregister it first
+        var existing = _manager.GetRegisteredDevices()
+            .FirstOrDefault(r => r.Identifier.Key == entry.DeviceKey);
+
+        if (existing is not null)
+        {
+            _logger.LogInformation(
+                "Device {DeviceKey} already registered as {FunctionName} — unregistering before re-registration",
+                entry.DeviceKey, existing.FunctionName);
+
+            var unregisterResult = await _dispatcher.DispatchAsync(
+                new UnregisterDeviceCommand { DeviceKey = entry.DeviceKey }, token);
+
+            if (!unregisterResult.IsSuccess)
+            {
+                _logger.LogWarning(
+                    "Pre-registration unregister failed for {DeviceKey}: {Reason}",
+                    entry.DeviceKey, unregisterResult.Message);
+                // Non-fatal — attempt registration anyway
+            }
+        }
+
+        // Also check if the function name is already assigned to a different device
+        // and unregister that device first to avoid duplicate function assignments
+        var existingFunction = _manager.GetRegisteredDevices()
+            .FirstOrDefault(r => r.FunctionName == entry.FunctionName
+                              && r.Identifier.Key != entry.DeviceKey);
+
+        if (existingFunction is not null)
+        {
+            _logger.LogInformation(
+                "Function {FunctionName} already assigned to {DeviceKey} — unregistering before re-assignment",
+                entry.FunctionName, existingFunction.Identifier.Key);
+
+            var unregisterResult = await _dispatcher.DispatchAsync(
+                new UnregisterDeviceCommand { DeviceKey = existingFunction.Identifier.Key }, token);
+
+            if (!unregisterResult.IsSuccess)
+            {
+                _logger.LogWarning(
+                    "Pre-registration unregister of old device failed for {DeviceKey}: {Reason}",
+                    existingFunction.Identifier.Key, unregisterResult.Message);
+                // Non-fatal — attempt registration anyway
+            }
         }
 
         _logger.LogInformation(
             "Registering device {DeviceKey} as {FunctionName} ({WorkerType} @ {BaudRate})",
-            entry.DeviceKey,
-            entry.FunctionName,
-            serialWorkerType,
-            baudrate);
+            entry.DeviceKey, entry.FunctionName, serialWorkerType, baudrate);
 
         var devices = await _manager.EnumerateUsbDevicesAsync(token);
         var found = devices.FirstOrDefault(d => d.Key == entry.DeviceKey);
@@ -245,27 +275,23 @@ public sealed class TcpSerialCommandHandler
             WorkerType = serialWorkerType
         }, token);
 
-
         if (result.IsSuccess)
         {
             _logger.LogInformation(
                 "Device {DeviceKey} registered as {FunctionName}",
-                entry.DeviceKey,
-                entry.FunctionName);
+                entry.DeviceKey, entry.FunctionName);
         }
         else
         {
             _logger.LogWarning(
                 "REGISTER failed for {DeviceKey}: {Reason}",
-                entry.DeviceKey,
-                result.Message);
+                entry.DeviceKey, result.Message);
         }
 
         return result.IsSuccess
             ? SuccessResponse(new { entry.DeviceKey, entry.FunctionName })
             : ErrorResponse(result.Message);
     }
-
 
 
 

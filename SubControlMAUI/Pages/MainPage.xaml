@@ -48,30 +48,29 @@
 
                 <!-- SYSTEM CONTROLS ONLY -->
                 <Grid Grid.Column="1"
-                  IsEnabled="{Binding IsConnected}"
-                  ColumnDefinitions="Auto,Auto"
-                  ColumnSpacing="10"
-                  HorizontalOptions="Center">
+      IsEnabled="{Binding IsConnected}"
+      HorizontalOptions="Center">
 
-                    <!-- ENABLE SYSTEM -->
-                    <ImageButton
-                    Source="{AppThemeBinding Light=light_on_button.png, Dark=dark_on_button.png}"
-                    WidthRequest="30"
-                    HeightRequest="30"
-                    BackgroundColor="Transparent"
-                    Grid.Column="0"
-                    IsEnabled="{Binding CanEnableSystem}"
-                    Command="{Binding EnableSystemCommand}" />
+                    <VerticalStackLayout
+        Spacing="4"
+        HorizontalOptions="Center">
 
-                    <!-- DISABLE SYSTEM -->
-                    <ImageButton
-                    Source="{AppThemeBinding Light=light_off_button.png, Dark=dark_off_button.png}"
-                    WidthRequest="30"
-                    HeightRequest="30"
-                    BackgroundColor="Transparent"
-                    Grid.Column="1"
-                    IsEnabled="{Binding CanDisableSystem}"
-                    Command="{Binding DisableSystemCommand}" />
+                        <!-- TOGGLE SYSTEM -->
+                        <ImageButton
+            Source="{Binding SystemToggleButtonImage}"
+            WidthRequest="30"
+            HeightRequest="30"
+            BackgroundColor="Transparent"
+            IsEnabled="{Binding IsConnected}"
+            Command="{Binding ToggleSystemCommand}" />
+
+                        <Label
+            Text="System"
+            FontSize="14"
+            HorizontalOptions="Center" 
+/>
+
+                    </VerticalStackLayout>
 
                 </Grid>
 
@@ -134,15 +133,15 @@
                                 WidthRequest="30"
                                 HeightRequest="30"
                                  BackgroundColor="Transparent"
-                                 Command="{Binding ToggleVideoEnable}"
-                                 IsEnabled="{Binding IsConnected}" />
+                                 Command="{Binding ToggleVideoEnableCommand}"
+                                 IsEnabled="{Binding CanEnableVideo}" />
                     <ImageButton
                         Source="{AppThemeBinding Light=light_video.png, Dark=dark_video.png}"
                         WidthRequest="{Binding ButtonSize}"
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
                         Command="{Binding VideoCommand}"
-                        IsEnabled="{Binding IsSystemEnabled}" />
+                        IsEnabled="{Binding IsVideoEnabled}" />
 
                     <BoxView HeightRequest="8"
                      WidthRequest="60"
@@ -158,15 +157,15 @@
                                 WidthRequest="30"
                                 HeightRequest="30"
                                  BackgroundColor="Transparent"
-                                 Command="{Binding ToggleRotatorEnable}"
-                                 IsEnabled="{Binding IsConnected}" />
+                                 Command="{Binding ToggleRotatorEnableCommand}"
+                                 IsEnabled="{Binding CanEnableRotator}" />
 
                     <ImageButton Source="{AppThemeBinding Light=light_roundabout.png, Dark=dark_roundabout.png}"
                                  WidthRequest="{Binding ButtonSize}"
                                  HeightRequest="{Binding ButtonSize}"
                                  BackgroundColor="Transparent"
                                  Command="{Binding RotatorCommand}"
-                                 IsEnabled="{Binding IsSystemEnabled}" />
+                                 IsEnabled="{Binding IsRotatorEnabled}" />
 
                     <BoxView HeightRequest="8"
                              WidthRequest="60"

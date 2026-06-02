@@ -164,92 +164,91 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
 
 
     public async Task<OperationResult> OpenPortAsync(
-    string function, CancellationToken token = default)
+        string function, CancellationToken token = default)
     {
         _logger.LogInformation(
             "Opening port for function {Function}",
             function);
-
-        if (_workers.ContainsKey(function))
-        {
-            _logger.LogWarning(
-                "Error in open port {Function}: {Success}. Reason: Already open",
-                function,
-                false);
-            return OperationResult.Failure($"Port for function '{function}' is already open");
-        }
 
         var reg = _registry.AllRegistrations.FirstOrDefault(r => r.FunctionName == function);
         if (reg is null)
         {
             _logger.LogWarning(
                 "Error in open port {Function}: {Success}. Reason: Not registered",
-                function,
-                false);
+                function, false);
             return OperationResult.Failure($"Function '{function}' is not registered");
+        }
+
+        if (_workers.ContainsKey(function))
+        {
+            _logger.LogWarning(
+                "Port for function {Function} is already open",
+                function);
+            return OperationResult.Success($"Port for function '{function}' is already open");
+        }
+
+        var conflictingFunction = _workers.Keys
+            .FirstOrDefault(f =>
+            {
+                var r = _registry.AllRegistrations.FirstOrDefault(x => x.FunctionName == f);
+                return r?.Identifier.PortName == reg.Identifier.PortName;
+            });
+
+        if (conflictingFunction is not null)
+        {
+            _logger.LogWarning(
+                "Error in open port {Function}: {Success}. Reason: Port already open under {ConflictingFunction}",
+                function, false, conflictingFunction);
+            return OperationResult.Failure(
+                $"Port for function '{function}' is already open under function '{conflictingFunction}'");
         }
 
         if (reg.CurrentPortPath is null)
         {
-            // Attempt to find the device on the OS right now
             var refreshResult = await RefreshPortPathAsync(function, token);
             if (!refreshResult)
             {
                 _logger.LogWarning(
-                    "Error in open port {Function}: {Success}. Reason: No OS port not found or has changed for function",
-                    function,
-                    false);
+                    "Error in open port {Function}: {Success}. Reason: OS port not found or has changed for function",
+                    function, false);
                 return OperationResult.Failure(
-                    $"No OS port not found or has changed for function '{function}'");
+                    $"OS port not found or has changed for function '{function}'");
             }
         }
 
         SerialWorkerType workerType = reg.SerialWorkerType;
-
         int baudRate = reg.BaudRate;
-
         var portPath = reg.Identifier.PortName;
 
         try
         {
             var worker = _workerFactory.Create(portPath, baudRate, workerType, _registry);
-
             if (!_workers.TryAdd(function, worker))
                 return OperationResult.Failure($"Concurrent open for '{function}'");
 
-            var result = await worker.StartAsync(
-                CancellationTokenSource.CreateLinkedTokenSource(_appToken, token).Token);
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_appToken, token);
+            var result = await worker.StartAsync(linkedCts.Token);
 
             if (result.IsSuccess)
             {
-                _logger.LogDebug("Subscribing worker for {Function} - worker count now {Count}",
-                function, _workers.Count);
-
-
-                // Subscribe immediately — no polling gap
+                _logger.LogDebug(
+                    "Subscribing worker for {Function} - worker count now {Count}",
+                    function, _workers.Count);
                 SubscribeWorkerToBroadcast(function, worker, _appToken);
-
                 _logger.LogDebug("Subscribed worker for {Function}", function);
-
                 _logger.LogInformation(
                     "Completed open port {Function} on {Port} as {Type}: {Success}",
-                    function,
-                    portPath,
-                    workerType,
-                    true);
+                    function, portPath, workerType, true);
             }
             else
             {
                 _logger.LogWarning(
-                "Error in open port {Function}: {Success}. Reason: {Message}",
-                function,
-                false,
-                result.Message);
+                    "Error in open port {Function}: {Success}. Reason: {Message}",
+                    function, false, result.Message);
                 _workers.TryRemove(function, out _);
             }
 
             return result;
-
         }
         catch (Exception ex)
         {
@@ -257,8 +256,7 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
             _logger.LogError(
                 ex,
                 "Completed open port {Function}: {Success}",
-                function,
-                false);
+                function, false);
             return OperationResult.Failure(ex.Message);
         }
     }
@@ -511,7 +509,7 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
         if (!_workers.TryGetValue(functionName, out var worker))
         {
             _logger.LogWarning(
-                "Error in write {Function}: {Success}. Reason: Is no open",
+                "Error in write {Function}: {Success}. Reason: Is not open",
                 functionName,
                 false);
             return OperationResult.Failure($"Port for function '{functionName}' is not open");
@@ -702,25 +700,33 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
 
     private async Task<bool> RefreshPortPathAsync(string function, CancellationToken token)
     {
-        _logger.LogDebug(
-            "Refreshing port path for {Function}",
-            function);
+        _logger.LogDebug("Refreshing port path for {Function}", function);
 
         var reg = _registry.AllRegistrations.FirstOrDefault(r => r.FunctionName == function);
-        if (reg is null) return false;
+        if (reg is null)
+        {
+            _logger.LogWarning(
+                "Refresh port path {Function}: {Success}. Reason: Not registered",
+                function, false);
+            return false;
+        }
 
         var devices = await UsbSerialPortMapper.GetUsbSerialPortsAsync(token);
         var match = devices.FirstOrDefault(d => d.Key == reg.Key);
 
-        if (match!.PortName is null) return false;
+        if (match is null || match.PortName is null)
+        {
+            _logger.LogWarning(
+                "Refresh port path {Function}: {Success}. Reason: No matching device found for key {Key}",
+                function, false, reg.Key);
+            return false;
+        }
 
         _registry.SetPortPath(reg.Key, match.PortName);
 
         _logger.LogInformation(
-            "Completed port refresh {Function}: {Success}",
-            function,
-            true);
-
+            "Completed port refresh {Function} resolved to {PortName}: {Success}",
+            function, match.PortName, true);
         return true;
     }
 

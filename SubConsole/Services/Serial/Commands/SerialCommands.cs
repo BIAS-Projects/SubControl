@@ -125,7 +125,18 @@ public sealed class UnregisterDeviceCommand : ISerialCommand
     public async Task<OperationResult> ExecuteAsync(
         ISerialPortManagerService manager,
         CancellationToken token)
-        => await manager.UnregisterDeviceAsync(DeviceKey, token);
+    {
+        // UnregisterDeviceAsync expects a function name, not a device key —
+        // resolve it first
+        var registration = manager.GetRegisteredDevices()
+            .FirstOrDefault(r => r.Identifier.Key == DeviceKey);
+
+        if (registration is null)
+            return OperationResult.Failure(
+                $"Device key '{DeviceKey}' not found in registered device list");
+
+        return await manager.UnregisterDeviceAsync(registration.FunctionName, token);
+    }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

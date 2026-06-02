@@ -54,5 +54,60 @@ namespace SubControlMAUI.Services
             }
             return false;
         }
+
+        public bool IsVideoCommPortOpen =>
+    GetFeatureByName(Feature.TOMInput)?.IsCommPortOpen == true &&
+    GetFeatureByName(Feature.TOMOutput)?.IsCommPortOpen == true;
+
+        public bool IsVideoEnabled =>
+            GetFeatureByName(Feature.TOMInput)?.IsEnabled == true;
+
+
+        public bool IsRotatorEnabled =>
+    GetFeatureByName(Feature.RotatorName)?.IsEnabled == true;
+
+        // Helper to set comm port state for both TOM ports atomically
+        public void SetVideoCommPortOpen(bool isOpen)
+        {
+            var tomInput = GetFeatureByName(Feature.TOMInput);
+            var tomOutput = GetFeatureByName(Feature.TOMOutput);
+
+            if (tomInput is not null)
+            {
+                tomInput.IsCommPortOpen = isOpen;
+                if (!isOpen) tomInput.IsEnabled = false;
+                UpdateFeature(tomInput);
+            }
+
+            if (tomOutput is not null)
+            {
+                tomOutput.IsCommPortOpen = isOpen;
+                if (!isOpen) tomOutput.IsEnabled = false;
+                UpdateFeature(tomOutput);
+            }
+        }
+
+        public void SetVideoEnabled(bool isEnabled)
+        {
+            var tomInput = GetFeatureByName(Feature.TOMInput);
+            if (tomInput is not null)
+            {
+                tomInput.IsEnabled = isEnabled;
+                UpdateFeature(tomInput);
+            }
+            OnPropertyChanged(nameof(IsVideoEnabled));  // ← notify bindings
+        }
+
+        public void SetRotatorEnabled(bool isEnabled)
+        {
+            var rotator = GetFeatureByName(Feature.RotatorName);
+            if (rotator is not null)
+            {
+                rotator.IsEnabled = isEnabled;
+                UpdateFeature(rotator);
+            }
+            OnPropertyChanged(nameof(IsRotatorEnabled));  // ← notify bindings
+        }
+
     }
 }

@@ -237,7 +237,7 @@ public sealed class TcpCameraCommandHandler
     }
 
     private async Task<string> HandleRegisterAsync(
-        TCPMessageBody<string> message, CancellationToken token)
+       TCPMessageBody<string> message, CancellationToken token)
     {
         _logger.LogDebug("Processing camera REGISTER command");
 
@@ -248,8 +248,7 @@ public sealed class TcpCameraCommandHandler
         }
         catch (Exception ex)
         {
-            return ErrorResponse(
-                $"REGISTER deserialisation failed: {ex.Message}");
+            return ErrorResponse($"REGISTER deserialisation failed: {ex.Message}");
         }
 
         if (request is null)
@@ -261,8 +260,53 @@ public sealed class TcpCameraCommandHandler
         if (string.IsNullOrWhiteSpace(request.FfmpegOptions?.DeviceName))
             return ErrorResponse("REGISTER: FfmpegOptions.DeviceName cannot be empty");
 
-        // Soft-check: warn if not currently present but allow registration anyway.
-        // The camera will be matched on plug-in via UsbCameraRegistry.CameraChanged.
+        var registered = _manager.GetRegisteredCameras();
+
+        // If this device ID is already registered, unregister it first
+        var existingDevice = registered
+            .FirstOrDefault(r => r.Camera.DeviceId == request.DeviceId);
+
+        if (existingDevice is not null)
+        {
+            _logger.LogInformation(
+                "Camera {DeviceId} already registered as '{StreamPath}' — unregistering before re-registration",
+                request.DeviceId, existingDevice.StreamPathName);
+
+            var unregisterResult = await _manager.UnregisterCameraAsync(request.DeviceId, token);
+
+            if (!unregisterResult.IsSuccess)
+            {
+                _logger.LogWarning(
+                    "Pre-registration unregister failed for camera {DeviceId}: {Reason}",
+                    request.DeviceId, unregisterResult.Message);
+                // Non-fatal — attempt registration anyway
+            }
+        }
+
+        // If this stream path is already assigned to a different device, unregister that device first
+        var existingStream = registered
+            .FirstOrDefault(r => r.StreamPathName == request.StreamPathName
+                              && r.Camera.DeviceId != request.DeviceId);
+
+        if (existingStream is not null)
+        {
+            _logger.LogInformation(
+                "Stream path '{StreamPath}' already assigned to camera {DeviceId} — unregistering before re-assignment",
+                request.StreamPathName, existingStream.Camera.DeviceId);
+
+            var unregisterResult = await _manager.UnregisterCameraAsync(
+                existingStream.Camera.DeviceId, token);
+
+            if (!unregisterResult.IsSuccess)
+            {
+                _logger.LogWarning(
+                    "Pre-registration unregister of old camera failed for {DeviceId}: {Reason}",
+                    existingStream.Camera.DeviceId, unregisterResult.Message);
+                // Non-fatal — attempt registration anyway
+            }
+        }
+
+        // Soft-check: warn if not currently present but allow registration anyway
         var cameras = await _manager.EnumerateCamerasAsync(token);
         var found = cameras.FirstOrDefault(c => c.DeviceId == request.DeviceId);
         if (found is null)
@@ -272,8 +316,6 @@ public sealed class TcpCameraCommandHandler
                 "registering anyway, stream will be added when device is detected",
                 request.DeviceId);
 
-            // Build a minimal UsbCameraInfo from the request so registration
-            // can proceed without the physical device being present
             found = new UsbCameraInfo { DeviceId = request.DeviceId };
         }
 

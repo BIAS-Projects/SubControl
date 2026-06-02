@@ -357,7 +357,7 @@ public sealed class SerialPortWorker : ISerialWorker
 
 
       //  ROTATOR has custom framing
-        if (_functionName == "ROTATOR")
+        if (_functionName == Feature.RotatorName)
         {
             _logger.LogDebug("Customer processing for {FunctionName}", _functionName);
             await ProcessRotatorFramesAsync(token)

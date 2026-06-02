@@ -43,13 +43,19 @@ public partial class MainViewModel : BaseViewModel
     private TimeSpan timeout = TimeSpan.FromSeconds(10);
 
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(RotatorEnableButtonImage))]
-    private bool isRotatorEnabled;
+    //[ObservableProperty]
+    //[NotifyPropertyChangedFor(nameof(RotatorEnableButtonImage))]
+    //private bool isRotatorEnabled;
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(VideoEnableButtonImage))]
-    private bool isVideoEnabled;
+    //[ObservableProperty]
+    //[NotifyPropertyChangedFor(nameof(VideoEnableButtonImage))]
+    //private bool isVideoEnabled;
+
+    public bool IsVideoEnabled => AppState.IsVideoEnabled;
+
+    public bool IsRotatorEnabled => AppState.IsRotatorEnabled;
+
+    public bool RotatorPreviouslyEnabled = false;
 
     [ObservableProperty]
     private bool isConnected;
@@ -58,7 +64,12 @@ public partial class MainViewModel : BaseViewModel
         $"{ThemePrefix}_{(IsRotatorEnabled ? "on" : "off")}_button.png";
 
     public string VideoEnableButtonImage =>
-    $"{ThemePrefix}_{(IsVideoEnabled ? "on" : "off")}_button.png";
+        $"{ThemePrefix}_{(IsVideoEnabled ? "on" : "off")}_button.png";
+
+    public string SystemToggleButtonImage =>
+IsSystemEnabled
+    ? $"{ThemePrefix}_off_button.png"
+    : $"{ThemePrefix}_on_button.png";
 
     private static string ThemePrefix =>
         Application.Current?.RequestedTheme == AppTheme.Dark
@@ -73,6 +84,17 @@ public partial class MainViewModel : BaseViewModel
         Enabled,
         Disabled
     }
+
+
+    public bool CanEnableVideo =>
+    AppState.IsConnected &&
+    AppState.GetFeatureByName(Feature.TOMInput)?.IsFitted == true;
+
+    public bool CanEnableRotator =>
+        AppState.IsConnected &&
+        AppState.GetFeatureByName(Feature.RotatorName)?.IsFitted == true;
+
+
 
     Dictionary<Status, Color> statusColours;
 
@@ -211,9 +233,21 @@ public partial class MainViewModel : BaseViewModel
             {
                 OnPropertyChanged(nameof(CanEnableSystem));
                 OnPropertyChanged(nameof(CanDisableSystem));
+                OnPropertyChanged(nameof(CanEnableVideo));
+                OnPropertyChanged(nameof(CanEnableRotator));
                 IsConnected = AppState.IsConnected;
             }
-        };
+            if (e.PropertyName == nameof(AppState.IsVideoEnabled)) 
+            {
+                OnPropertyChanged(nameof(IsVideoEnabled));
+                OnPropertyChanged(nameof(CanEnableVideo));
+            }
+            if (e.PropertyName == nameof(AppState.IsRotatorEnabled))
+            {
+                OnPropertyChanged(nameof(IsRotatorEnabled));
+             //   OnPropertyChanged(nameof(CanEnableVideo));
+            }
+        }; 
 
         statusColours = new Dictionary<Status, Color>
         {
@@ -232,7 +266,9 @@ public partial class MainViewModel : BaseViewModel
         {
             OnPropertyChanged(nameof(RotatorEnableButtonImage));
             OnPropertyChanged(nameof(VideoEnableButtonImage));
+            OnPropertyChanged(nameof(SystemToggleButtonImage));
         };
+
 
     }
 
@@ -329,6 +365,7 @@ public partial class MainViewModel : BaseViewModel
     [NotifyPropertyChangedFor(nameof(IsNotSystemEnabled))]
     [NotifyPropertyChangedFor(nameof(CanEnableSystem))]
     [NotifyPropertyChangedFor(nameof(CanDisableSystem))]
+    [NotifyPropertyChangedFor(nameof(SystemToggleButtonImage))]
     public bool isSystemEnabled = false;
 
     public bool IsNotSystemEnabled => !IsSystemEnabled;
@@ -392,27 +429,39 @@ public partial class MainViewModel : BaseViewModel
 
             // Try to open TOM Input comm port if fitted
             var tomInput = AppState.GetFeatureByName(Feature.TOMInput);
-            if (tomInput?.IsFitted == true)
-            {
-                StatusText = "Opening TOM Input...";
-                if (await OpenFeatureCommPort(Feature.TOMInput))
-                {
-                    tomInput.IsCommPortOpen = true;
-                    AppState.UpdateFeature(tomInput);
-                }
-            }
+            //if (tomInput?.IsFitted == true)
+            //{
+            //    StatusText = "Opening TOM Input...";
+            //    if (await OpenFeatureCommPort(Feature.TOMInput))
+            //    {
+            //        tomInput.IsCommPortOpen = true;
+            //        AppState.UpdateFeature(tomInput);
+            //    }
+            //}
+
+            // Try to open TOM Output comm port if fitted
+            var tomOutput = AppState.GetFeatureByName(Feature.TOMOutput);
+            //if (tomOutput?.IsFitted == true)
+            //{
+            //    StatusText = "Opening TOM Input...";
+            //    if (await OpenFeatureCommPort(Feature.TOMOutput))
+            //    {
+            //        tomOutput.IsCommPortOpen = true;
+            //        AppState.UpdateFeature(tomOutput);
+            //    }
+            //}
 
             // Try to open Rotator comm port if fitted
             var rotator = AppState.GetFeatureByName(Feature.RotatorName);
-            if (rotator?.IsFitted == true)
-            {
-                StatusText = "Opening Rotator...";
-                if (await OpenFeatureCommPort(Feature.RotatorName))
-                {
-                    rotator.IsCommPortOpen = true;
-                    AppState.UpdateFeature(rotator);
-                }
-            }
+            //if (rotator?.IsFitted == true)
+            //{
+            //    StatusText = "Opening Rotator...";
+            //    if (await OpenFeatureCommPort(Feature.RotatorName))
+            //    {
+            //        rotator.IsCommPortOpen = true;
+            //        AppState.UpdateFeature(rotator);
+            //    }
+            //}
 
             // Update status colours based on final feature state
             MainThread.BeginInvokeOnMainThread(() =>
@@ -432,6 +481,13 @@ public partial class MainViewModel : BaseViewModel
                     { IsCommPortOpen: true } => statusColours[Status.CommOpen],
                     _ => statusColours[Status.CommClosed]
                 };
+            });
+
+
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                OnPropertyChanged(nameof(CanEnableVideo));
+                OnPropertyChanged(nameof(CanEnableRotator));
             });
 
             StatusText = "Connected";
@@ -501,199 +557,449 @@ public partial class MainViewModel : BaseViewModel
 
 
     [RelayCommand]
+
     private async Task Disconnect()
     {
         IsBusy = true;
         try
         {
+            // Step 1: Disable video if enabled — must send TOM off command before closing ports
+            var tomInput = AppState.GetFeatureByName(Feature.TOMInput);
+            if (tomInput?.IsFitted == true && tomInput.IsEnabled)
+            {
+                StatusText = "Disabling video...";
+                if (await DisableVideo())
+                {
+                    AppState.SetVideoEnabled(false);
+                    StatusText = "Video disabled";
+                }
+                else
+                {
+                    StatusText = "Warning — TOM did not confirm power off, closing ports anyway";
+                    AppState.SetVideoEnabled(false);
+                }
+            }
+
+            // Step 2: Disable rotator if enabled
+            var rotator = AppState.GetFeatureByName(Feature.RotatorName);
+            if (rotator?.IsFitted == true && rotator.IsEnabled)
+            {
+                rotator.IsEnabled = false;
+                AppState.UpdateFeature(rotator);
+                AppState.SetRotatorEnabled(false);
+                RotatorPreviouslyEnabled = false;
+                StatusText = "Rotator disabled";
+            }
+
+            // Step 3: Close all open comm ports
+            foreach (var feature in AppState.Features.ToList().Where(f => f.IsCommPortOpen))
+            {
+                StatusText = $"Closing {feature.Name}...";
+                if (await CloseFeatureCommPort(feature.Name))
+                {
+                    feature.IsCommPortOpen = false;
+                    feature.IsEnabled = false;
+                    AppState.UpdateFeature(feature);
+                }
+                else
+                {
+                    StatusText = $"Warning — failed to close {feature.Name}, continuing...";
+                }
+            }
+
+            // Step 4: Disconnect TCP
             await _tcpService.StopAsync();
-            StatusText = "Disconnected";
-            VideoStatusColor = statusColours[Status.Unknown];
-            RotatorStatusColor = statusColours[Status.Unknown];
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
 
-    [RelayCommand]
-    private async Task EnableSystem()
-    {
-        if (AppState.IsNotConnected) return;
-
-        IsBusy = true;
-
-        try
-        {
-            // CHECK FFMPEG
-            StatusText = "Checking FFmpeg...";
-            if (!await SendAndWaitAsync(CameraFeature, "CHECK FFMPEG", "", timeout))
+            // Step 5: Reset all feature state in AppState
+            foreach (var feature in AppState.Features.ToList())
             {
-                StatusText = "Enable failed — FFmpeg not available";
-                return;
-            }
-
-            // CHECK MTX VERSION
-            StatusText = "Checking MediaMTX...";
-            if (!await SendAndWaitAsync(CameraFeature, "CHECK MTX VERSION", "", timeout))
-            {
-                StatusText = "Enable failed — MediaMTX not available";
-                return;
-            }
-
-            //Close any already open ports
-            // CLOSE TOM Input
-            StatusText = "Attempt to close TOM Input...";
-            if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "TOM Input", timeout))
-            {
-                StatusText = "Enable failed — could not close TOM Input";
-               // return;
-            }
-
-            // CLOSE TOM Output
-            StatusText = "Attempt to close Opening TOM Output...";
-            if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "TOM Output", timeout))
-            {
-                StatusText = "Enable failed — could not close TOM Output";
-             //   return;
-            }
-
-            // CLOSE ROTATOR
-            StatusText = "Attempt to close Opening ROTATOR...";
-            if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "ROTATOR", timeout))
-            {
-                StatusText = "Enable failed — could not close ROTATOR";
-                //    return;
-            }
-
-
-            // CLOSE FLIR
-            StatusText = "Attempt to close FLIR...";
-            if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "TOM FLIR", timeout))
-            {
-                StatusText = "Enable failed — could not close FLIR";
-                //    return;
-            }
-
-            //Open Ports 
-            // OPEN TOM Input
-            StatusText = "Opening TOM Input...";
-            if (!await SendAndWaitAsync(SerialFeature, "OPEN", "TOM Input", timeout))
-            {
-                StatusText = "Enable failed — could not open TOM Input";
-                return;
-            }
-
-            // OPEN TOM Output
-            StatusText = "Opening TOM Output...";
-            if (!await SendAndWaitAsync(SerialFeature, "OPEN", "TOM Output", timeout))
-            {
-                StatusText = "Enable failed — could not open TOM Output";
-                return;
-            }
-
-            // OPEN ROTATOR
-            StatusText = "Opening ROTATOR...";
-            if (!await SendAndWaitAsync(SerialFeature, "OPEN", "ROTATOR", timeout))
-            {
-                StatusText = "Enable failed — could not open ROTATOR";
-            //    return;
-            }
-
-            //Send Tom On command TOMCommands.TurnOnAllSystemsCommand
-            //WRITE TEXT
-            // OPEN TOM Output
-            StatusText = "Turning on TOM...";
-            if (!await SendAndWaitForPushAsync(
-                    "TOM Input", "WRITE TEXT", TOMCommands.TurnOnAllSystemsCommand,
-                    "TOM Output", IsTomPowerOn,
-                    timeout))
-            {
-                StatusText = "Enable failed — TOM did not confirm power on";
-                return;
-            }
-
-
-
-
-            IsSystemEnabled = true;
-            StatusText = "System Enabled";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand]
-    private async Task DisableSystem()
-    {
-        if (AppState.IsNotConnected) return;
-
-        IsBusy = true;
-
-
-        IsBusy = true;
-        try
-        {
-
-
-            StatusText = "Turning off TOM...";
-            if (!await SendAndWaitForPushAsync(
-                    "TOM Input", "WRITE TEXT", TOMCommands.TurnOffAllSystemsCommand,
-                    "TOM Output", IsTomPowerOff,
-                    timeout))
-            {
-                StatusText = "Disable failed — TOM did not confirm power off";
-            }
-
-
-            //Close any already open ports
-            // CLOSE TOM Input
-            StatusText = "Attempt to close TOM Input...";
-            if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "TOM Input", timeout))
-            {
-                StatusText = "Enable failed — could not close TOM Input";
-                // return;
-            }
-
-            // CLOSE TOM Output
-            StatusText = "Attempt to close TOM Output...";
-            if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "TOM Output", timeout))
-            {
-                StatusText = "Enable failed — could not close TOM Output";
-                //   return;
-            }
-
-            // CLOSE ROTATOR
-            StatusText = "Attempt to close ROTATOR...";
-            if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "ROTATOR", timeout))
-            {
-                StatusText = "Enable failed — could not close ROTATOR";
-                //    return;
-            }
-
-            // CLOSE FLIR
-            StatusText = "Attempt to close FLIR...";
-            if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "TOM FLIR", timeout))
-            {
-                StatusText = "Enable failed — could not close FLIR";
-                //    return;
+                feature.IsCommPortOpen = false;
+                feature.IsEnabled = false;
+                feature.IsFitted = false;
+                AppState.UpdateFeature(feature);
             }
 
             IsSystemEnabled = false;
-            StatusText = "System Disabled";
+            RotatorPreviouslyEnabled = false;
 
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                VideoStatusColor = statusColours[Status.Unknown];
+                RotatorStatusColor = statusColours[Status.Unknown];
+                OnPropertyChanged(nameof(CanEnableVideo));
+                OnPropertyChanged(nameof(CanEnableRotator));
+            });
 
+            StatusText = "Disconnected";
         }
-
-
         finally
         {
             IsBusy = false;
         }
     }
+
+    [RelayCommand]
+    private async Task ToggleSystem()
+    {
+        if (AppState.IsNotConnected) return;
+
+        IsBusy = true;
+        try
+        {
+            if (!IsSystemEnabled)
+            {
+                // Enable all fitted features from whatever state they are currently in
+
+                // Step 1: Check camera prerequisites before opening any ports
+                StatusText = "Checking FFmpeg...";
+                if (!await SendAndWaitAsync(CameraFeature, "CHECK FFMPEG", "", timeout))
+                {
+                    StatusText = "Enable failed — FFmpeg not available";
+                    return;
+                }
+
+                StatusText = "Checking MediaMTX...";
+                if (!await SendAndWaitAsync(CameraFeature, "CHECK MTX VERSION", "", timeout))
+                {
+                    StatusText = "Enable failed — MediaMTX not available";
+                    return;
+                }
+
+                // Step 2: Open comm ports for all fitted features that aren't already open
+                foreach (var feature in AppState.Features.ToList().Where(f => f.IsFitted && !f.IsCommPortOpen))
+                {
+                    StatusText = $"Opening {feature.Name}...";
+                    if (await OpenFeatureCommPort(feature.Name))
+                    {
+                        feature.IsCommPortOpen = true;
+                        AppState.UpdateFeature(feature);
+                    }
+                    else
+                    {
+                        StatusText = $"Warning — failed to open {feature.Name}, continuing...";
+                    }
+                }
+
+                // Step 3: Enable video if fitted, port is open, and not already enabled
+                var tomInput = AppState.GetFeatureByName(Feature.TOMInput);
+                var tomOutput = AppState.GetFeatureByName(Feature.TOMOutput);
+
+                if (tomInput?.IsFitted == true && tomInput.IsCommPortOpen && !tomInput.IsEnabled)
+                {
+                    StatusText = "Enabling video...";
+                    if (await EnableVideo())
+                    {
+                        AppState.SetVideoEnabled(true);
+                        StatusText = "Video enabled";
+                    }
+                    else
+                    {
+                        StatusText = "Warning — video enable failed, continuing...";
+                    }
+                }
+
+                // Step 4: Enable rotator if fitted, port is open, and not already enabled
+                var rotator = AppState.GetFeatureByName(Feature.RotatorName);
+                if (rotator?.IsFitted == true && rotator.IsCommPortOpen && !rotator.IsEnabled)
+                {
+                    StatusText = "Enabling rotator...";
+                    rotator.IsEnabled = true;
+                    AppState.UpdateFeature(rotator);
+                    AppState.SetRotatorEnabled(true);
+                    RotatorPreviouslyEnabled = true;
+                    StatusText = "Rotator enabled";
+                }
+
+                // Step 5: Update status colours from final AppState
+                tomInput = AppState.GetFeatureByName(Feature.TOMInput);
+                rotator = AppState.GetFeatureByName(Feature.RotatorName);
+
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                    VideoStatusColor = tomInput switch
+                    {
+                        { IsEnabled: true } => statusColours[Status.Enabled],
+                        { IsCommPortOpen: true } => statusColours[Status.Disabled],
+                        { IsFitted: true } => statusColours[Status.CommClosed],
+                        _ => statusColours[Status.Unknown]
+                    };
+
+                    RotatorStatusColor = rotator switch
+                    {
+                        { IsEnabled: true } => statusColours[Status.Enabled],
+                        { IsCommPortOpen: true } => statusColours[Status.Disabled],
+                        { IsFitted: true } => statusColours[Status.CommClosed],
+                        _ => statusColours[Status.Unknown]
+                    };
+
+                    OnPropertyChanged(nameof(CanEnableVideo));
+                    OnPropertyChanged(nameof(CanEnableRotator));
+                });
+
+                IsSystemEnabled = true;
+                StatusText = "System enabled";
+            }
+            else
+            {
+                // Disable all fitted features back to Off from whatever state they are currently in
+
+                // Step 1: Disable video if enabled — must send TOM off command before closing ports
+                var tomInput = AppState.GetFeatureByName(Feature.TOMInput);
+                var tomOutput = AppState.GetFeatureByName(Feature.TOMOutput);
+
+                if (tomInput?.IsEnabled == true)
+                {
+                    StatusText = "Disabling video...";
+                    if (await DisableVideo())
+                    {
+                        AppState.SetVideoEnabled(false);
+                        StatusText = "Video disabled";
+                    }
+                    else
+                    {
+                        StatusText = "Warning — TOM did not confirm power off, closing ports anyway";
+                        AppState.SetVideoEnabled(false);
+                    }
+                }
+
+                // Step 2: Disable rotator if enabled
+                var rotator = AppState.GetFeatureByName(Feature.RotatorName);
+                if (rotator?.IsEnabled == true)
+                {
+                    rotator.IsEnabled = false;
+                    AppState.UpdateFeature(rotator);
+                    AppState.SetRotatorEnabled(false);
+                    RotatorPreviouslyEnabled = false;
+                    StatusText = "Rotator disabled";
+                }
+
+                // Step 3: Close all open comm ports
+                foreach (var feature in AppState.Features.ToList().Where(f => f.IsCommPortOpen))
+                {
+                    StatusText = $"Closing {feature.Name}...";
+                    if (await CloseFeatureCommPort(feature.Name))
+                    {
+                        feature.IsCommPortOpen = false;
+                        feature.IsEnabled = false;
+                        AppState.UpdateFeature(feature);
+                    }
+                    else
+                    {
+                        StatusText = $"Warning — failed to close {feature.Name}, continuing...";
+                    }
+                }
+
+                // Step 4: Update status colours from final AppState
+                tomInput = AppState.GetFeatureByName(Feature.TOMInput);
+                rotator = AppState.GetFeatureByName(Feature.RotatorName);
+
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                    VideoStatusColor = tomInput switch
+                    {
+                        null => statusColours[Status.Unknown],
+                        { IsFitted: false } => statusColours[Status.Unknown],
+                        _ => statusColours[Status.CommClosed]
+                    };
+
+                    RotatorStatusColor = rotator switch
+                    {
+                        null => statusColours[Status.Unknown],
+                        { IsFitted: false } => statusColours[Status.Unknown],
+                        _ => statusColours[Status.CommClosed]
+                    };
+
+                    OnPropertyChanged(nameof(CanEnableVideo));
+                    OnPropertyChanged(nameof(CanEnableRotator));
+                });
+
+                IsSystemEnabled = false;
+                StatusText = "System disabled";
+            }
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    //[RelayCommand]
+    //private async Task EnableSystem()
+    //{
+    //    if (AppState.IsNotConnected) return;
+
+    //    IsBusy = true;
+
+    //    try
+    //    {
+    //        // CHECK FFMPEG
+    //        StatusText = "Checking FFmpeg...";
+    //        if (!await SendAndWaitAsync(CameraFeature, "CHECK FFMPEG", "", timeout))
+    //        {
+    //            StatusText = "Enable failed — FFmpeg not available";
+    //            return;
+    //        }
+
+    //        // CHECK MTX VERSION
+    //        StatusText = "Checking MediaMTX...";
+    //        if (!await SendAndWaitAsync(CameraFeature, "CHECK MTX VERSION", "", timeout))
+    //        {
+    //            StatusText = "Enable failed — MediaMTX not available";
+    //            return;
+    //        }
+
+    //        //Close any already open ports
+    //        // CLOSE TOM Input
+    //        StatusText = "Attempt to close TOM Input...";
+    //        if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "TOM Input", timeout))
+    //        {
+    //            StatusText = "Enable failed — could not close TOM Input";
+    //           // return;
+    //        }
+
+    //        // CLOSE TOM Output
+    //        StatusText = "Attempt to close Opening TOM Output...";
+    //        if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "TOM Output", timeout))
+    //        {
+    //            StatusText = "Enable failed — could not close TOM Output";
+    //         //   return;
+    //        }
+
+    //        // CLOSE ROTATOR
+    //        StatusText = "Attempt to close Opening ROTATOR...";
+    //        if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "ROTATOR", timeout))
+    //        {
+    //            StatusText = "Enable failed — could not close ROTATOR";
+    //            //    return;
+    //        }
+
+
+    //        // CLOSE FLIR
+    //        StatusText = "Attempt to close FLIR...";
+    //        if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "TOM FLIR", timeout))
+    //        {
+    //            StatusText = "Enable failed — could not close FLIR";
+    //            //    return;
+    //        }
+
+    //        //Open Ports 
+    //        // OPEN TOM Input
+    //        StatusText = "Opening TOM Input...";
+    //        if (!await SendAndWaitAsync(SerialFeature, "OPEN", "TOM Input", timeout))
+    //        {
+    //            StatusText = "Enable failed — could not open TOM Input";
+    //            return;
+    //        }
+
+    //        // OPEN TOM Output
+    //        StatusText = "Opening TOM Output...";
+    //        if (!await SendAndWaitAsync(SerialFeature, "OPEN", "TOM Output", timeout))
+    //        {
+    //            StatusText = "Enable failed — could not open TOM Output";
+    //            return;
+    //        }
+
+    //        // OPEN ROTATOR
+    //        StatusText = "Opening ROTATOR...";
+    //        if (!await SendAndWaitAsync(SerialFeature, "OPEN", "ROTATOR", timeout))
+    //        {
+    //            StatusText = "Enable failed — could not open ROTATOR";
+    //        //    return;
+    //        }
+
+    //        //Send Tom On command TOMCommands.TurnOnAllSystemsCommand
+    //        //WRITE TEXT
+    //        // OPEN TOM Output
+    //        StatusText = "Turning on TOM...";
+    //        if (!await SendAndWaitForPushAsync(
+    //                "TOM Input", "WRITE TEXT", TOMCommands.TurnOnAllSystemsCommand,
+    //                "TOM Output", IsTomPowerOn,
+    //                timeout))
+    //        {
+    //            StatusText = "Enable failed — TOM did not confirm power on";
+    //            return;
+    //        }
+
+
+
+
+    //        IsSystemEnabled = true;
+    //        StatusText = "System Enabled";
+    //    }
+    //    finally
+    //    {
+    //        IsBusy = false;
+    //    }
+    //}
+
+    //[RelayCommand]
+    //private async Task DisableSystem()
+    //{
+    //    if (AppState.IsNotConnected) return;
+
+    //    IsBusy = true;
+
+
+    //    IsBusy = true;
+    //    try
+    //    {
+
+
+    //        StatusText = "Turning off TOM...";
+    //        if (!await SendAndWaitForPushAsync(
+    //                "TOM Input", "WRITE TEXT", TOMCommands.TurnOffAllSystemsCommand,
+    //                "TOM Output", IsTomPowerOff,
+    //                timeout))
+    //        {
+    //            StatusText = "Disable failed — TOM did not confirm power off";
+    //        }
+
+
+    //        //Close any already open ports
+    //        // CLOSE TOM Input
+    //        StatusText = "Attempt to close TOM Input...";
+    //        if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "TOM Input", timeout))
+    //        {
+    //            StatusText = "Enable failed — could not close TOM Input";
+    //            // return;
+    //        }
+
+    //        // CLOSE TOM Output
+    //        StatusText = "Attempt to close TOM Output...";
+    //        if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "TOM Output", timeout))
+    //        {
+    //            StatusText = "Enable failed — could not close TOM Output";
+    //            //   return;
+    //        }
+
+    //        // CLOSE ROTATOR
+    //        StatusText = "Attempt to close ROTATOR...";
+    //        if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "ROTATOR", timeout))
+    //        {
+    //            StatusText = "Enable failed — could not close ROTATOR";
+    //            //    return;
+    //        }
+
+    //        // CLOSE FLIR
+    //        StatusText = "Attempt to close FLIR...";
+    //        if (!await SendAndWaitAsync(SerialFeature, "CLOSE", "TOM FLIR", timeout))
+    //        {
+    //            StatusText = "Enable failed — could not close FLIR";
+    //            //    return;
+    //        }
+
+    //        IsSystemEnabled = false;
+    //        StatusText = "System Disabled";
+
+
+    //    }
+
+
+    //    finally
+    //    {
+    //        IsBusy = false;
+    //    }
+    //}
 
     private async Task GlobalToggleEnable()
     {
@@ -1177,15 +1483,184 @@ public partial class MainViewModel : BaseViewModel
 
 
     [RelayCommand]
-    private void ToggleVideoEnable()
+    private async Task ToggleVideoEnable()
     {
-        IsVideoEnabled = !IsVideoEnabled;
+        var tomInput = AppState.GetFeatureByName(Feature.TOMInput);
+        var tomOutput = AppState.GetFeatureByName(Feature.TOMOutput);
+        if (tomInput is null || !tomInput.IsFitted) return;
+
+        IsBusy = true;
+        try
+        {
+            if (!tomInput.IsCommPortOpen && !tomOutput.IsCommPortOpen)
+            {
+                // Off → Disabled
+                StatusText = "Opening TOM Input...";
+                if (!await OpenFeatureCommPort(Feature.TOMInput))
+                {
+                    StatusText = "Failed to open TOM Input";
+                    MainThread.BeginInvokeOnMainThread(() =>
+                        VideoStatusColor = statusColours[Status.CommClosed]);
+                    return;
+                }
+
+                StatusText = "Opening TOM Output...";
+                if (!await OpenFeatureCommPort(Feature.TOMOutput))
+                {
+                    StatusText = "Failed to open TOM Output — rolling back";
+                    await CloseFeatureCommPort(Feature.TOMInput);
+                    AppState.SetVideoCommPortOpen(false);
+                    MainThread.BeginInvokeOnMainThread(() =>
+                        VideoStatusColor = statusColours[Status.CommClosed]);
+                    return;
+                }
+
+                AppState.SetVideoCommPortOpen(true);
+                StatusText = "TOM comm ports opened";
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                    VideoStatusColor = statusColours[Status.Disabled];
+                    OnPropertyChanged(nameof(CanEnableVideo));
+                });
+            }
+            else if (tomInput.IsCommPortOpen && tomOutput.IsCommPortOpen && !tomInput.IsEnabled)
+            {
+                // Disabled (from Off) → Enabled
+                if (await EnableVideo())
+                {
+                    AppState.SetVideoEnabled(true);  // raises IsVideoEnabled changed
+                    StatusText = "Video enabled";
+                    MainThread.BeginInvokeOnMainThread(() =>
+                    {
+                        VideoStatusColor = statusColours[Status.Enabled];
+                        OnPropertyChanged(nameof(CanEnableVideo));
+                    });
+                }
+                else
+                {
+                    StatusText = "Video enable failed";
+                    MainThread.BeginInvokeOnMainThread(() =>
+                        VideoStatusColor = statusColours[Status.Disabled]);
+                }
+            }
+            else if (tomInput.IsCommPortOpen && tomInput.IsEnabled)
+            {
+                // Enabled → Disabled
+                if (await DisableVideo())
+                {
+                    AppState.SetVideoEnabled(false);  // raises IsVideoEnabled changed
+
+                    StatusText = "Closing TOM Output...";
+                    await CloseFeatureCommPort(Feature.TOMOutput);
+                    tomOutput.IsCommPortOpen = false;
+                    tomOutput.IsEnabled = false;
+                    AppState.UpdateFeature(tomOutput);
+
+                    StatusText = "Video disabled";
+                    MainThread.BeginInvokeOnMainThread(() =>
+                    {
+                        VideoStatusColor = statusColours[Status.Disabled];
+                        OnPropertyChanged(nameof(CanEnableVideo));
+                    });
+                }
+                else
+                {
+                    StatusText = "Warning — TOM did not confirm power off";
+                    MainThread.BeginInvokeOnMainThread(() =>
+                        VideoStatusColor = statusColours[Status.Enabled]);
+                }
+            }
+            else if (tomInput.IsCommPortOpen && !tomOutput.IsCommPortOpen && !tomInput.IsEnabled)
+            {
+                // Disabled (from Enabled) → Off
+                StatusText = "Closing TOM Input...";
+                await CloseFeatureCommPort(Feature.TOMInput);
+                tomInput.IsCommPortOpen = false;
+                tomInput.IsEnabled = false;
+                AppState.UpdateFeature(tomInput);
+
+                StatusText = "TOM comm ports closed";
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                VideoStatusColor = statusColours[Status.CommClosed];
+                OnPropertyChanged(nameof(CanEnableVideo));
+                    });
+            }
+            
+        
     }
+    finally
+    {
+        IsBusy = false;
+    }
+}
 
     [RelayCommand]
-    private void ToggleRotatorEnable()
+    private async Task ToggleRotatorEnable()
     {
-        IsRotatorEnabled = !IsRotatorEnabled;
+        var feature = AppState.GetFeatureByName(Feature.RotatorName);
+        if (feature is null || !feature.IsFitted) return;
+
+        IsBusy = true;
+        try
+        {
+            if (!feature.IsCommPortOpen)
+            {
+                // CommClosed → CommOpen
+                if (await OpenFeatureCommPort(Feature.RotatorName))
+                {
+                    feature.IsCommPortOpen = true;
+                    AppState.UpdateFeature(feature);
+                    StatusText = "Rotator comm port opened";
+                    MainThread.BeginInvokeOnMainThread(() =>
+                        RotatorStatusColor = statusColours[Status.CommOpen]);
+                }
+                else
+                {
+                    MainThread.BeginInvokeOnMainThread(() =>
+                        RotatorStatusColor = statusColours[Status.CommClosed]);
+                }
+            }
+            else if (!feature.IsEnabled && !RotatorPreviouslyEnabled)
+                    {
+                // CommOpen → Enabled (rotator enable always succeeds)
+                feature.IsEnabled = true;
+                AppState.UpdateFeature(feature);
+                RotatorPreviouslyEnabled = true;
+                AppState.SetRotatorEnabled(true);
+                StatusText = "Rotator enabled";
+                MainThread.BeginInvokeOnMainThread(() =>
+                    RotatorStatusColor = statusColours[Status.Enabled]);
+            }
+            else if (feature.IsEnabled && RotatorPreviouslyEnabled)
+                    {
+                        // Enable → Disabled (rotator enable always succeeds)
+                        feature.IsEnabled = false;
+                        AppState.UpdateFeature(feature);
+                AppState.SetRotatorEnabled(false);
+                StatusText = "Rotator disabled";
+                        MainThread.BeginInvokeOnMainThread(() =>
+                            RotatorStatusColor = statusColours[Status.Disabled]);
+                    }
+                    else
+            {
+                // Disable → CommClosed
+                if (await CloseFeatureCommPort(Feature.RotatorName))
+                {
+                    feature.IsEnabled = false;
+                    feature.IsCommPortOpen = false;
+                    RotatorPreviouslyEnabled = false;
+                    AppState.UpdateFeature(feature);
+                    StatusText = "Rotator comm port opened";
+                    MainThread.BeginInvokeOnMainThread(() =>
+                        RotatorStatusColor = statusColours[Status.CommClosed]);
+                }
+            }
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
 
