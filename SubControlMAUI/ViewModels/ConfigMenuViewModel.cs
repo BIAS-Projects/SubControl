@@ -83,6 +83,12 @@ public partial class ConfigMenuViewModel : BaseViewModel
     }
 
     [RelayCommand]
+    private async Task Rotator()
+    {
+        await _navigation.GoToAsync(nameof(RotatorOptionsPage));
+    }
+
+    [RelayCommand]
     private async Task Tech()
     {
         await _navigation.GoToAsync(nameof(TechPage));

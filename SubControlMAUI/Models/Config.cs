@@ -55,5 +55,21 @@ namespace SubControlMAUI.Model
         [Required]
         public string Features { get; set; } = "CUTTER,PERISCOPE";
 
+        [Required]
+        public string SnapShotPath { get; set; } = "C:";
+
+        [Required]
+        public string ConfigScreenPassword { get; set; } = "BIAS";
+
+        [Required]
+        public int MinRotatorValue { get; set; } = 0;
+
+        [Required]
+        public int MaxRotatorValue { get; set; } = 90;
+
+        [Required]
+        public int AdjustValue { get; set; } = 1;
+
+
     }
 }

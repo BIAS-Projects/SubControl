@@ -109,5 +109,9 @@ namespace SubControlMAUI.Services
             OnPropertyChanged(nameof(IsRotatorEnabled));  // ← notify bindings
         }
 
+        public string SnapShotPath { get; set; } = "C:";
+
+        public string ConfigScreenPassword { get; set; } = "BIAS";
+
     }
 }

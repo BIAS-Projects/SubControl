@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="SubControlMAUI.Pages.RotatorOptionsPage"
+             xmlns:vm="clr-namespace:SubControlMAUI.ViewModels"
+             x:DataType="vm:RotatorOptionsViewModel"
+             Title="{Binding Title}"
+             Shell.NavBarIsVisible="True">
+    <Grid Padding="10"
+          RowDefinitions="Auto,Auto,Auto"
+          IsEnabled="{Binding IsNotBusy}">
+
+        <!-- Status Label -->
+        <Label Grid.Row="0"
+               Margin="0,15,0,15"
+               FontSize="16">
+            <Label.FormattedText>
+                <FormattedString>
+                    <Span Text="Status: " FontAttributes="Bold"/>
+                    <Span Text="{Binding StatusText}" />
+                </FormattedString>
+            </Label.FormattedText>
+        </Label>
+
+        <!-- Pickers Section -->
+        <VerticalStackLayout Grid.Row="1" Spacing="12" Margin="0,10,0,10">
+
+            <!-- Minimum Rotator Value -->
+            <Grid ColumnDefinitions="*,*">
+                <Label Text="Minimum Rotator Value"
+                       VerticalOptions="Center"
+                       FontAttributes="Bold" />
+                <Picker Grid.Column="1"
+                        Title="Select Min"
+                        ItemsSource="{Binding RotatorValues}"
+                        SelectedItem="{Binding MinRotatorValue, Mode=TwoWay}" />
+            </Grid>
+
+            <!-- Maximum Rotator Value -->
+            <Grid ColumnDefinitions="*,*">
+                <Label Text="Maximum Rotator Value"
+                       VerticalOptions="Center"
+                       FontAttributes="Bold" />
+                <Picker Grid.Column="1"
+                        Title="Select Max"
+                        ItemsSource="{Binding RotatorValues}"
+                        SelectedItem="{Binding MaxRotatorValue, Mode=TwoWay}" />
+            </Grid>
+
+            <!-- Adjustment Value -->
+            <Grid ColumnDefinitions="*,*">
+                <Label Text="Adjustment Value"
+                       VerticalOptions="Center"
+                       FontAttributes="Bold" />
+                <Picker Grid.Column="1"
+                        Title="Select Adjustment"
+                        ItemsSource="{Binding AdjustmentValues}"
+                        SelectedItem="{Binding AdjustValue, Mode=TwoWay}" />
+            </Grid>
+
+        </VerticalStackLayout>
+
+        <!-- Save Button - disabled when min >= max -->
+        <ImageButton Grid.Row="2"
+                     Source="{AppThemeBinding Light=light_save.png, Dark=dark_save.png}"
+                     WidthRequest="30"
+                     HeightRequest="30"
+                     BackgroundColor="Transparent"
+                     Command="{Binding SaveCommand}"
+                     IsEnabled="{Binding CanSave}"
+                     Margin="0,10,0,0" />
+
+        <!-- BUSY OVERLAY -->
+        <Grid IsVisible="{Binding IsBusy}"
+              BackgroundColor="#80000000"
+              Grid.RowSpan="3"
+              ZIndex="1">
+            <ActivityIndicator IsRunning="{Binding IsBusy}"
+                               IsVisible="{Binding IsBusy}"
+                               VerticalOptions="Center"
+                               HorizontalOptions="Center"
+                               WidthRequest="60"
+                               HeightRequest="60" />
+        </Grid>
+
+    </Grid>
+</ContentPage>

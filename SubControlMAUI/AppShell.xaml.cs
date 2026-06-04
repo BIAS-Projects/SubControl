@@ -26,6 +26,7 @@ namespace SubControlMAUI
             Routing.RegisterRoute(nameof(I2CSettingsPage), typeof(I2CSettingsPage));
             Routing.RegisterRoute(nameof(CutterCommandSettingsPage), typeof(CutterCommandSettingsPage));
             Routing.RegisterRoute(nameof(PeriscopeCommandSettingsPage), typeof(PeriscopeCommandSettingsPage));
+            Routing.RegisterRoute(nameof(RotatorOptionsPage), typeof(RotatorOptionsPage));
         }
 
         protected override async void OnAppearing()

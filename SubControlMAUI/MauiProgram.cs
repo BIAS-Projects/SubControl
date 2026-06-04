@@ -72,6 +72,9 @@ namespace SubControlMAUI
             builder.Services.AddSingleton<RotatorPage>();
             builder.Services.AddSingleton<RotatorViewModel>();
 
+            builder.Services.AddSingleton<RotatorOptionsPage>();
+            builder.Services.AddSingleton<RotatorOptionsViewModel>();
+
 
             builder.Services.AddSingleton<SQLiteService>();
 

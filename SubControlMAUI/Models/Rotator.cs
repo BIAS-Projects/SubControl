@@ -6,6 +6,15 @@ namespace SubControlMAUI.Models
 {
     public static class Rotator
     {
+
+        public static int MinRotatorValue { get; set; } = 0;
+
+
+        public static int MaxRotatorValue { get; set; } = 0;
+
+
+        public static int AdjustValue { get; set; } = 0;
+
         private static double _encoderScalingFactor = 0.0879;
 
         public static readonly HashSet<string> Headers =

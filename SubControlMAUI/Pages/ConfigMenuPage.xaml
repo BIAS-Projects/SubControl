@@ -13,7 +13,7 @@
 
             <!-- Main Buttons -->
             <Grid Grid.Row="2"
-                  ColumnDefinitions="*,*,*,*"
+                  ColumnDefinitions="*,*,*,*,*"
                   ColumnSpacing="60"
                   HorizontalOptions="Center"
                   VerticalOptions="Center">
@@ -72,6 +72,24 @@
                 </VerticalStackLayout>
 
                 <VerticalStackLayout Grid.Column="3"
+                                     Spacing="8"
+                                     HorizontalOptions="Center">
+
+                    <ImageButton
+                        Source="{AppThemeBinding Light=light_roundabout.png, Dark=dark_roundabout.png}"
+                        WidthRequest="{Binding ButtonSize}"
+                        HeightRequest="{Binding ButtonSize}"
+                        BackgroundColor="Transparent"
+                        Command="{Binding RotatorCommand}"
+                         />
+
+
+                    <Label Text="Rotator"
+                           HorizontalOptions="Center"/>
+                </VerticalStackLayout>
+
+
+                <VerticalStackLayout Grid.Column="4"
                                      Spacing="8"
                                      HorizontalOptions="Center">
 

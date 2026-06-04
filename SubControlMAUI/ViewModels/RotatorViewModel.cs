@@ -86,6 +86,10 @@ public partial class RotatorViewModel : BaseViewModel
         ArmAngle = 73;
         StatusText = "";
 
+        MinRotatorValue = Rotator.MinRotatorValue;
+        MaxRotatorValue = Rotator.MaxRotatorValue;
+        AdjustValue = Rotator.AdjustValue;
+
         RegisterMessages();
     }
 
@@ -218,6 +222,15 @@ public partial class RotatorViewModel : BaseViewModel
     [ObservableProperty] private double layoutSpacing;
     [ObservableProperty] private string statusText = "Stopped";
     [ObservableProperty] private double armAngle;
+    [ObservableProperty] 
+    public int minRotatorValue = 0;
+
+    [ObservableProperty]
+    public int maxRotatorValue = 90;
+
+    [ObservableProperty]
+    public int adjustValue  = 1;
+
 
     partial void OnArmAngleChanged(double value)
     {

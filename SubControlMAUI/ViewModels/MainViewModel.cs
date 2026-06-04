@@ -1,4 +1,5 @@
 ﻿
+using CommunityToolkit.Maui.Extensions;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
@@ -7,6 +8,7 @@ using SubConsole.Models;
 using SubControlMAUI.Messages;
 using SubControlMAUI.Models;
 using SubControlMAUI.Pages;
+using SubControlMAUI.Popups;
 using SubControlMAUI.Services;
 using System.Globalization;
 using System.Text;
@@ -1429,7 +1431,17 @@ IsSystemEnabled
     [RelayCommand]
     private async Task Settings()
     {
-        await Shell.Current.GoToAsync(nameof(ConfigMenuPage));
+        var popup = new PasswordPopup();
+        await Shell.Current.CurrentPage.ShowPopupAsync(popup);
+
+        if (!String.IsNullOrEmpty(popup.EnteredPassword))
+        {
+            if (popup.EnteredPassword.Equals(AppState.ConfigScreenPassword))
+            {
+                await Shell.Current.GoToAsync(nameof(ConfigMenuPage));
+            }
+        }
+    
     }
 
     public async Task ButtonLoaded()
@@ -1449,14 +1461,27 @@ IsSystemEnabled
 
     public async Task GetConfig()
     {
+
         if (!await _sqliteService.GetConfigAsync())
         {
             if (await _sqliteService.SetDefaultConfig())
             {
                 _sqliteService.DefaultsLoaded = true;
+                StatusText = "Default Settings Loaded";
 
             }
 
+        }
+        else
+        {
+
+
+
+            AppState.SnapShotPath = _sqliteService.config.SnapShotPath;
+            AppState.ConfigScreenPassword = _sqliteService.config.ConfigScreenPassword;
+            Models.Rotator.MinRotatorValue = _sqliteService.config.MinRotatorValue;
+            Models.Rotator.MaxRotatorValue = _sqliteService.config.MaxRotatorValue;
+            Models.Rotator.AdjustValue = _sqliteService.config.AdjustValue;
         }
 
 
