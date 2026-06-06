@@ -54,7 +54,11 @@ namespace SubControlMAUI.ViewModels
             });
         }
 
-
+        [RelayCommand]
+        private async Task GoBack()
+        {
+            await Shell.Current.GoToAsync("..");
+        }
 
 
         [ObservableProperty]

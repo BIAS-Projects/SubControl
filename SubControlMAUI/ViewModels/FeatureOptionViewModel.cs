@@ -182,6 +182,12 @@ public partial class FeatureOptionViewModel : BaseViewModel
     [ObservableProperty]
     public string statusText = "";
 
+    [RelayCommand]
+    private async Task GoBack()
+    {
+        await Shell.Current.GoToAsync("..");
+    }
+
     public ObservableCollection<UsbDevice> UsbDevices { get; set; } = new();
 
     private void HandleSelection(UsbDevice changedDevice, string selectedValue)
@@ -300,10 +306,7 @@ public partial class FeatureOptionViewModel : BaseViewModel
         }
     }
 
-    private async Task GoBack()
-    {
-        await _navigationService.GoToAsync("..");
-    }
+
 
     private async Task HandleListDevicesResponseAsync(string? json)
     {

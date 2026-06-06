@@ -27,6 +27,9 @@ namespace SubControlMAUI
             Routing.RegisterRoute(nameof(CutterCommandSettingsPage), typeof(CutterCommandSettingsPage));
             Routing.RegisterRoute(nameof(PeriscopeCommandSettingsPage), typeof(PeriscopeCommandSettingsPage));
             Routing.RegisterRoute(nameof(RotatorOptionsPage), typeof(RotatorOptionsPage));
+            Routing.RegisterRoute(nameof(USBConfigMenuPage), typeof(USBConfigMenuPage));
+            Routing.RegisterRoute(nameof(VideoOptionsPage), typeof(VideoOptionsPage));
+
         }
 
         protected override async void OnAppearing()

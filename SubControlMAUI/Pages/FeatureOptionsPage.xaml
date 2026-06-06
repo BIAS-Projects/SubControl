@@ -6,13 +6,40 @@
     xmlns:vm="clr-namespace:SubControlMAUI.ViewModels"
     x:DataType="vm:FeatureOptionViewModel"
     Title="{Binding Title}"
-        Shell.NavBarIsVisible="True">
+        Shell.NavBarIsVisible="False">
+
+
 
     <Grid Padding="10"
           RowDefinitions="Auto, Auto,*,Auto"
           IsEnabled="{Binding IsNotBusy}">
-        
-        <Label Grid.Row="0"
+
+        <!-- CUSTOM TITLE BAR -->
+        <Grid Grid.Row="0"
+                  ColumnDefinitions="*,Auto,*"
+                  Margin="0,0,0,10">
+
+            <Button Grid.Column="1"
+                        Text="⬅ Back"
+                        FontSize="18"
+                        HorizontalOptions="Start"
+                        VerticalOptions="Center"
+                        Command="{Binding GoBackCommand}" />
+
+            <Label Grid.Column="0"
+                       Text="{Binding Title}"
+                       FontSize="22"
+                       FontAttributes="Bold"
+                       HorizontalOptions="Start"
+                       VerticalOptions="Center" />
+
+            <!-- Empty right column to keep title centred -->
+            <Label Grid.Column="2" />
+
+        </Grid>
+
+
+        <Label Grid.Row="1"
                    Margin="0,15,0,15"
                    FontSize="16">
             <Label.FormattedText>
@@ -33,33 +60,34 @@
                 Margin="0,0,0,10" 
              IsEnabled="{Binding AppState.IsConnected}"/>
 
-
         <CollectionView Grid.Row="2"
-                        ItemsSource="{Binding UsbDevices}"
-                        IsEnabled="{Binding UsbDetailsDownloaded}">
+                ItemsSource="{Binding UsbDevices}"
+                IsEnabled="{Binding UsbDetailsDownloaded}"
+                Margin="8,4,8,4">
             <CollectionView.ItemTemplate>
                 <DataTemplate x:DataType="models:UsbDevice">
-
-                    <Grid ColumnDefinitions="*,*"
-                          Padding="5">
-
-                        <!-- USB Device Name -->
-                        <Label Text="{Binding Name}"
-                               VerticalOptions="Center"
-                               FontAttributes="Bold" />
-
-                        <!-- Function Picker -->
-                        <Picker Grid.Column="1"
-        Title="Select Function"
-        ItemsSource="{Binding AvailableFunctions}"
-        SelectedItem="{Binding SelectedFunction, Mode=TwoWay}" />
-
-                    </Grid>
-
+                    <Border Padding="5"
+                    StrokeThickness="2"
+                    Stroke="{AppThemeBinding Light={StaticResource Gray300}, Dark={StaticResource Gray600}}"
+                    BackgroundColor="{AppThemeBinding Light={StaticResource White}, Dark={StaticResource Gray950}}">
+                        <Border.StrokeShape>
+                            <RoundRectangle CornerRadius="8"/>
+                        </Border.StrokeShape>
+                        <Grid ColumnDefinitions="*,*">
+                            <!-- USB Device Name -->
+                            <Label Text="{Binding Name}"
+                           VerticalOptions="Center"
+                           FontAttributes="Bold" />
+                            <!-- Function Picker -->
+                            <Picker Grid.Column="1"
+                            Title="Select Function"
+                            ItemsSource="{Binding AvailableFunctions}"
+                            SelectedItem="{Binding SelectedFunction, Mode=TwoWay}" />
+                        </Grid>
+                    </Border>
                 </DataTemplate>
             </CollectionView.ItemTemplate>
         </CollectionView>
-
         <ImageButton
                     Source="{AppThemeBinding Light=light_save.png, Dark=dark_save.png}"
                     WidthRequest="30"

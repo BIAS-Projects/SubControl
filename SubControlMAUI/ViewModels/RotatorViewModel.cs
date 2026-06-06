@@ -2,7 +2,6 @@
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.Logging;
-
 using SubConsole.Models;
 using SubControlMAUI.Messages;
 using SubControlMAUI.Models;
@@ -12,12 +11,76 @@ using System.Text.Json;
 
 namespace SubControlMAUI.ViewModels;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Gauge drawable – draws a semi-circular arc with a needle.
+// Implements IDrawable so it can be used directly as GraphicsView.Drawable.
+// ─────────────────────────────────────────────────────────────────────────────
+public class RotatorGaugeDrawable : IDrawable
+{
+    public double ArmAngle { get; set; }   // 0–180 degrees, maps directly to needle
+    public int MinValue { get; set; }
+    public int MaxValue { get; set; }
+
+    public void Draw(ICanvas canvas, RectF dirtyRect)
+    {
+        float cx = dirtyRect.Width / 2f;
+        float cy = dirtyRect.Height - 10f;   // pivot at bottom-centre
+        float radius = Math.Min(cx, cy) * 0.85f;
+        float thick = 18f;
+
+        // ── 1. Solid filled semicircle background (flat edge at bottom) ──────
+        var path = new PathF();
+        path.MoveTo(cx - radius, cy);
+        path.LineTo(cx + radius, cy);
+        // Arc from 0° (right) back round to 180° (left) — top half
+        path.AddArc(cx - radius, cy - radius,
+                    cx + radius, cy + radius,
+                    0f, 180f, false);
+        path.Close();
+        canvas.FillColor = Color.FromArgb("#1A2979FF");   // translucent blue tint
+        canvas.FillPath(path);
+
+
+        // ── 4. Needle — angle driven by ArmAngle mapped within Min/Max range
+        // MinValue → needle points left  (canvas angle 180°)
+        // MaxValue → needle points right (canvas angle 0°)
+        int range = Math.Max(1, MaxValue - MinValue);
+        double clamped = Math.Clamp(ArmAngle, MinValue, MaxValue);
+        double fraction = (clamped - MinValue) / range;        // 0.0 → 1.0
+        double needleCanvasDeg = 180.0 - (fraction * 180.0);        // 180° (left) → 0° (right)
+        double needleRad = needleCanvasDeg * Math.PI / 180.0;
+        float nx = cx + radius * (float)Math.Cos(needleRad);
+        float ny = cy - radius * (float)Math.Sin(needleRad);
+
+        // Needle itself
+        canvas.StrokeColor = Color.FromArgb("#FF1744");
+        canvas.StrokeSize = 3f;
+        canvas.StrokeLineCap = LineCap.Round;
+        canvas.DrawLine(cx, cy, nx, ny);
+
+        // ── 5. Centre pivot dot ──────────────────────────────────────────────
+        canvas.FillColor = Color.FromArgb("#FF1744");
+        canvas.FillCircle(cx, cy, 7);
+        canvas.FillColor = Color.FromArgb("#FFFFFF");
+        canvas.FillCircle(cx, cy, 3);
+    }
+}
+
 public partial class RotatorViewModel : BaseViewModel
 {
+    // ── gauge drawable (updated whenever angle or limits change) ──────────────
+    public RotatorGaugeDrawable GaugeDrawable { get; } = new();
+
+    private void RefreshGauge()
+    {
+        GaugeDrawable.ArmAngle = ArmAngle;
+        GaugeDrawable.MinValue = MinRotatorValue;
+        GaugeDrawable.MaxValue = MaxRotatorValue;
+        OnPropertyChanged(nameof(GaugeDrawable));   // triggers GraphicsView redraw
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Immutable holder for a single pending push-confirm operation.
-    // Swapping the whole object atomically via Interlocked.CompareExchange means
-    // there is no torn-state window where a new TCS is paired with an old predicate.
     // ─────────────────────────────────────────────────────────────────────────
     private sealed class PendingConfirm
     {
@@ -33,6 +96,7 @@ public partial class RotatorViewModel : BaseViewModel
                             TaskCreationOptions.RunContinuationsAsynchronously);
         }
     }
+
     // ── services ──────────────────────────────────────────────────────────────
     private readonly ILogger<RotatorViewModel> _logger;
     private readonly IMessenger _messenger;
@@ -42,11 +106,7 @@ public partial class RotatorViewModel : BaseViewModel
     public ApplicationStateService AppState { get; }
 
     // ── command serialisation ─────────────────────────────────────────────────
-    // Only one command (or poll) may be in-flight at a time.
     private readonly SemaphoreSlim _commandLock = new(1, 1);
-
-    // ── pending operation (atomic swap, no torn state) ────────────────────────
-    // Written only inside _commandLock; read from any thread via Interlocked.
     private PendingConfirm? _pendingConfirm;
 
     // ── polling ───────────────────────────────────────────────────────────────
@@ -55,18 +115,12 @@ public partial class RotatorViewModel : BaseViewModel
     private bool _isPageVisible;
 
     // ── UI-update throttle ────────────────────────────────────────────────────
-    // Prevents the dispatcher queue from being flooded by high-frequency packets.
     private long _lastStatusTick;
     private const long StatusThrottleMs = 100;
 
     // ── protocol timeouts ─────────────────────────────────────────────────────
-    // Poll timeout is short so the lock is released quickly between polls,
-    // keeping the command path responsive.
     private readonly TimeSpan _commandTimeout = TimeSpan.FromSeconds(10);
     private readonly TimeSpan _pollTimeout = TimeSpan.FromSeconds(1.5);
-    // How long a user command will wait for a poll to finish before giving up.
-    // Needs to be >= _pollingInterval + _pollTimeout to let one full poll cycle
-    // complete before a command is rejected.
     private readonly TimeSpan _lockWaitTimeout = TimeSpan.FromSeconds(2);
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -90,20 +144,19 @@ public partial class RotatorViewModel : BaseViewModel
         MaxRotatorValue = Rotator.MaxRotatorValue;
         AdjustValue = Rotator.AdjustValue;
 
+        RefreshGauge();
         RegisterMessages();
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Message registration
+    // Message registration (unchanged)
     // ─────────────────────────────────────────────────────────────────────────
     private void RegisterMessages()
     {
-        // IMPORTANT: the handler is NOT async – it fires a background Task so
-        // exceptions are observable and handlers never overlap concurrently.
         _messenger.Register<TcpDataReceivedMessage>(this, (_, msg) =>
             _ = HandleTcpDataAsync(msg));
 
-        _messenger.Register<TcpSendRequestMessage>(this, (_, _) => { /* intentionally empty */ });
+        _messenger.Register<TcpSendRequestMessage>(this, (_, _) => { });
 
         _messenger.Register<TcpStatusMessage>(this, (_, msg) =>
             SetStatus(msg.Value));
@@ -129,128 +182,29 @@ public partial class RotatorViewModel : BaseViewModel
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Core TCP data handler – runs on a ThreadPool thread, not the UI thread.
-    // All shared state mutations go through _pendingConfirm (atomic swap).
-    // ─────────────────────────────────────────────────────────────────────────
-    private Task HandleTcpDataAsync(TcpDataReceivedMessage msg)
-    {
-        try
-        {
-            var function = msg.Value.Function;
-            var raw = msg.Value.Data;
-
-            if (!function.Equals(Feature.RotatorName, StringComparison.OrdinalIgnoreCase))
-            {
-                _logger.LogTrace("ROTATOR handler: ignored function='{Function}'", function);
-                return Task.CompletedTask;
-            }
-
-            var data = raw?.Trim();
-            if (string.IsNullOrWhiteSpace(data))
-            {
-                _logger.LogTrace("ROTATOR handler: empty data, ignored");
-                return Task.CompletedTask;
-            }
-
-            // ── protocol framing checks ───────────────────────────────────────
-            bool hasValidHeader = Rotator.Headers.Any(h =>
-                data.StartsWith(h, StringComparison.OrdinalIgnoreCase));
-
-            bool hasValidTerminator = Rotator.Terminators.Any(t =>
-                data.EndsWith(t, StringComparison.OrdinalIgnoreCase));
-
-            if (!hasValidHeader || !hasValidTerminator)
-            {
-                _logger.LogWarning(
-                    "ROTATOR handler: frame rejected — data='{Data}' header={H} terminator={T}",
-                    data, hasValidHeader, hasValidTerminator);
-                return Task.CompletedTask;
-            }
-
-            // ── throttled UI status update ────────────────────────────────────
-            long now = Environment.TickCount64;
-            if (Interlocked.Read(ref _lastStatusTick) is var last
-                && (now - last) >= StatusThrottleMs)
-            {
-                Interlocked.Exchange(ref _lastStatusTick, now);
-                SetStatus(data);
-            }
-
-            // ── encoder poll response ─────────────────────────────────────────
-            if (MatchesCommandCode(data, "MRL"))
-                UpdateEncoderAngle(data);
-
-            // ── push-confirm match ────────────────────────────────────────────
-            var pending = Interlocked.CompareExchange(ref _pendingConfirm, null, null);
-
-            _logger.LogDebug(
-                "ROTATOR handler: data='{Data}' len={Len} code='{Code}' pending={Pending}",
-                data,
-                data.Length,
-                data.Length >= 5 ? data.Substring(2, Math.Min(3, data.Length - 2)) : "??",
-                pending is null ? "none" : $"waiting for function='{pending.Function}'");
-
-            if (pending is not null)
-            {
-                bool functionMatch = function.Equals(pending.Function, StringComparison.OrdinalIgnoreCase);
-                bool predicateMatch = pending.Predicate(data);
-
-                _logger.LogDebug(
-                    "ROTATOR handler: confirm check — functionMatch={FM} predicateMatch={PM}",
-                    functionMatch, predicateMatch);
-
-                if (functionMatch && predicateMatch)
-                {
-                    _logger.LogInformation(
-                        "ROTATOR handler: confirm signalled for data='{Data}'", data);
-                    pending.Tcs.TrySetResult(true);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "HandleTcpDataAsync threw unexpectedly");
-        }
-
-        return Task.CompletedTask;
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
     // Observable properties
     // ─────────────────────────────────────────────────────────────────────────
     [ObservableProperty] private double buttonSize;
     [ObservableProperty] private double layoutSpacing;
     [ObservableProperty] private string statusText = "Stopped";
+
     [ObservableProperty] private double armAngle;
-    [ObservableProperty] 
-    public int minRotatorValue = 0;
-
-    [ObservableProperty]
-    public int maxRotatorValue = 90;
-
-    [ObservableProperty]
-    public int adjustValue  = 1;
-
-
     partial void OnArmAngleChanged(double value)
     {
         value = Math.Clamp(value, 0, 180);
-        // TODO: send angle to hardware if required
+        RefreshGauge();
     }
 
+    [ObservableProperty] private int minRotatorValue = 0;
+    partial void OnMinRotatorValueChanged(int value) => RefreshGauge();
+
+    [ObservableProperty] private int maxRotatorValue = 90;
+    partial void OnMaxRotatorValueChanged(int value) => RefreshGauge();
+
+    [ObservableProperty] private int adjustValue = 1;
+
     // ─────────────────────────────────────────────────────────────────────────
-    // Commands – all follow the same pattern:
-    //   1. Wait briefly for the lock (queues behind an in-progress poll)
-    //   2. Set IsBusy
-    //   3. Send + wait for push-confirm
-    //   4. Release lock in finally
-    //
-    // Protocol (Sidus Solutions): the device echoes the command mnemonic back
-    // with the current encoder position in the data field, e.g.
-    //   Sent:     #AMST0000W   (stop)
-    //   Response: #AMST5186W   (stopped at encoder count 5186)
-    // MML (move-to-location) responses echo MML with the target position.
-    // MMF/MMB responses echo MMF/MMB.
+    // Existing commands
     // ─────────────────────────────────────────────────────────────────────────
     [RelayCommand]
     private async Task Park()
@@ -259,9 +213,6 @@ public partial class RotatorViewModel : BaseViewModel
                "Rotator parking...",
                "Park rotator command failed",
                Rotator.ParkMotorA,
-               // Protocol sends MML twice: first is ACK, second is arrival.
-               // We confirm on the first (ACK) and release the lock immediately
-               // so the user can reposition or stop during the move.
                data => MatchesCommandCode(data, "MML"));
 
     [RelayCommand]
@@ -301,7 +252,30 @@ public partial class RotatorViewModel : BaseViewModel
                data => MatchesCommandCode(data, "MST"));
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Shared command runner
+    // New adjust commands (dummy implementations – wire up to hardware later)
+    // ─────────────────────────────────────────────────────────────────────────
+    [RelayCommand]
+    private async Task AdjustBackward()
+    {
+        SetStatus($"Adjust backward by {AdjustValue}°");
+        await Task.CompletedTask;   // replace with real command when ready
+    }
+
+    [RelayCommand]
+    private async Task AdjustForward()
+    {
+        SetStatus($"Adjust forward by {AdjustValue}°");
+        await Task.CompletedTask;   // replace with real command when ready
+    }
+
+    [RelayCommand]
+    private async Task GoBack()
+    {
+        await Shell.Current.GoToAsync("..");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Shared command runner (unchanged)
     // ─────────────────────────────────────────────────────────────────────────
     private async Task RunCommandAsync(
         string pendingMessage,
@@ -310,8 +284,6 @@ public partial class RotatorViewModel : BaseViewModel
         string payload,
         Func<string, bool> confirmPredicate)
     {
-        // Wait briefly so commands can queue behind a poll rather than
-        // immediately failing when the user taps while a poll is in-flight.
         if (!await _commandLock.WaitAsync(_lockWaitTimeout))
         {
             SetStatus("Command already in progress");
@@ -322,12 +294,10 @@ public partial class RotatorViewModel : BaseViewModel
         try
         {
             SetStatus(pendingMessage);
-
             bool ok = await SendAndWaitForConfirmAsync(
                 Feature.RotatorName, "WRITE TEXT", payload,
                 Feature.RotatorName, confirmPredicate,
                 _commandTimeout);
-
             SetStatus(ok ? successMessage : failureMessage);
         }
         finally
@@ -337,53 +307,82 @@ public partial class RotatorViewModel : BaseViewModel
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Send a command and wait for a matching push-confirm.
-    // Must be called while holding _commandLock.
-    // Uses a single atomic swap for the PendingConfirm object, so there is no
-    // window where TCS, function, predicate, and id are mismatched.
-    // ─────────────────────────────────────────────────────────────────────────
     private async Task<bool> SendAndWaitForConfirmAsync(
-        string sendFeature,
-        string sendCommand,
-        string sendData,
-        string confirmFunction,
-        Func<string, bool> confirmPredicate,
+        string sendFeature, string sendCommand, string sendData,
+        string confirmFunction, Func<string, bool> confirmPredicate,
         TimeSpan timeout)
     {
-        // Install the pending operation atomically BEFORE sending, so we cannot
-        // miss a fast response that arrives before WhenAny is evaluated.
         var op = new PendingConfirm(confirmFunction, confirmPredicate);
         Interlocked.Exchange(ref _pendingConfirm, op);
-
         try
         {
             bool sent = await _tcp.SendCommandAsync(
                 new TCPMessageBody<string>(sendFeature, sendCommand, sendData),
                 CancellationToken.None);
-
-            if (!sent)
-                return false;
+            if (!sent) return false;
 
             var completed = await Task.WhenAny(op.Tcs.Task, Task.Delay(timeout));
-
             return completed == op.Tcs.Task && op.Tcs.Task.Result;
         }
         finally
         {
-            // Clear only if we are still the active operation (another command
-            // could theoretically have replaced us, though the lock prevents it).
             Interlocked.CompareExchange(ref _pendingConfirm, null, op);
         }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Polling
+    // TCP data handler (unchanged)
+    // ─────────────────────────────────────────────────────────────────────────
+    private Task HandleTcpDataAsync(TcpDataReceivedMessage msg)
+    {
+        try
+        {
+            var function = msg.Value.Function;
+            var raw = msg.Value.Data;
+
+            if (!function.Equals(Feature.RotatorName, StringComparison.OrdinalIgnoreCase))
+                return Task.CompletedTask;
+
+            var data = raw?.Trim();
+            if (string.IsNullOrWhiteSpace(data)) return Task.CompletedTask;
+
+            bool hasValidHeader = Rotator.Headers.Any(h => data.StartsWith(h, StringComparison.OrdinalIgnoreCase));
+            bool hasValidTerminator = Rotator.Terminators.Any(t => data.EndsWith(t, StringComparison.OrdinalIgnoreCase));
+
+            if (!hasValidHeader || !hasValidTerminator) return Task.CompletedTask;
+
+            long now = Environment.TickCount64;
+            if ((now - Interlocked.Read(ref _lastStatusTick)) >= StatusThrottleMs)
+            {
+                Interlocked.Exchange(ref _lastStatusTick, now);
+                SetStatus(data);
+            }
+
+            if (MatchesCommandCode(data, "MRL"))
+                UpdateEncoderAngle(data);
+
+            var pending = Interlocked.CompareExchange(ref _pendingConfirm, null, null);
+            if (pending is not null
+                && function.Equals(pending.Function, StringComparison.OrdinalIgnoreCase)
+                && pending.Predicate(data))
+            {
+                pending.Tcs.TrySetResult(true);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "HandleTcpDataAsync threw unexpectedly");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Polling (unchanged)
     // ─────────────────────────────────────────────────────────────────────────
     public void OnAppearing()
     {
         _isPageVisible = true;
-
         _pollingCts?.Cancel();
         _pollingCts = new CancellationTokenSource();
         _ = StartPollingAsync(_pollingCts.Token);
@@ -406,55 +405,33 @@ public partial class RotatorViewModel : BaseViewModel
                 if (_isPageVisible && !IsBusy)
                     await PollEncoderAsync(token);
             }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
+            catch (OperationCanceledException) { break; }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Rotator polling failed");
                 SetStatus(ex.Message);
             }
 
-            try
-            {
-                await Task.Delay(_pollingInterval, token);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
+            try { await Task.Delay(_pollingInterval, token); }
+            catch (OperationCanceledException) { break; }
         }
     }
 
-    // Polls the encoder by acquiring the lock, sending, and waiting for the MRL
-    // response before releasing.  This prevents poll responses from interleaving
-    // with command responses and stops the "firehose" of unacknowledged requests.
     private async Task PollEncoderAsync(CancellationToken token)
     {
-        // Skip this poll cycle if a command is in progress.
-        if (!await _commandLock.WaitAsync(TimeSpan.Zero, token))
-            return;
-
+        if (!await _commandLock.WaitAsync(TimeSpan.Zero, token)) return;
         try
         {
             var op = new PendingConfirm(Feature.RotatorName, data => MatchesCommandCode(data, "MRL"));
             Interlocked.Exchange(ref _pendingConfirm, op);
-
             try
             {
                 bool sent = await _tcp.SendCommandAsync(
                     new TCPMessageBody<string>(Feature.RotatorName, "WRITE TEXT", Rotator.EncoderLocationA),
                     token);
+                if (!sent) return;
 
-                if (!sent)
-                    return;
-
-                // Short timeout so the lock is released quickly between poll cycles,
-                // keeping the command path responsive. UpdateEncoderAngle signals
-                // the TCS as soon as the MRL packet arrives.
                 var completed = await Task.WhenAny(op.Tcs.Task, Task.Delay(_pollTimeout, token));
-
                 if (completed != op.Tcs.Task)
                     _logger.LogWarning("Encoder poll timed out");
             }
@@ -463,35 +440,23 @@ public partial class RotatorViewModel : BaseViewModel
                 Interlocked.CompareExchange(ref _pendingConfirm, null, op);
             }
         }
-        catch (OperationCanceledException)
-        {
-            // Page is going away – normal, not an error.
-        }
-        finally
-        {
-            _commandLock.Release();
-        }
+        catch (OperationCanceledException) { }
+        finally { _commandLock.Release(); }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Encoder angle parsing
+    // Encoder angle parsing (unchanged)
     // ─────────────────────────────────────────────────────────────────────────
     private void UpdateEncoderAngle(string response)
     {
         try
         {
-            // Expected format: #AMRL6274R  (fixed-width: 2 prefix + 3 cmd + 4 digits + 1 terminator)
             response = response.Trim();
             if (response.Length < 10) return;
-
-            string command = response.Substring(2, 3);
-            if (!command.Equals("MRL", StringComparison.OrdinalIgnoreCase)) return;
-
-            string digits = response.Substring(5, 4);
-            if (!int.TryParse(digits, out int encoder)) return;
+            if (!response.Substring(2, 3).Equals("MRL", StringComparison.OrdinalIgnoreCase)) return;
+            if (!int.TryParse(response.Substring(5, 4), out int encoder)) return;
 
             double degrees = Math.Clamp((encoder - 5000) * 0.0879, 0, 180);
-
             MainThread.BeginInvokeOnMainThread(() => ArmAngle = degrees);
         }
         catch (Exception ex)
@@ -501,39 +466,24 @@ public partial class RotatorViewModel : BaseViewModel
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Helpers
+    // Helpers (unchanged)
     // ─────────────────────────────────────────────────────────────────────────
-
-    /// <summary>Exact match (ignoring trailing CR/LF) for command responses.</summary>
     private static bool MatchesResponse(string received, string expected)
         => received.Trim().Equals(expected.TrimEnd('\r', '\n'), StringComparison.Ordinal);
 
-    /// <summary>Substring match for 3-character command codes embedded in a packet.</summary>
     private static bool MatchesCommand(string received, string command)
         => received.Contains(command, StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>
-    /// Structural match for the 3-character command code at bytes [2..4] of the
-    /// fixed-width protocol frame (#AMRL6274R / #AMST5186W etc.).
-    /// Safer than Contains() — an MRL packet can never match "MST" and vice versa.
-    /// </summary>
     private static bool MatchesCommandCode(string received, string code)
     {
         received = received.Trim();
-        // Minimum frame: 2 prefix + 3 code + 4 digits + 1 terminator = 10 chars
         return received.Length >= 10
             && received.Substring(2, 3).Equals(code, StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>
-    /// Thread-safe status update, marshalled to the UI thread.
-    /// Callers do NOT need to wrap in BeginInvokeOnMainThread themselves.
-    /// </summary>
     private void SetStatus(string text)
     {
-        if (MainThread.IsMainThread)
-            StatusText = text;
-        else
-            MainThread.BeginInvokeOnMainThread(() => StatusText = text);
+        if (MainThread.IsMainThread) StatusText = text;
+        else MainThread.BeginInvokeOnMainThread(() => StatusText = text);
     }
 }

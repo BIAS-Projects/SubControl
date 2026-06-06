@@ -8,23 +8,23 @@ using SubControlMAUI.Services;
 
 namespace SubControlMAUI.ViewModels;
 
-public partial class ConfigMenuViewModel : BaseViewModel
+public partial class USBConfigMenuViewModel : BaseViewModel
 {
 
-    ILogger<ConfigMenuViewModel> _logger;
+    ILogger<USBConfigMenuViewModel> _logger;
     INavigationService _navigation;
     IMessenger _messengerService;
     public ApplicationStateService AppState { get; }
 
-    public ConfigMenuViewModel(IMessenger messengerService,
-        ILogger<ConfigMenuViewModel> logger,
+    public USBConfigMenuViewModel(IMessenger messengerService,
+        ILogger<USBConfigMenuViewModel> logger,
         INavigationService navigation,
         ApplicationStateService applicationStateService)
     {
         _messengerService = messengerService;
         _logger = logger;
         _navigation = navigation;
-        Title = "Configuration Menu";
+        Title = "USBConfiguration Menu";
 
 
         _messengerService.Register<TcpIsConnected>(this, (r, msg) =>
@@ -64,35 +64,35 @@ public partial class ConfigMenuViewModel : BaseViewModel
   //  public double ButtonSize => 70;
 
     // COMMANDS
-    [RelayCommand]
-    private async Task Ethernet()
-    {
-        await _navigation.GoToAsync(nameof(SettingsPage));
-    }
+    //[RelayCommand]
+    //private async Task Ethernet()
+    //{
+    //    await _navigation.GoToAsync(nameof(SettingsPage));
+    //}
 
     [RelayCommand]
-    private async Task USBConfig()
+    private async Task Features()
     {
-        await _navigation.GoToAsync(nameof(USBConfigMenuPage));
+        await _navigation.GoToAsync(nameof(FeatureOptionsPage));
     }
 
     [RelayCommand]
     private async Task Video()
     {
-        await _navigation.GoToAsync(nameof(VideoOptionsPage));
+        await _navigation.GoToAsync(nameof(VideoConfigPage));
     }
 
-    [RelayCommand]
-    private async Task Rotator()
-    {
-        await _navigation.GoToAsync(nameof(RotatorOptionsPage));
-    }
+    //[RelayCommand]
+    //private async Task Rotator()
+    //{
+    //    await _navigation.GoToAsync(nameof(RotatorOptionsPage));
+    //}
 
-    [RelayCommand]
-    private async Task Tech()
-    {
-        await _navigation.GoToAsync(nameof(TechPage));
-    }
+    //[RelayCommand]
+    //private async Task Tech()
+    //{
+    //    await _navigation.GoToAsync(nameof(TechPage));
+    //}
 
     // NAVIGATION (same pattern as your MainViewModel)
     [RelayCommand]

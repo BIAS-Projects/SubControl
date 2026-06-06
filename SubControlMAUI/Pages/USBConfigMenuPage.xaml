@@ -1,9 +1,9 @@
 <ContentPage
-    x:Class="SubControlMAUI.Pages.ConfigMenuPage"
+    x:Class="SubControlMAUI.Pages.USBConfigMenuPage"
     xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
     xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
     xmlns:vm="clr-namespace:SubControlMAUI.ViewModels"
-    x:DataType="vm:ConfigMenuViewModel"
+    x:DataType="vm:USBConfigMenuViewModel"
     Title="{Binding Title}"
         Shell.NavBarIsVisible="False">
 
@@ -47,7 +47,7 @@
 
 
                 <!-- ETHERNET -->
-                <VerticalStackLayout Grid.Column="0"
+                <!--<VerticalStackLayout Grid.Column="0"
                                      Spacing="8"
                                      HorizontalOptions="Center">
 
@@ -62,7 +62,7 @@
 
                     <Label Text="Ethernet"
                            HorizontalOptions="Center"/>
-                </VerticalStackLayout>
+                </VerticalStackLayout>-->
 
                 <!-- FEATURES -->
                 <VerticalStackLayout Grid.Column="1"
@@ -70,11 +70,11 @@
                                      HorizontalOptions="Center">
 
                     <ImageButton
-                        Source="{AppThemeBinding Light=light_usb.png, Dark=dark_usb.png}"
+                        Source="{AppThemeBinding Light=light_checkbox.png, Dark=dark_checkbox.png}"
                         WidthRequest="{Binding ButtonSize}"
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
-                        Command="{Binding USBConfigCommand}"
+                        Command="{Binding FeaturesCommand}"
                         IsEnabled="{Binding _AppState.IsConnected}" />
 
 
@@ -95,11 +95,11 @@
                         IsEnabled="{Binding _AppState.IsConnected}" />
 
 
-                    <Label Text="Video"
+                    <Label Text="USB Video"
                            HorizontalOptions="Center"/>
                 </VerticalStackLayout>
 
-                <VerticalStackLayout Grid.Column="3"
+                <!--<VerticalStackLayout Grid.Column="3"
                                      Spacing="8"
                                      HorizontalOptions="Center">
 
@@ -114,10 +114,10 @@
 
                     <Label Text="Rotator"
                            HorizontalOptions="Center"/>
-                </VerticalStackLayout>
+                </VerticalStackLayout>-->
 
 
-                <VerticalStackLayout Grid.Column="4"
+                <!--<VerticalStackLayout Grid.Column="4"
                                      Spacing="8"
                                      HorizontalOptions="Center">
 
@@ -132,7 +132,7 @@
 
                     <Label Text="Technical"
                            HorizontalOptions="Center"/>
-                </VerticalStackLayout>
+                </VerticalStackLayout>-->
 
             </Grid>
         </Grid>

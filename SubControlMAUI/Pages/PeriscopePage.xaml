@@ -7,16 +7,43 @@
     x:Class="SubControlMAUI.Pages.PeriscopePage"
     x:DataType="viewModel:PeriscopeViewModel"
     Title="{Binding Title}"
-        Shell.NavBarIsVisible="True">
+        Shell.NavBarIsVisible="False">
 
-    <Grid RowDefinitions="Auto,Auto,*"
+    <Grid RowDefinitions="Auto,Auto, Auto,*"
+          Padding="10"
       IsEnabled="{Binding IsNotBusy}">
+
+        <!-- CUSTOM TITLE BAR -->
+        <Grid Grid.Row="0"
+                  ColumnDefinitions="*,Auto,*"
+                  Margin="0,0,0,10">
+
+            <Button Grid.Column="1"
+                        Text="⬅ Back"
+                        FontSize="18"
+                        HorizontalOptions="Start"
+                        VerticalOptions="Center"
+                        Command="{Binding GoBackCommand}" />
+
+            <Label Grid.Column="0"
+                       Text="{Binding Title}"
+                       FontSize="22"
+                       FontAttributes="Bold"
+                       HorizontalOptions="Start"
+                       VerticalOptions="Center" />
+
+            <!-- Empty right column to keep title centred -->
+            <Label Grid.Column="2" />
+
+        </Grid>
+
+
 
         <!-- ========================================================= -->
         <!-- STATUS BAR -->
         <!-- ========================================================= -->
 
-        <Border Grid.Row="0"
+        <Border Grid.Row="1"
                 StrokeThickness="0"
                 Padding="12,8">
 
@@ -40,7 +67,7 @@
         <!-- BUTTON BAR -->
         <!-- ========================================================= -->
 
-        <ScrollView Grid.Row="1"
+        <ScrollView Grid.Row="2"
                     Orientation="Horizontal"
                     HorizontalScrollBarVisibility="Never">
 
@@ -87,6 +114,27 @@
                         Command="{Binding TakeSnapShotCommand}"
                         IsEnabled="{Binding IsStreaming}"/>
 
+                <ImageButton Source="blackhot.png"
+                        WidthRequest="{Binding ButtonSize}"
+                        HeightRequest="{Binding ButtonSize}"
+                        BackgroundColor="Transparent"
+                        Command="{Binding SetFlirBlackhotCommand}"
+                        IsEnabled="{Binding _AppState.IsConnected}" />
+
+                <ImageButton Source="ironbow.png"
+                        WidthRequest="{Binding ButtonSize}"
+                        HeightRequest="{Binding ButtonSize}"
+                        BackgroundColor="Transparent"
+                        Command="{Binding SetFlirIronbowCommand}"
+                        IsEnabled="{Binding _AppState.IsConnected}" />
+
+                <ImageButton Source="glowbow.png"
+                        WidthRequest="{Binding ButtonSize}"
+                        HeightRequest="{Binding ButtonSize}"
+                        BackgroundColor="Transparent"
+                        Command="{Binding SetFlirGlowbowCommand}"
+                        IsEnabled="{Binding _AppState.IsConnected}" />
+
                 <ImageButton Source="whitehot.png"
                         WidthRequest="{Binding ButtonSize}"
                         HeightRequest="{Binding ButtonSize}"
@@ -109,7 +157,7 @@
         <!-- VIDEO AREA -->
         <!-- ========================================================= -->
 
-        <Grid Grid.Row="2">
+        <Grid Grid.Row="3">
 
             <skia:SKCanvasView x:Name="CanvasView"
                    PaintSurface="OnPaintSurface"
@@ -130,6 +178,7 @@
             <!-- BUSY OVERLAY (on top) -->
             <Grid IsVisible="{Binding IsBusy}"
               BackgroundColor="#80000000"
+             Grid.ColumnSpan="4"
               ZIndex="1">
 
                 <ActivityIndicator IsRunning="{Binding IsBusy}"

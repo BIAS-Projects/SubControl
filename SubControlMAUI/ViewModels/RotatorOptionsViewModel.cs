@@ -98,5 +98,11 @@ namespace SubControlMAUI.ViewModels
                 IsBusy = false;
             }
         }
+
+        [RelayCommand]
+        private async Task GoBack()
+        {
+            await Shell.Current.GoToAsync("..");
+        }
     }
 }

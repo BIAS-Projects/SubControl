@@ -70,8 +70,8 @@ public partial class MainViewModel : BaseViewModel
 
     public string SystemToggleButtonImage =>
 IsSystemEnabled
-    ? $"{ThemePrefix}_off_button.png"
-    : $"{ThemePrefix}_on_button.png";
+    ? $"{ThemePrefix}_on_button.png"
+    : $"{ThemePrefix}_off_button.png";
 
     private static string ThemePrefix =>
         Application.Current?.RequestedTheme == AppTheme.Dark
@@ -1391,7 +1391,7 @@ IsSystemEnabled
 
                 if (!await SendAndWaitAsync(CameraFeature, "DISCOVER", discoverJson, timeout))
                 {
-                    StatusText = "Failed to start video streams — check camera connections";
+                    StatusText = "Failed to start video streams";
                     return;
                 }
 
@@ -1399,7 +1399,7 @@ IsSystemEnabled
                 StatusText = "Verifying streams...";
                 if (!await SendAndWaitAsync(CameraFeature, "CHECK MTX STREAMS", "", timeout))
                 {
-                    StatusText = "Video streams failed to start — check server logs";
+                    StatusText = "Video streams failed to start";
                     return;
                 }
             }
@@ -1408,12 +1408,12 @@ IsSystemEnabled
             StatusText = "Opening FLIR control port...";
             if (!await SendAndWaitAsync(SerialFeature, "OPEN", "TOM FLIR", timeout))
             {
-                StatusText = "Warning — FLIR control port unavailable";
+                StatusText = "FLIR control port open failed";
                 return;
             }
 
             // 3. Navigate to the periscope page
-            StatusText = "Opening video...";
+            StatusText = "";
             await Shell.Current.GoToAsync(nameof(PeriscopePage));
         }
         finally
@@ -1425,6 +1425,7 @@ IsSystemEnabled
     [RelayCommand]
     private async Task Rotator()
     {
+        StatusText = "";
         await Shell.Current.GoToAsync(nameof(RotatorPage));
     }
 
@@ -1434,14 +1435,29 @@ IsSystemEnabled
         var popup = new PasswordPopup();
         await Shell.Current.CurrentPage.ShowPopupAsync(popup);
 
-        if (!String.IsNullOrEmpty(popup.EnteredPassword))
+        if (popup.EnteredPassword is null)
         {
+            StatusText = "";
+            return;
+        }
+
+        if (popup.EnteredPassword.Equals(""))
+        {
+            StatusText = "Incorrect settings password entered";
+            return;
+        }
+
             if (popup.EnteredPassword.Equals(AppState.ConfigScreenPassword))
             {
+                StatusText = "";
                 await Shell.Current.GoToAsync(nameof(ConfigMenuPage));
             }
-        }
-    
+            else
+            {
+                StatusText = "Incorrect settings password entered";
+            }
+
+
     }
 
     public async Task ButtonLoaded()

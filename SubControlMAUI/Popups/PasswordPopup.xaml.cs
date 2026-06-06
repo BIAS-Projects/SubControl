@@ -14,6 +14,7 @@ public partial class PasswordPopup : Popup
 
     private async void OnPopupOpened(object? sender, EventArgs e)
     {
+        PasswordEntry.Text = "";
        // await Task.Delay(100);
         PasswordEntry.Focus();
     }

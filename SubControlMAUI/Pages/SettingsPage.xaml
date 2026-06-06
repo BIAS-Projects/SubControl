@@ -5,12 +5,39 @@
              x:Class="SubControlMAUI.Pages.SettingsPage"
              x:DataType="viewModel:SettingsViewModel"
              Title="{Binding Title}"
-             Shell.NavBarIsVisible="True">
+             Shell.NavBarIsVisible="False">
     <Grid Padding="10"
-          RowDefinitions="Auto, Auto,Auto,*,Auto"
+          RowDefinitions="Auto, Auto,Auto,Auto,*,Auto"
           ColumnDefinitions="*,*">
 
-        <Label Grid.Row="0"
+        <!-- CUSTOM TITLE BAR -->
+        <Grid Grid.Row="0"
+              Grid.ColumnSpan="2"
+                  ColumnDefinitions="*,Auto,*"
+                  Margin="0,0,0,10">
+
+            <Button Grid.Column="1"
+                        Text="⬅ Back"
+                        FontSize="18"
+                        HorizontalOptions="Start"
+                        VerticalOptions="Center"
+                        Command="{Binding GoBackCommand}" />
+
+            <Label Grid.Column="0"
+                       Text="{Binding Title}"
+                       FontSize="22"
+                       FontAttributes="Bold"
+                       HorizontalOptions="Start"
+                       VerticalOptions="Center" />
+
+            <!-- Empty right column to keep title centred -->
+            <Label Grid.Column="2" />
+
+        </Grid>
+
+
+
+        <Label Grid.Row="1"
                    Margin="0,15,0,15"
                    FontSize="16">
             <Label.FormattedText>
@@ -23,14 +50,14 @@
 
         <Label Text="IP Address:"
                Grid.Column="0"
-               Grid.Row="1"
+               Grid.Row="2"
                HorizontalOptions="Start"
                VerticalOptions="Center"
                Margin="3"/>
         <Entry x:Name="ipAddress"
                IsEnabled="{Binding IsNotConnected}"
                 Grid.Column="1"
-                Grid.Row="1"
+                Grid.Row="2"
                 HeightRequest="40"
                 Placeholder="IP Address"
                Text="{Binding InputIPAddress}"
@@ -38,14 +65,14 @@
 
         <Label Text="Port:"
                Grid.Column="0"
-               Grid.Row="2"
+               Grid.Row="3"
                HorizontalOptions="Start"
                VerticalOptions="Center"
                Margin="3"/>
         <Entry x:Name="port"
                 IsEnabled="{Binding IsNotConnected}"
                 Grid.Column="1"
-                Grid.Row="2"
+                Grid.Row="3"
                 HeightRequest="40"
                 Placeholder="Port"
                Text="{Binding Port}"
@@ -58,7 +85,7 @@
                     WidthRequest="30"
                     HeightRequest="30"
                     BackgroundColor="Transparent"
-            Grid.Row="4"
+            Grid.Row="5"
             Grid.ColumnSpan="2"
                 Command="{Binding SaveCommand}"
             IsEnabled="{Binding IsNotBusy}"
@@ -72,7 +99,7 @@
         <!-- Busy overlay -->
         <Grid IsVisible="{Binding IsBusy}"
       BackgroundColor="#80000000"
-      Grid.RowSpan="5"
+      Grid.RowSpan="6"
       ZIndex="1">
             <ActivityIndicator IsRunning="{Binding IsBusy}"
                        IsVisible="{Binding IsBusy}"

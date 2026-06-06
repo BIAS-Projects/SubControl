@@ -116,6 +116,7 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
         _decoder2 = decoder2;
 
         StatusText = "";
+        ButtonSize = 20.0;
 
 
         _messengerService.Register<TcpDataReceivedMessage>(this, async (r, msg) =>
@@ -374,7 +375,7 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
         IsBusy = true;
         try
         {
-            StatusText = "Attempting to set FLIR to Whitehot...";
+            StatusText = "Attempting to set FLIR to White hot...";
             if (!await SendAndWaitAsync("TOM FLIR", "WRITE TEXT", FLIR.LUTtoWHITEHOT, timeout))
             {
                 MainThread.BeginInvokeOnMainThread(() =>
@@ -384,7 +385,7 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
                 });
             }
 
-            StatusText = "FLIR set to Whitehot";
+            StatusText = "FLIR set to White hot";
         }
         finally
         {
@@ -410,6 +411,82 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
 
             }
             StatusText = "FLIR set to Rainbow";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task SetFlirBlackhot()
+    {
+        IsBusy = true;
+        try
+        {
+            StatusText = "Attempting to set FLIR to Black hot...";
+            if (!await SendAndWaitAsync("TOM FLIR", "WRITE TEXT", FLIR.LUTtoBLACKHOT, timeout))
+            {
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                    StatusText = "Update failed — could not set colour palette";
+                    return;
+                });
+
+
+            }
+            StatusText = "FLIR set to Black hot";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task SetFlirIronbow()
+    {
+        IsBusy = true;
+        try
+        {
+            StatusText = "Attempting to set FLIR to Iron bow...";
+            if (!await SendAndWaitAsync("TOM FLIR", "WRITE TEXT", FLIR.LUTtoIRONBOW, timeout))
+            {
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                    StatusText = "Update failed — could not set colour palette";
+                    return;
+                });
+
+
+            }
+            StatusText = "FLIR set to Iron bow";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+
+    [RelayCommand]
+    private async Task SetFlirGlowbow()
+    {
+        IsBusy = true;
+        try
+        {
+            StatusText = "Attempting to set FLIR to Glow bow...";
+            if (!await SendAndWaitAsync("TOM FLIR", "WRITE TEXT", FLIR.LUTtoGLOBOW, timeout))
+            {
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                    StatusText = "Update failed — could not set colour palette";
+                    return;
+                });
+
+
+            }
+            StatusText = "FLIR set to Glow bow";
         }
         finally
         {
@@ -471,7 +548,8 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
                 try
                 {
                     string path = Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
+                      //  Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
+                        AppState.SnapShotPath,
                         $"snap_dual_{DateTime.Now:yyyyMMdd_HHmmss}.png");
 
                     // Use whichever frame is available for dimensions
@@ -523,7 +601,8 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
                 try
                 {
                     string path = Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
+                                               // Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
+                         AppState.SnapShotPath,
                         $"snap_{DateTime.Now:yyyyMMdd_HHmmss}.png");
 
                     var info = new SKImageInfo(
@@ -685,6 +764,13 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
         {
             pending.TrySetResult(false);
         }
+    }
+
+
+    [RelayCommand]
+    private async Task GoBack()
+    {
+        await Shell.Current.GoToAsync("..");
     }
 
 

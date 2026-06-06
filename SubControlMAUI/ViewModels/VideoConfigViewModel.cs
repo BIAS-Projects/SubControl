@@ -697,5 +697,11 @@ public partial class VideoConfigViewModel : BaseViewModel
         }
     }
 
+    [RelayCommand]
+    private async Task GoBack()
+    {
+        await Shell.Current.GoToAsync("..");
+    }
+
 
 }

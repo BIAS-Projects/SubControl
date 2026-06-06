@@ -89,6 +89,12 @@
 	</ItemGroup>
 
 	<ItemGroup>
+	  <Compile Update="Pages\VideoOptionsPage.xaml.cs">
+	    <DependentUpon>VideoOptionsPage.xaml</DependentUpon>
+	  </Compile>
+	  <Compile Update="Pages\USBConfigMenuPage.xaml.cs">
+	    <DependentUpon>USBConfigMenuPage.xaml</DependentUpon>
+	  </Compile>
 	  <Compile Update="Pages\ConfigMenuPage.xaml.cs">
 	    <DependentUpon>ConfigMenuPage.xaml</DependentUpon>
 	  </Compile>
@@ -108,6 +114,12 @@
 
 	<ItemGroup>
 	  <MauiXaml Update="Pages\Comms.xaml">
+	    <Generator>MSBuild:Compile</Generator>
+	  </MauiXaml>
+	  <MauiXaml Update="Pages\VideoOptionsPage.xaml">
+	    <Generator>MSBuild:Compile</Generator>
+	  </MauiXaml>
+	  <MauiXaml Update="Pages\USBConfigMenuPage.xaml">
 	    <Generator>MSBuild:Compile</Generator>
 	  </MauiXaml>
 	  <MauiXaml Update="Pages\ConfigMenuPage.xaml">

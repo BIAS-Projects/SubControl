@@ -1,5 +1,4 @@
 <?xml version="1.0" encoding="utf-8" ?>
-
 <ContentPage
     x:Class="SubControlMAUI.Pages.RotatorPage"
     xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
@@ -7,135 +6,143 @@
     xmlns:vm="clr-namespace:SubControlMAUI.ViewModels"
     x:DataType="vm:RotatorViewModel"
     Title="{Binding Title}"
-    Shell.NavBarIsVisible="True">
+Shell.NavBarIsVisible="False">
+
+
+
 
     <Grid>
+        <Grid RowDefinitions="Auto,Auto,Auto,*,Auto"
+              Padding="10">
 
-        <!-- ===================================================== -->
-        <!-- MAIN CONTENT -->
-        <!-- ===================================================== -->
+            <!-- CUSTOM TITLE BAR -->
+            <Grid Grid.Row="0"
+                  ColumnDefinitions="*,Auto,*"
+                  Margin="0,0,0,10">
 
-        <Grid RowDefinitions="Auto,Auto,*,Auto"
-              Padding="20">
-            <!-- ========================================================= -->
-            <!-- STATUS BAR -->
-            <!-- ========================================================= -->
+                <Button Grid.Column="1"
+                        Text="⬅ Back"
+                        FontSize="18"
+                        HorizontalOptions="Start"
+                        VerticalOptions="Center"
+                        Command="{Binding GoBackCommand}" />
 
-            <Border Grid.Row="0"
-                StrokeThickness="0"
-                Padding="12,8">
-
-                <Grid ColumnDefinitions="Auto,*">
-
-                    <Label Text="Status:"
+                <Label Grid.Column="0"
+                       Text="{Binding Title}"
+                       FontSize="22"
                        FontAttributes="Bold"
+                       HorizontalOptions="Start"
                        VerticalOptions="Center" />
 
+                <!-- Empty right column to keep title centred -->
+                <Label Grid.Column="2" />
+
+            </Grid>
+
+            <!-- STATUS BAR -->
+            <Border Grid.Row="1"
+                    StrokeThickness="0"
+                    Padding="12,8">
+                <Grid ColumnDefinitions="Auto,*">
+                    <Label Text="Status:"
+                           FontAttributes="Bold"
+                           VerticalOptions="Center" />
                     <Label Grid.Column="1"
-                       Margin="10,0,0,0"
-                       Text="{Binding StatusText}"
-                       VerticalOptions="Center"
-                       LineBreakMode="TailTruncation" />
-
+                           Margin="10,0,0,0"
+                           Text="{Binding StatusText}"
+                           VerticalOptions="Center"
+                           LineBreakMode="TailTruncation" />
                 </Grid>
-
             </Border>
 
-            <!-- SLIDER -->
+            <!-- SEMI-CIRCULAR GAUGE ROW -->
+            <Grid Grid.Row="2"
+                  ColumnDefinitions="*,400,*"
+                  Margin="0,20,0,10">
+                <Label Grid.Column="0"
+                       Text="{Binding MinRotatorValue, StringFormat='{0}°'}"
+                       VerticalOptions="End"
+                       HorizontalOptions="End"
+                       FontSize="14"
+                       FontAttributes="Bold"
+                       Margin="0,0,6,0" />
+                <GraphicsView Grid.Column="1"
+                              Drawable="{Binding GaugeDrawable}"
+                              HeightRequest="180"
+                              HorizontalOptions="Fill" />
+                <Label Grid.Column="2"
+                       Text="{Binding MaxRotatorValue, StringFormat='{0}°'}"
+                       VerticalOptions="End"
+                       HorizontalOptions="Start"
+                       FontSize="14"
+                       FontAttributes="Bold"
+                       Margin="6,0,0,0" />
+            </Grid>
 
-            <Slider Grid.Row="1"
-                    Margin="0,30,0,30"
-                    Minimum="0"
-                    Maximum="180"
-                    Value="{Binding ArmAngle, Mode=TwoWay}"
-                    IsEnabled="False"/>
-
-            <!-- CENTER VISUAL -->
-
-            <Grid Grid.Row="2">
-
-                <Border StrokeThickness="2"
+            <!-- CENTER VISUAL + SIDE ADJUST BUTTONS -->
+            <Grid Grid.Row="3"
+                  ColumnDefinitions="*,2*,*">
+                <Button Grid.Column="0"
+                        Text="{Binding AdjustValue, StringFormat='◀ -{0}°'}"
+                        FontSize="20"
+                        HeightRequest="80"
+                        Command="{Binding AdjustBackwardCommand}"
+                        IsEnabled="{Binding IsNotBusy}"
+                        BorderWidth="0" />
+                <Border Grid.Column="1"
+                        StrokeThickness="2"
                         Stroke="{AppThemeBinding Light=Black, Dark=White}"
                         StrokeShape="RoundRectangle 20"
                         Padding="40"
                         HorizontalOptions="Center"
                         VerticalOptions="Center">
-
                     <VerticalStackLayout Spacing="20">
-
                         <Label Text="Rotator Position"
                                FontSize="20"
                                HorizontalOptions="Center"/>
-
                         <Label Text="{Binding ArmAngle, StringFormat='{0:F0}°'}"
                                FontSize="48"
                                FontAttributes="Bold"
                                HorizontalOptions="Center"/>
-
                     </VerticalStackLayout>
-
                 </Border>
-
+                <Button Grid.Column="2"
+                        Text="{Binding AdjustValue, StringFormat='+{0}° ▶'}"
+                        FontSize="20"
+                        HeightRequest="80"
+                        Command="{Binding AdjustForwardCommand}"
+                        IsEnabled="{Binding IsNotBusy}"
+                        BorderWidth="0" />
             </Grid>
 
-            <!-- BUTTONS -->
-
-            <Grid Grid.Row="3"
+            <!-- BOTTOM BUTTONS -->
+            <Grid Grid.Row="4"
                   ColumnDefinitions="*,*,*"
                   ColumnSpacing="20"
                   Margin="0,30,0,0">
-
-                <!-- LEFT -->
-
                 <Button Grid.Column="0"
-                        Text="◀"
-                        FontSize="36"
+                        Text="{Binding MinRotatorValue, StringFormat='◀◀ {0}°'}"
+                        FontSize="20"
                         HeightRequest="80"
+                        ImageSource="{AppThemeBinding Light=light_park.png, Dark=dark_park.png}"
+                        ContentLayout="Top, 4"
                         Command="{Binding ParkCommand}"
                         IsEnabled="{Binding IsNotBusy}"/>
-
-                <!-- STOP -->
-
                 <Button Grid.Column="1"
                         Text="STOP"
-                        FontSize="24"
+                        FontSize="20"
                         HeightRequest="80"
-                   
-          
                         Command="{Binding StopCommand}"
-                        IsEnabled="{Binding IsNotBusy}"
-                        />
-
-                <!-- RIGHT -->
-
+                        IsEnabled="{Binding IsNotBusy}"/>
                 <Button Grid.Column="2"
-                        Text="▶"
-                        FontSize="36"
+                        Text="{Binding MaxRotatorValue, StringFormat=' {0}° ▶▶'}"
+                        FontSize="20"
                         HeightRequest="80"
                         Command="{Binding DeployCommand}"
                         IsEnabled="{Binding IsNotBusy}"/>
-
             </Grid>
 
         </Grid>
-
-         <!--===================================================== 
-         BUSY OVERLAY 
-         =====================================================--> 
-
-        <!--<Grid IsVisible="{Binding IsBusy}"
-              BackgroundColor="#80000000"
-              ZIndex="10">
-
-            <ActivityIndicator
-                IsRunning="{Binding IsBusy}"
-                VerticalOptions="Center"
-                HorizontalOptions="Center"
-                WidthRequest="60"
-                HeightRequest="60"/>
-
-        </Grid>-->
-
     </Grid>
 
 </ContentPage>

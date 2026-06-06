@@ -6,13 +6,38 @@
              xmlns:models="clr-namespace:SubControlMAUI.Models"
              x:DataType="vm:VideoConfigViewModel"
              Title="{Binding Title}"
-             Shell.NavBarIsVisible="True">
+             Shell.NavBarIsVisible="False">
     <Grid Padding="10"
-          RowDefinitions="Auto,Auto,*,Auto"
+          RowDefinitions="Auto,Auto,Auto,*,Auto"
           IsEnabled="{Binding IsNotBusy}">
 
+        <!-- CUSTOM TITLE BAR -->
+        <Grid Grid.Row="0"
+                  ColumnDefinitions="*,Auto,*"
+                  Margin="0,0,0,10">
+
+            <Button Grid.Column="1"
+                        Text="⬅ Back"
+                        FontSize="18"
+                        HorizontalOptions="Start"
+                        VerticalOptions="Center"
+                        Command="{Binding GoBackCommand}" />
+
+            <Label Grid.Column="0"
+                       Text="{Binding Title}"
+                       FontSize="22"
+                       FontAttributes="Bold"
+                       HorizontalOptions="Start"
+                       VerticalOptions="Center" />
+
+            <!-- Empty right column to keep title centred -->
+            <Label Grid.Column="2" />
+
+        </Grid>
+
+
         <!-- Status -->
-        <Label Grid.Row="0"
+        <Label Grid.Row="1"
                Margin="0,15,0,15"
                FontSize="16">
             <Label.FormattedText>
@@ -24,7 +49,7 @@
         </Label>
 
         <!-- Download button -->
-        <ImageButton Grid.Row="1"
+        <ImageButton Grid.Row="2"
                      Source="{AppThemeBinding Light=light_download.png, Dark=dark_download.png}"
                      WidthRequest="30"
                      HeightRequest="30"
@@ -34,12 +59,20 @@
                       IsEnabled="{Binding AppState.IsConnected}"/>
 
         <!-- Camera list -->
-        <CollectionView Grid.Row="2"
+        <CollectionView Grid.Row="3"
                         ItemsSource="{Binding Cameras}"
                         IsEnabled="{Binding CameraDetailsDownloaded}">
             <CollectionView.ItemTemplate>
                 <DataTemplate x:DataType="models:CameraDevice">
-                    <Grid ColumnDefinitions="*,*" Padding="5">
+                    <Border Padding="5"
+    StrokeThickness="2"
+    Stroke="{AppThemeBinding Light={StaticResource Gray300}, Dark={StaticResource Gray600}}"
+    BackgroundColor="{AppThemeBinding Light={StaticResource White}, Dark={StaticResource Gray950}}">
+                        <Border.StrokeShape>
+                            <RoundRectangle CornerRadius="8"/>
+                        </Border.StrokeShape>
+
+                        <Grid ColumnDefinitions="*,*" Padding="5">
                         <Label Text="{Binding DeviceId}"
                VerticalOptions="Center"
                FontAttributes="Bold"
@@ -49,12 +82,13 @@
                 ItemsSource="{Binding AvailableProfiles}"
                 SelectedItem="{Binding SelectedProfile, Mode=TwoWay}" />
                     </Grid>
+                    </Border>
                 </DataTemplate>
             </CollectionView.ItemTemplate>
         </CollectionView>
 
         <!-- Save button -->
-        <ImageButton Grid.Row="3"
+        <ImageButton Grid.Row="4"
                      Source="{AppThemeBinding Light=light_save.png, Dark=dark_save.png}"
                      WidthRequest="30"
                      HeightRequest="30"
@@ -66,7 +100,7 @@
         <!-- Busy overlay -->
         <Grid IsVisible="{Binding IsBusy}"
       BackgroundColor="#80000000"
-      Grid.RowSpan="4"
+      Grid.RowSpan="5"
       ZIndex="1">
             <ActivityIndicator IsRunning="{Binding IsBusy}"
                        IsVisible="{Binding IsBusy}"

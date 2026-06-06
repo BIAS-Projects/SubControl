@@ -1,4 +1,5 @@
 ﻿using CommunityToolkit.Maui;
+using CommunityToolkit.Maui.Storage;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.Logging;
 using SkiaSharp.Views.Maui.Controls.Hosting;
@@ -21,6 +22,13 @@ namespace SubControlMAUI
                 .UseMauiApp<App>()
                 .UseSkiaSharp()
                 .UseMauiCommunityToolkit()
+                    .ConfigureMauiHandlers(handlers =>
+                    {
+                        #if WINDOWS
+                            handlers.AddHandler<Microsoft.Maui.Controls.Picker, 
+                            Platforms.Windows.CustomPickerHandler>();
+                        #endif
+                    })
                 .ConfigureFonts(fonts =>
                 {
                     fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
@@ -75,6 +83,11 @@ namespace SubControlMAUI
             builder.Services.AddSingleton<RotatorOptionsPage>();
             builder.Services.AddSingleton<RotatorOptionsViewModel>();
 
+            builder.Services.AddSingleton<USBConfigMenuPage>();
+            builder.Services.AddSingleton<USBConfigMenuViewModel>();
+
+            builder.Services.AddSingleton<VideoOptionsPage>();
+            builder.Services.AddSingleton<VideoOptionsViewModel>();
 
             builder.Services.AddSingleton<SQLiteService>();
 
@@ -88,6 +101,10 @@ namespace SubControlMAUI
             builder.Services.AddSingleton<INavigationService, NavigationService>();
 
             builder.Services.AddSingleton<ApplicationStateService>();
+
+
+            // Register the FolderPicker as a singleton
+            builder.Services.AddSingleton<IFolderPicker>(FolderPicker.Default);
 
             return builder.Build();
         }

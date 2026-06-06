@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
-             x:Class="SubControlMAUI.Pages.RotatorOptionsPage"
+             x:Class="SubControlMAUI.Pages.VideoOptionsPage"
              xmlns:vm="clr-namespace:SubControlMAUI.ViewModels"
-             x:DataType="vm:RotatorOptionsViewModel"
+             x:DataType="vm:VideoOptionsViewModel"
              Title="{Binding Title}"
              Shell.NavBarIsVisible="False">
     <Grid Padding="10"
@@ -47,52 +47,48 @@
             </Label.FormattedText>
         </Label>
 
-        <!-- Pickers Section -->
+
         <VerticalStackLayout Grid.Row="2" Spacing="12" Margin="0,10,0,10">
 
-            <!-- Minimum Rotator Value -->
-            <Grid ColumnDefinitions="*,*">
-                <Label Text="Minimum Rotator Value"
+            <!--<Button 
+                Text="Select a folder"
+                HorizontalOptions="Center"
+                    Command="{Binding PickFolderInstanceCommand}"/>
+
+            <Label Text="{Binding FilePath}"
                        VerticalOptions="Center"
+                       FontAttributes="Bold" />-->
+            
+            <Grid ColumnDefinitions="*,Auto,*"
+                  ColumnSpacing="10">
+                <Button 
+                Grid.Column="0"
+                Text="Select a destination folder for snapshots"
+                HorizontalOptions="Start"
+                    Command="{Binding PickFolderInstanceCommand}"/>
+
+                <Label Text="Snapshot save location:     "
+                       Grid.Column="1"
+                       VerticalOptions="Start" />
+
+                <Label Text="{Binding FilePath}"
+                       Grid.Column="2"
+                       VerticalOptions="Start"
                        FontAttributes="Bold" />
-                <Picker Grid.Column="1"
-                        Title="Select Min"
-                        ItemsSource="{Binding RotatorValues}"
-                        SelectedItem="{Binding MinRotatorValue, Mode=TwoWay}" />
+
             </Grid>
 
-            <!-- Maximum Rotator Value -->
-            <Grid ColumnDefinitions="*,*">
-                <Label Text="Maximum Rotator Value"
-                       VerticalOptions="Center"
-                       FontAttributes="Bold" />
-                <Picker Grid.Column="1"
-                        Title="Select Max"
-                        ItemsSource="{Binding RotatorValues}"
-                        SelectedItem="{Binding MaxRotatorValue, Mode=TwoWay}" />
-            </Grid>
-
-            <!-- Adjustment Value -->
-            <Grid ColumnDefinitions="*,*">
-                <Label Text="Adjustment Value"
-                       VerticalOptions="Center"
-                       FontAttributes="Bold" />
-                <Picker Grid.Column="1"
-                        Title="Select Adjustment"
-                        ItemsSource="{Binding AdjustmentValues}"
-                        SelectedItem="{Binding AdjustValue, Mode=TwoWay}" />
-            </Grid>
 
         </VerticalStackLayout>
 
-        <!-- Save Button - disabled when min >= max -->
+  
         <ImageButton Grid.Row="4"
                      Source="{AppThemeBinding Light=light_save.png, Dark=dark_save.png}"
                      WidthRequest="30"
                      HeightRequest="30"
                      BackgroundColor="Transparent"
                      Command="{Binding SaveCommand}"
-                     IsEnabled="{Binding CanSave}"
+
                      Margin="0,10,0,0" />
 
         <!-- BUSY OVERLAY -->
