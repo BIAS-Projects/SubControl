@@ -420,7 +420,6 @@ public sealed class SerialPortWorker : ISerialWorker
 
         frame = frame.Trim();
 
-        // Exact frame length: # + node(1) + command(3) + digits(4) + terminator(1) = 10
         if (frame.Length != 10)
         {
             error = $"Invalid frame length {frame.Length}, expected 10";
@@ -470,23 +469,7 @@ public sealed class SerialPortWorker : ISerialWorker
         }
 
         // -------------------------------------------------
-        // NUMERIC
-        // -------------------------------------------------
-
-        string digits = frame.Substring(5, 4);
-
-        if (!int.TryParse(digits, out _))
-        {
-            error = $"Invalid numeric block '{digits}'";
-            return false;
-        }
-
-        // -------------------------------------------------
         // TERMINATOR — must be R, r, W, or w at position 9
-        // R = Read command,  homed
-        // r = Read command,  not homed
-        // W = Write command, homed
-        // w = Write command, not homed
         // -------------------------------------------------
 
         string terminator = frame[9..];
@@ -500,11 +483,35 @@ public sealed class SerialPortWorker : ISerialWorker
             return false;
         }
 
-        // Uppercase = homed, lowercase = not homed
         homed = char.IsUpper(terminator[0]);
 
         // -------------------------------------------------
-        // NORMALIZE — preserve terminator case (it carries state)
+        // PAYLOAD — positions 5-8 (4 chars)
+        // MRV responses carry a version string (e.g. "J1.0") instead of
+        // a zero-padded integer.  Accept any 4-char ASCII payload for MRV;
+        // all other commands must have a numeric payload.
+        // -------------------------------------------------
+
+        string digits = frame.Substring(5, 4);
+
+        bool isMrv = command.Equals("MRV", StringComparison.OrdinalIgnoreCase);
+
+        if (!isMrv && !int.TryParse(digits, out _))
+        {
+            error = $"Invalid numeric block '{digits}'";
+            return false;
+        }
+
+        // For MRV, verify the payload contains only printable ASCII
+        // (guards against garbage bytes being accepted as a version string)
+        if (isMrv && !digits.All(c => c >= 0x20 && c <= 0x7E))
+        {
+            error = $"Invalid version block '{digits}' — non-printable characters";
+            return false;
+        }
+
+        // -------------------------------------------------
+        // NORMALIZE
         // -------------------------------------------------
 
         normalized =
@@ -512,7 +519,7 @@ public sealed class SerialPortWorker : ISerialWorker
             $"{Rotator.Node.ToUpper()}" +
             $"{command.ToUpper()}" +
             $"{digits}" +
-            $"{terminator}";   // preserve original case — it encodes homed state
+            $"{terminator}";   // preserve original case — encodes homed state
 
         return true;
     }

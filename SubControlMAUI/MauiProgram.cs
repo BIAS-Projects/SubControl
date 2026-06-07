@@ -94,13 +94,15 @@ namespace SubControlMAUI
             builder.Services.AddSingleton<IAlertService, AlertService>();
 
             builder.Services.AddSingleton<TcpSocketService>();
-            builder.Services.AddSingleton<IMessenger>(WeakReferenceMessenger.Default);
+            builder.Services.AddSingleton<IMessenger>(StrongReferenceMessenger.Default);
 
             builder.Services.AddTransient<IRtspFrameDecoder, RtspFrameDecoder>();
 
             builder.Services.AddSingleton<INavigationService, NavigationService>();
 
             builder.Services.AddSingleton<ApplicationStateService>();
+
+            builder.Services.AddTransient<CommandDispatcherService>();
 
 
             // Register the FolderPicker as a singleton

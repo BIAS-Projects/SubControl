@@ -19,33 +19,38 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
     private readonly IAlertService _alertService;
     private readonly ILogger<PeriscopeViewModel> _logger;
     private readonly IMessenger _messengerService;
-    private readonly TcpSocketService _tcpService;
     private readonly IRtspFrameDecoder _decoder;
+    private readonly IRtspFrameDecoder _decoder2;
+
+    /// <summary>
+    /// Per-ViewModel dispatcher — owns the one-slot pending state for this
+    /// ViewModel.  Injected so it can be mocked in tests.
+    /// </summary>
+    private readonly CommandDispatcherService _dispatcher;
+
     public ApplicationStateService AppState { get; }
 
-
-    // ---------------------------------------------------------------------
+    // -------------------------------------------------------------------------
     // Frame storage
-    // ---------------------------------------------------------------------
+    // -------------------------------------------------------------------------
 
     private volatile VideoFrame? _currentFrame;
     private volatile bool _disposed;
 
     public VideoFrame? CurrentFrame => _currentFrame;
 
-    // Notify view that a repaint is required
+    /// <summary>Notify view that a repaint is required.</summary>
     public event Action? FrameInvalidated;
 
-    private readonly IRtspFrameDecoder _decoder2;
     private volatile VideoFrame? _currentFrame2;
     private volatile bool _isDualStream;
 
     public VideoFrame? CurrentFrame2 => _currentFrame2;
     public bool IsDualStream => _isDualStream;
 
-    // ---------------------------------------------------------------------
+    // -------------------------------------------------------------------------
     // FPS
-    // ---------------------------------------------------------------------
+    // -------------------------------------------------------------------------
 
     private int _frameCount;
     private DateTime _fpsTimer = DateTime.UtcNow;
@@ -53,142 +58,27 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
     [ObservableProperty]
     private double fps;
 
-    // ---------------------------------------------------------------------
+    // -------------------------------------------------------------------------
     // UI state
-    // ---------------------------------------------------------------------
+    // -------------------------------------------------------------------------
 
-    private static string SerialFeature => nameof(PeriscopeViewModel);
-    private static string CameraFeature => nameof(PeriscopeViewModel) + "CAMERA";
-
-    private TimeSpan timeout = TimeSpan.FromSeconds(10);
-
+    private readonly TimeSpan _timeout = TimeSpan.FromSeconds(10);
 
     [ObservableProperty]
-    private string statusText = "Stopped";
-
-
-    [ObservableProperty]
-    private string rtspVideoUrl = "";
+    private string statusText = string.Empty;
 
     [ObservableProperty]
-    private string rtspFLIRUrl = "";
+    private string rtspVideoUrl = string.Empty;
+
+    [ObservableProperty]
+    private string rtspFLIRUrl = string.Empty;
 
     public string MTXRTSPPort { get; set; } = "8554";
-
     public string VideoEndPoint { get; set; } = "/usbcamera";
-
     public string FlirEndpoint { get; set; } = "/flir";
 
     [ObservableProperty]
     private bool isStreaming;
-
-    private TaskCompletionSource<bool>? _pendingCommand;
-    private string? _pendingCommandName;
-
-
-    private TaskCompletionSource<bool>? _pendingPushConfirm;
-    private string? _pendingPushConfirmFunction;
-    private Func<string, bool>? _pendingPushConfirmPredicate;
-
-    // ---------------------------------------------------------------------
-    // Constructor
-    // ---------------------------------------------------------------------
-
-    public PeriscopeViewModel(
-        SQLiteService sqliteService,
-        IAlertService alertService,
-        IMessenger messengerService,
-        TcpSocketService tcpService,
-        ILogger<PeriscopeViewModel> logger,
-        IRtspFrameDecoder decoder,
-        IRtspFrameDecoder decoder2,
-    ApplicationStateService applicationStateService)
-    {
-        Title = "Periscope";
-
-        _sqliteService = sqliteService;
-        _alertService = alertService;
-        _messengerService = messengerService;
-        _tcpService = tcpService;
-        _logger = logger;
-        _decoder = decoder;
-        AppState = applicationStateService;
-        _decoder2 = decoder2;
-
-        StatusText = "";
-        ButtonSize = 20.0;
-
-
-        _messengerService.Register<TcpDataReceivedMessage>(this, async (r, msg) =>
-        {
-            //Commands
-            if (msg.Value.Function.Equals("TOM FLIR"))
-            {
-                if (msg.Value.Command == _pendingCommandName)
-                    await ResolvePendingCommandAsync(msg.Value.Data);
-                return;
-            }
-
-        });
-
-        _messengerService.Register<TcpSendRequestMessage>(this, (r, msg) =>
-        {
-            MainThread.BeginInvokeOnMainThread(() =>
-            {
-                //      Status = Encoding.UTF8.GetString(msg.Value);
-            });
-
-        });
-
-        _messengerService.Register<TcpStatusMessage>(this, (r, msg) =>
-        {
-            MainThread.BeginInvokeOnMainThread(() =>
-            {
-                StatusText = msg.Value;
-            });
-
-        });
-
-        _messengerService.Register<TcpErrorMessage>(this, (r, msg) =>
-        {
-            _logger?.LogError($"TcpErrorMessage : {msg}", msg);
-            MainThread.BeginInvokeOnMainThread(() =>
-            {
-                StatusText = msg.Value.Message;
-
-            });
-
-        });
-
-
-
-        _messengerService.Register<TcpAckTimeoutMessage>(this, (r, msg) =>
-        {
-
-            MainThread.BeginInvokeOnMainThread(() =>
-                StatusText = $"No response to: {msg.Command}");
-        });
-
-        _messengerService.Register<TcpNackMessage>(this, (r, msg) =>
-        {
-            MainThread.BeginInvokeOnMainThread(() =>
-                StatusText = $"Server rejected '{msg.Command}': {msg.Reason}");
-        });
-
-
-        _messengerService.Register<TcpIsConnected>(this, (r, msg) =>
-        {
-            MainThread.BeginInvokeOnMainThread(async () =>
-            {
-                if (!msg.Value)
-                    await Shell.Current.GoToAsync("//MainPage");
-            });
-        });
-
-
-    }
-
-
 
     [ObservableProperty]
     private double buttonSize;
@@ -196,6 +86,84 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
     [ObservableProperty]
     private double layoutSpacing;
 
+    // -------------------------------------------------------------------------
+    // Constructor
+    // -------------------------------------------------------------------------
+
+    public PeriscopeViewModel(
+        SQLiteService sqliteService,
+        IAlertService alertService,
+        IMessenger messengerService,
+        CommandDispatcherService dispatcher,
+        ILogger<PeriscopeViewModel> logger,
+        IRtspFrameDecoder decoder,
+        IRtspFrameDecoder decoder2,
+        ApplicationStateService applicationStateService)
+    {
+        Title = "Periscope";
+
+        _sqliteService = sqliteService;
+        _alertService = alertService;
+        _messengerService = messengerService;
+        _dispatcher = dispatcher;
+        _dispatcher.Owner = nameof(PeriscopeViewModel);
+        _logger = logger;
+        _decoder = decoder;
+        _decoder2 = decoder2;
+        AppState = applicationStateService;
+
+        ButtonSize = 20.0;
+
+        _messengerService.Register<TcpIsConnected>(this, (_, msg) =>
+        {
+            if (!msg.Value)
+                MainThread.BeginInvokeOnMainThread(async () =>
+                    await Shell.Current.GoToAsync("//MainPage"));
+        });
+
+        RegisterMessages();
+    }
+
+    // -------------------------------------------------------------------------
+    // Message registration
+    // -------------------------------------------------------------------------
+
+    private void RegisterMessages()
+    {
+        _messengerService.Register<TcpDataReceivedMessage>(this, (_, msg) =>
+        {
+            // Route ALL incoming messages through the dispatcher first.
+            // The dispatcher will satisfy any pending SendAndWaitAsync /
+            // SendAndWaitForPushAsync that matches function + command.
+            _dispatcher.HandleIncoming(
+                msg.Value.Function,
+                msg.Value.Command,
+                msg.Value.Data);
+        });
+
+        _messengerService.Register<TcpStatusMessage>(this, (_, msg) =>
+            MainThread.BeginInvokeOnMainThread(() => StatusText = msg.Value));
+
+        _messengerService.Register<TcpErrorMessage>(this, (_, msg) =>
+        {
+            _logger?.LogError("TcpErrorMessage: {Message}", msg.Value.Message);
+            MainThread.BeginInvokeOnMainThread(() => StatusText = msg.Value.Message);
+        });
+
+        _messengerService.Register<TcpAckTimeoutMessage>(this, (_, msg) =>
+            MainThread.BeginInvokeOnMainThread(
+                () => StatusText = $"No response to: {msg.Command}"));
+
+        _messengerService.Register<TcpNackMessage>(this, (_, msg) =>
+            MainThread.BeginInvokeOnMainThread(
+                () => StatusText = $"Server rejected '{msg.Command}': {msg.Reason}"));
+
+
+    }
+
+    // -------------------------------------------------------------------------
+    // Lifecycle
+    // -------------------------------------------------------------------------
 
     public async Task InitializeAsync()
     {
@@ -203,20 +171,16 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
         {
             IsBusy = true;
 
-            var success = await _sqliteService.GetConfigAsync();
-
-            if (!success)
+            if (!await _sqliteService.GetConfigAsync())
             {
                 StatusText = "Failed to load config";
                 return;
             }
 
-            string ipAddress = _sqliteService.config.IPAddress;
-            rtspVideoUrl = "rtsp://localhost:8554/usbcamera";
-            //= ipAddress + ":" + MTXRTSPPort + VideoEndPoint;
-            rtspFLIRUrl = "rtsp://localhost:8554/flir";
-                //ipAddress + ":" + MTXRTSPPort + FlirEndpoint;
-
+            // Currently using localhost; swap to _sqliteService.config.IPAddress
+            // + MTXRTSPPort + endpoint when the server is remote.
+            RtspVideoUrl = "rtsp://localhost:8554/usbcamera";
+            RtspFLIRUrl = "rtsp://localhost:8554/flir";
         }
         catch (Exception ex)
         {
@@ -227,13 +191,6 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
             IsBusy = false;
         }
     }
-
-
-
-
-    // ---------------------------------------------------------------------
-    // Lifecycle
-    // ---------------------------------------------------------------------
 
     public void Start()
     {
@@ -260,238 +217,79 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
         _decoder2.StatusChanged -= Decoder_StatusChanged;
         _decoder2.ErrorOccurred -= OnErrorOccurred;
 
-        var old = Interlocked.Exchange(ref _currentFrame, null);
-        old?.Release();
-        var old2 = Interlocked.Exchange(ref _currentFrame2, null);
-        old2?.Release();
+        Interlocked.Exchange(ref _currentFrame, null)?.Release();
+        Interlocked.Exchange(ref _currentFrame2, null)?.Release();
     }
 
-    public void Dispose()
-    {
-        Stop();
-    }
+    public void Dispose() => Stop();
 
-    // ---------------------------------------------------------------------
+    // -------------------------------------------------------------------------
     // Decoder callbacks
-    // ---------------------------------------------------------------------
+    // -------------------------------------------------------------------------
 
     private void OnFrameReady(VideoFrame newFrame)
     {
-        if (_disposed)
-        {
-            newFrame.Release();
-            return;
-        }
+        if (_disposed) { newFrame.Release(); return; }
 
-        var old = Interlocked.Exchange(ref _currentFrame, newFrame);
-        old?.Release();
+        Interlocked.Exchange(ref _currentFrame, newFrame)?.Release();
 
         _frameCount++;
-
         var elapsed = (DateTime.UtcNow - _fpsTimer).TotalSeconds;
-
         if (elapsed >= 1.0)
         {
             var fps = _frameCount / elapsed;
-
             _frameCount = 0;
             _fpsTimer = DateTime.UtcNow;
-
-            MainThread.BeginInvokeOnMainThread(() =>
-            {
-                Fps = fps;
-            });
+            MainThread.BeginInvokeOnMainThread(() => Fps = fps);
         }
 
-        MainThread.BeginInvokeOnMainThread(() =>
-        {
-            FrameInvalidated?.Invoke();
-        });
+        MainThread.BeginInvokeOnMainThread(() => FrameInvalidated?.Invoke());
     }
 
     private void OnFrameReady2(VideoFrame newFrame)
     {
         if (_disposed) { newFrame.Release(); return; }
 
-        var old = Interlocked.Exchange(ref _currentFrame2, newFrame);
-        old?.Release();
-
+        Interlocked.Exchange(ref _currentFrame2, newFrame)?.Release();
         MainThread.BeginInvokeOnMainThread(() => FrameInvalidated?.Invoke());
     }
-
 
     private void Decoder_StatusChanged(string status)
     {
         MainThread.BeginInvokeOnMainThread(() =>
         {
             StatusText = status;
-
-            bool live = status.StartsWith("●");
-
-            IsStreaming = live;
-            IsBusy = status.StartsWith("Init") ||
-                     status.StartsWith("Connect");
+            IsStreaming = status.StartsWith("●");
+            IsBusy = status.StartsWith("Init") || status.StartsWith("Connect");
         });
     }
 
-    private async void OnErrorOccurred(string error)
+    private void OnErrorOccurred(string error)
     {
-        MainThread.BeginInvokeOnMainThread(async () =>
+        MainThread.BeginInvokeOnMainThread(() =>
         {
             StatusText = $"Stream Error: {error}";
             IsBusy = false;
             IsStreaming = false;
-
         });
     }
 
-    // ---------------------------------------------------------------------
-    // Commands
-    // ---------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Commands — video control
+    // -------------------------------------------------------------------------
 
     [RelayCommand]
     private void DisplayDualVideo()
     {
         _isDualStream = true;
-
-        var old = Interlocked.Exchange(ref _currentFrame, null);
-        old?.Release();
-        var old2 = Interlocked.Exchange(ref _currentFrame2, null);
-        old2?.Release();
+        Interlocked.Exchange(ref _currentFrame, null)?.Release();
+        Interlocked.Exchange(ref _currentFrame2, null)?.Release();
 
         StatusText = "Connecting dual stream...";
         IsBusy = true;
 
-        _decoder.Start(rtspVideoUrl);
-        _decoder2.Start(rtspFLIRUrl);
-    }
-
-    [RelayCommand]
-    private async Task SetFlirWhitehot()
-    {
-
-
-
-        IsBusy = true;
-        try
-        {
-            StatusText = "Attempting to set FLIR to White hot...";
-            if (!await SendAndWaitAsync("TOM FLIR", "WRITE TEXT", FLIR.LUTtoWHITEHOT, timeout))
-            {
-                MainThread.BeginInvokeOnMainThread(() =>
-                {
-                    StatusText = "Update failed — could not set colour palette";
-                    return;
-                });
-            }
-
-            StatusText = "FLIR set to White hot";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand]
-    private async Task SetFlirRainbow()
-    {
-        IsBusy = true;
-        try
-        {
-            StatusText = "Attempting to set FLIR to Rainbow...";
-            if (!await SendAndWaitAsync("TOM FLIR", "WRITE TEXT", FLIR.LUTtoRAINBOW, timeout))
-            {
-                MainThread.BeginInvokeOnMainThread(() =>
-                {
-                    StatusText = "Update failed — could not set colour palette";
-                    return;
-                });
-
-
-            }
-            StatusText = "FLIR set to Rainbow";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand]
-    private async Task SetFlirBlackhot()
-    {
-        IsBusy = true;
-        try
-        {
-            StatusText = "Attempting to set FLIR to Black hot...";
-            if (!await SendAndWaitAsync("TOM FLIR", "WRITE TEXT", FLIR.LUTtoBLACKHOT, timeout))
-            {
-                MainThread.BeginInvokeOnMainThread(() =>
-                {
-                    StatusText = "Update failed — could not set colour palette";
-                    return;
-                });
-
-
-            }
-            StatusText = "FLIR set to Black hot";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand]
-    private async Task SetFlirIronbow()
-    {
-        IsBusy = true;
-        try
-        {
-            StatusText = "Attempting to set FLIR to Iron bow...";
-            if (!await SendAndWaitAsync("TOM FLIR", "WRITE TEXT", FLIR.LUTtoIRONBOW, timeout))
-            {
-                MainThread.BeginInvokeOnMainThread(() =>
-                {
-                    StatusText = "Update failed — could not set colour palette";
-                    return;
-                });
-
-
-            }
-            StatusText = "FLIR set to Iron bow";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-
-    [RelayCommand]
-    private async Task SetFlirGlowbow()
-    {
-        IsBusy = true;
-        try
-        {
-            StatusText = "Attempting to set FLIR to Glow bow...";
-            if (!await SendAndWaitAsync("TOM FLIR", "WRITE TEXT", FLIR.LUTtoGLOBOW, timeout))
-            {
-                MainThread.BeginInvokeOnMainThread(() =>
-                {
-                    StatusText = "Update failed — could not set colour palette";
-                    return;
-                });
-
-
-            }
-            StatusText = "FLIR set to Glow bow";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
+        _decoder.Start(RtspVideoUrl);
+        _decoder2.Start(RtspFLIRUrl);
     }
 
     [RelayCommand]
@@ -499,19 +297,16 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
     {
         _isDualStream = false;
         _decoder2.Stop();
-        StartStream(rtspVideoUrl);
+        StartStream(RtspVideoUrl);
     }
-
 
     [RelayCommand]
     private void DisplayFLIRVideo()
     {
         _isDualStream = false;
         _decoder2.Stop();
-        StartStream(rtspFLIRUrl);
+        StartStream(RtspFLIRUrl);
     }
-
-
 
     [RelayCommand]
     private void StopVideo()
@@ -520,14 +315,63 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
         _decoder.Stop();
         _decoder2.Stop();
 
-        var old = Interlocked.Exchange(ref _currentFrame, null);
-        old?.Release();
-        var old2 = Interlocked.Exchange(ref _currentFrame2, null);
-        old2?.Release();
+        Interlocked.Exchange(ref _currentFrame, null)?.Release();
+        Interlocked.Exchange(ref _currentFrame2, null)?.Release();
 
         MainThread.BeginInvokeOnMainThread(() => Fps = 0);
         FrameInvalidated?.Invoke();
     }
+
+    // -------------------------------------------------------------------------
+    // Commands — FLIR palette (all use Request/Response via the dispatcher)
+    //
+    // "TOM FLIR" uses Request/Response: we send "WRITE TEXT" and the server
+    // echoes it back on the "TOM FLIR" channel with a CommandResponse body.
+    // -------------------------------------------------------------------------
+
+    [RelayCommand]
+    private Task SetFlirWhitehot()
+        => SetFlirPaletteAsync("White hot", FLIR.LUTtoWHITEHOT);
+
+    [RelayCommand]
+    private Task SetFlirRainbow()
+        => SetFlirPaletteAsync("Rainbow", FLIR.LUTtoRAINBOW);
+
+    [RelayCommand]
+    private Task SetFlirBlackhot()
+        => SetFlirPaletteAsync("Black hot", FLIR.LUTtoBLACKHOT);
+
+    [RelayCommand]
+    private Task SetFlirIronbow()
+        => SetFlirPaletteAsync("Iron bow", FLIR.LUTtoIRONBOW);
+
+    [RelayCommand]
+    private Task SetFlirGlowbow()
+        => SetFlirPaletteAsync("Glow bow", FLIR.LUTtoGLOBOW);
+
+    private async Task SetFlirPaletteAsync(string paletteName, string lutCommand)
+    {
+        IsBusy = true;
+        try
+        {
+            StatusText = $"Attempting to set FLIR to {paletteName}...";
+
+            bool ok = await _dispatcher.SendAndWaitAsync(
+                "TOM FLIR", "WRITE TEXT", lutCommand, _timeout);
+
+            StatusText = ok
+                ? $"FLIR set to {paletteName}"
+                : "Update failed — could not set colour palette";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Commands — snapshot
+    // -------------------------------------------------------------------------
 
     [RelayCommand]
     private async Task TakeSnapShot()
@@ -538,99 +382,9 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
         try
         {
             if (_isDualStream)
-            {
-                var frame1 = _currentFrame;
-                var frame2 = _currentFrame2;
-
-                if (frame1 is null && frame2 is null)
-                    return;
-
-                try
-                {
-                    string path = Path.Combine(
-                      //  Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
-                        AppState.SnapShotPath,
-                        $"snap_dual_{DateTime.Now:yyyyMMdd_HHmmss}.png");
-
-                    // Use whichever frame is available for dimensions
-                    int w1 = frame1?.Width ?? 0, h1 = frame1?.Height ?? 0;
-                    int w2 = frame2?.Width ?? 0, h2 = frame2?.Height ?? 0;
-
-                    int totalWidth = w1 + w2;
-                    int totalHeight = Math.Max(h1, h2);
-
-                    if (totalWidth <= 0 || totalHeight <= 0)
-                        return;
-
-                    var compositeInfo = new SKImageInfo(
-                        totalWidth, totalHeight,
-                        SKColorType.Bgra8888, SKAlphaType.Premul);
-
-                    using var surface = SKSurface.Create(compositeInfo);
-                    var canvas = surface.Canvas;
-                    canvas.Clear(SKColors.Black);
-
-                    // Draw frame1 on the left
-                    if (frame1 is not null)
-                        DrawFrameToCanvas(canvas, frame1,
-                            new SKRect(0, 0, w1, totalHeight));
-
-                    // Draw frame2 on the right
-                    if (frame2 is not null)
-                        DrawFrameToCanvas(canvas, frame2,
-                            new SKRect(w1, 0, w1 + w2, totalHeight));
-
-                    using var image = surface.Snapshot();
-                    using var png = image.Encode(SKEncodedImageFormat.Png, 95);
-                    await using var fs = File.OpenWrite(path);
-                    png.SaveTo(fs);
-
-                    StatusText = "Dual Snapshot Saved";
-                }
-                catch (Exception ex)
-                {
-                    StatusText = "Snapshot Failed";
-                }
-            }
+                await SaveDualSnapshotAsync();
             else
-            {
-                // Original single-stream snapshot
-                var frame = _currentFrame;
-                if (frame is null) return;
-
-                try
-                {
-                    string path = Path.Combine(
-                                               // Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
-                         AppState.SnapShotPath,
-                        $"snap_{DateTime.Now:yyyyMMdd_HHmmss}.png");
-
-                    var info = new SKImageInfo(
-                        frame.Width, frame.Height,
-                        SKColorType.Bgra8888, SKAlphaType.Premul);
-
-                    var gcHandle = GCHandle.Alloc(frame.Data, GCHandleType.Pinned);
-                    try
-                    {
-                        using var bmp = new SKBitmap();
-                        bmp.InstallPixels(info, gcHandle.AddrOfPinnedObject(), frame.Stride);
-                        using var image = SKImage.FromBitmap(bmp);
-                        using var png = image.Encode(SKEncodedImageFormat.Png, 95);
-                        await using var fs = File.OpenWrite(path);
-                        png.SaveTo(fs);
-                    }
-                    finally
-                    {
-                        gcHandle.Free();
-                    }
-
-                    StatusText = "Snapshot Saved";
-                }
-                catch (Exception ex)
-                {
-                    StatusText = "Snapshot Failed";
-                }
-            }
+                await SaveSingleSnapshotAsync();
         }
         finally
         {
@@ -638,7 +392,91 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
         }
     }
 
-    // Shared by TakeSnapShot — mirrors the letterboxing logic in PeriscopePage.xaml.cs
+    private async Task SaveDualSnapshotAsync()
+    {
+        var frame1 = _currentFrame;
+        var frame2 = _currentFrame2;
+        if (frame1 is null && frame2 is null) return;
+
+        try
+        {
+            string path = Path.Combine(
+                AppState.SnapShotPath,
+                $"snap_dual_{DateTime.Now:yyyyMMdd_HHmmss}.png");
+
+            int w1 = frame1?.Width ?? 0, h1 = frame1?.Height ?? 0;
+            int w2 = frame2?.Width ?? 0, h2 = frame2?.Height ?? 0;
+            int totalWidth = w1 + w2;
+            int totalHeight = Math.Max(h1, h2);
+
+            if (totalWidth <= 0 || totalHeight <= 0) return;
+
+            var compositeInfo = new SKImageInfo(
+                totalWidth, totalHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
+
+            using var surface = SKSurface.Create(compositeInfo);
+            var canvas = surface.Canvas;
+            canvas.Clear(SKColors.Black);
+
+            if (frame1 is not null)
+                DrawFrameToCanvas(canvas, frame1, new SKRect(0, 0, w1, totalHeight));
+
+            if (frame2 is not null)
+                DrawFrameToCanvas(canvas, frame2, new SKRect(w1, 0, w1 + w2, totalHeight));
+
+            using var image = surface.Snapshot();
+            using var png = image.Encode(SKEncodedImageFormat.Png, 95);
+            await using var fs = File.OpenWrite(path);
+            png.SaveTo(fs);
+
+            StatusText = "Dual Snapshot Saved";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Dual snapshot failed");
+            StatusText = "Snapshot Failed";
+        }
+    }
+
+    private async Task SaveSingleSnapshotAsync()
+    {
+        var frame = _currentFrame;
+        if (frame is null) return;
+
+        try
+        {
+            string path = Path.Combine(
+                AppState.SnapShotPath,
+                $"snap_{DateTime.Now:yyyyMMdd_HHmmss}.png");
+
+            var info = new SKImageInfo(
+                frame.Width, frame.Height, SKColorType.Bgra8888, SKAlphaType.Premul);
+
+            var gcHandle = GCHandle.Alloc(frame.Data, GCHandleType.Pinned);
+            try
+            {
+                using var bmp = new SKBitmap();
+                bmp.InstallPixels(info, gcHandle.AddrOfPinnedObject(), frame.Stride);
+                using var image = SKImage.FromBitmap(bmp);
+                using var png = image.Encode(SKEncodedImageFormat.Png, 95);
+                await using var fs = File.OpenWrite(path);
+                png.SaveTo(fs);
+            }
+            finally
+            {
+                gcHandle.Free();
+            }
+
+            StatusText = "Snapshot Saved";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Snapshot failed");
+            StatusText = "Snapshot Failed";
+        }
+    }
+
+    // Mirrors the letterboxing logic in PeriscopePage.xaml.cs
     private static void DrawFrameToCanvas(SKCanvas canvas, VideoFrame frame, SKRect destRect)
     {
         float scaleX = destRect.Width / frame.Width;
@@ -669,9 +507,16 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
         }
     }
 
-    // ---------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Commands — navigation
+    // -------------------------------------------------------------------------
+
+    [RelayCommand]
+    private async Task GoBack() => await Shell.Current.GoToAsync("..");
+
+    // -------------------------------------------------------------------------
     // Helpers
-    // ---------------------------------------------------------------------
+    // -------------------------------------------------------------------------
 
     private void StartStream(string? url)
     {
@@ -681,97 +526,11 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
             return;
         }
 
-        var old = Interlocked.Exchange(ref _currentFrame, null);
-        old?.Release();
+        Interlocked.Exchange(ref _currentFrame, null)?.Release();
 
         StatusText = "Connecting...";
         IsBusy = true;
 
         _decoder.Start(url);
     }
-
-    private async Task<bool> SendAndWaitAsync(
-     string feature, string command, string data, TimeSpan timeout)
-    {
-        _pendingCommandName = command;
-        var tcs = new TaskCompletionSource<bool>();
-        Interlocked.Exchange(ref _pendingCommand, tcs);  // atomic set
-
-        var sent = await _tcpService.SendCommandAsync(
-            new TCPMessageBody<string>(feature, command, data), CancellationToken.None);
-
-        if (!sent)
-        {
-            Interlocked.Exchange(ref _pendingCommand, null);  // atomic clear
-            _pendingCommandName = null;
-            return false;
-        }
-
-        var completed = await Task.WhenAny(tcs.Task, Task.Delay(timeout));
-
-        Interlocked.Exchange(ref _pendingCommand, null);  // atomic clear
-        _pendingCommandName = null;
-
-        return completed == tcs.Task && tcs.Task.Result;
-    }
-
-    private async Task<bool> SendAndWaitForPushAsync(
-        string sendFeature, string sendCommand, string sendData,
-        string confirmFunction, Func<string, bool> confirmPredicate,
-        TimeSpan timeout)
-    {
-        _pendingPushConfirmFunction = confirmFunction;
-        _pendingPushConfirmPredicate = confirmPredicate;
-        var confirmTcs = new TaskCompletionSource<bool>();
-        Interlocked.Exchange(ref _pendingPushConfirm, confirmTcs);
-
-        var sent = await _tcpService.SendCommandAsync(
-            new TCPMessageBody<string>(sendFeature, sendCommand, sendData),
-            CancellationToken.None);
-
-        if (!sent)
-        {
-            Interlocked.Exchange(ref _pendingPushConfirm, null);
-            _pendingPushConfirmFunction = null;
-            _pendingPushConfirmPredicate = null;
-            return false;
-        }
-
-        var completed = await Task.WhenAny(confirmTcs.Task, Task.Delay(timeout));
-
-        Interlocked.Exchange(ref _pendingPushConfirm, null);
-        _pendingPushConfirmFunction = null;
-        _pendingPushConfirmPredicate = null;
-
-        return completed == confirmTcs.Task && confirmTcs.Task.Result;
-    }
-
-    private async Task ResolvePendingCommandAsync(string? json)
-    {
-        // Capture atomically — local copy is thread-safe from this point on
-        var pending = Interlocked.CompareExchange(ref _pendingCommand, null, null);
-        if (pending is null) return;
-
-        try
-        {
-            var response = JsonSerializer.Deserialize<CommandResponse>(
-                json ?? "",
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-            pending.TrySetResult(response?.Ok == true);
-        }
-        catch
-        {
-            pending.TrySetResult(false);
-        }
-    }
-
-
-    [RelayCommand]
-    private async Task GoBack()
-    {
-        await Shell.Current.GoToAsync("..");
-    }
-
-
 }
