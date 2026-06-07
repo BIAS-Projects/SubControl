@@ -357,7 +357,7 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
             StatusText = $"Attempting to set FLIR to {paletteName}...";
 
             bool ok = await _dispatcher.SendAndWaitAsync(
-                "TOM FLIR", "WRITE TEXT", lutCommand, _timeout);
+                "TOM FLIR", "WRITE TEXT", lutCommand, _timeout) is null;
 
             StatusText = ok
                 ? $"FLIR set to {paletteName}"

@@ -37,13 +37,13 @@ public sealed class CommandDispatcherService
     {
         public string Function { get; }
         public string Command { get; }
-        public TaskCompletionSource<bool> Tcs { get; }
+        public TaskCompletionSource<string> Tcs { get; }
 
         public PendingResponse(string function, string command)
         {
             Function = function;
             Command = command;
-            Tcs = new TaskCompletionSource<bool>(
+            Tcs = new TaskCompletionSource<string>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
         }
     }
@@ -53,13 +53,13 @@ public sealed class CommandDispatcherService
     {
         public string Function { get; }
         public Func<string, bool> Predicate { get; }
-        public TaskCompletionSource<bool> Tcs { get; }
+        public TaskCompletionSource<string> Tcs { get; }
 
         public PendingPush(string function, Func<string, bool> predicate)
         {
             Function = function;
             Predicate = predicate;
-            Tcs = new TaskCompletionSource<bool>(
+            Tcs = new TaskCompletionSource<string>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
         }
     }
@@ -94,7 +94,8 @@ public sealed class CommandDispatcherService
     /// <param name="data">Payload (may be empty string).</param>
     /// <param name="timeout">How long to wait for the response.</param>
     /// <returns><c>true</c> if the server acknowledged with Ok == true.</returns>
-    public async Task<bool> SendAndWaitAsync(
+    // Request/Response — returns the raw data string from CommandResponse on success, null on failure
+    public async Task<string?> SendAndWaitAsync(
         string feature,
         string command,
         string data,
@@ -109,15 +110,13 @@ public sealed class CommandDispatcherService
                 new TCPMessageBody<string>(feature, command, data),
                 CancellationToken.None);
 
-            if (!sent)
-                return false;
-            Debug.WriteLine($"SendAndWaitAsync sent {feature} {command} {data} for {Owner}");
+            if (!sent) return null;
+
             var completed = await Task.WhenAny(op.Tcs.Task, Task.Delay(timeout));
-            return completed == op.Tcs.Task && op.Tcs.Task.Result;
+            return completed == op.Tcs.Task ? op.Tcs.Task.Result : null;
         }
         finally
         {
-            // Clear only if this operation is still the active one
             Interlocked.CompareExchange(ref _pendingResponse, null, op);
         }
     }
@@ -140,7 +139,8 @@ public sealed class CommandDispatcherService
     /// </param>
     /// <param name="timeout">How long to wait for the push.</param>
     /// <returns><c>true</c> if the push arrived and the predicate matched.</returns>
-    public async Task<bool> SendAndWaitForPushAsync(
+    // Push-Confirm — returns the raw push data string on success, null on failure
+    public async Task<string?> SendAndWaitForPushAsync(
         string sendFeature,
         string sendCommand,
         string sendData,
@@ -157,11 +157,10 @@ public sealed class CommandDispatcherService
                 new TCPMessageBody<string>(sendFeature, sendCommand, sendData),
                 CancellationToken.None);
 
-            if (!sent)
-                return false;
-            Debug.WriteLine($"SendAndWaitForPushAsync sent {sendFeature} {sendCommand} {sendData} for {Owner}");
+            if (!sent) return null;
+
             var completed = await Task.WhenAny(op.Tcs.Task, Task.Delay(timeout));
-            return completed == op.Tcs.Task && op.Tcs.Task.Result;
+            return completed == op.Tcs.Task ? op.Tcs.Task.Result : null;
         }
         finally
         {
@@ -196,32 +195,32 @@ public sealed class CommandDispatcherService
 
     private void TryResolveResponse(string function, string command, string? data)
     {
-        Debug.WriteLine($"TryResolveResponse {function} {command} {data} for  {Owner}");
-        // Atomically read without clearing — we only clear after resolution
         var op = Volatile.Read(ref _pendingResponse);
         if (op is null) return;
 
         if (!op.Function.Equals(function, StringComparison.OrdinalIgnoreCase)) return;
         if (!op.Command.Equals(command, StringComparison.OrdinalIgnoreCase)) return;
 
-        bool ok = false;
         try
         {
             var response = JsonSerializer.Deserialize<CommandResponse>(
                 data ?? string.Empty, _jsonOpts);
-            ok = response?.Ok == true;
-        }
-        catch { /* malformed JSON → ok stays false */ }
 
-        Debug.WriteLine($"TryResolveResponse {data} is ok  for {Owner}");
-        op.Tcs.TrySetResult(ok);
+            // Resolve with the raw data string if ok, null signals failure to caller
+            if (response?.Ok == true)
+                op.Tcs.TrySetResult(data ?? string.Empty);
+            else
+                op.Tcs.TrySetResult(null!);   // null = server reported not-ok
+        }
+        catch
+        {
+            op.Tcs.TrySetResult(null!);
+        }
     }
 
     private void TryResolvePush(string function, string? data)
     {
-        Debug.WriteLine($"TryResolveResponse {function} {data} for {Owner}");
         var op = Volatile.Read(ref _pendingPush);
-        Debug.WriteLine($"TryResolvePush pending push {op}");
         if (op is null) return;
 
         if (!op.Function.Equals(function, StringComparison.OrdinalIgnoreCase)) return;
@@ -230,9 +229,6 @@ public sealed class CommandDispatcherService
         if (string.IsNullOrEmpty(raw)) return;
 
         if (op.Predicate(raw))
-        {
-            Debug.WriteLine($"TryResolvePush op.Predicate is true {raw} for {Owner}");
-            op.Tcs.TrySetResult(true);
-        }
+            op.Tcs.TrySetResult(raw);   // return the actual push data
     }
 }

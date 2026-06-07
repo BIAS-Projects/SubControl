@@ -289,7 +289,7 @@ public partial class RotatorViewModel : BaseViewModel
             bool ok = await _dispatcher.SendAndWaitForPushAsync(
                 Feature.RotatorName, "WRITE TEXT", payload,
                 Feature.RotatorName, confirmPredicate,
-                _commandTimeout);
+                _commandTimeout) is null;
 
             SetStatus(ok ? successMessage : failureMessage);
         }
@@ -469,26 +469,37 @@ public partial class RotatorViewModel : BaseViewModel
 
     private async Task<bool> EnableRotatorInternalAsync()
     {
-        if (!await _dispatcher.SendAndWaitForPushAsync(
-                Feature.RotatorName, "WRITE TEXT",
-                Rotator.GenerateSetSpeedCommandString(),
-                Feature.RotatorName,
-                response => response.Contains("MSP"),
-                _commandTimeout))
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+            Feature.RotatorName, "WRITE TEXT",
+            Rotator.GenerateSetSpeedCommandString(),
+            Feature.RotatorName,
+            r => r.Contains("MSP"),
+            _commandTimeout);
+
+        if (mspResponse is null)
         {
             SetStatus("Rotator failed to respond to set speed command");
             return false;
         }
 
-        if (!await _dispatcher.SendAndWaitForPushAsync(
-                Feature.RotatorName, "WRITE TEXT",
-                Rotator.GetFirmwareVersion,
-                Feature.RotatorName,
-                response => response.Contains("MRV"),
-                _commandTimeout))
+        var mrvResponse = await _dispatcher.SendAndWaitForPushAsync(
+            Feature.RotatorName, "WRITE TEXT",
+            Rotator.GetFirmwareVersion,
+            Feature.RotatorName,
+            r => r.Contains("MRV"),
+            _commandTimeout);
+
+        if (mrvResponse is null)
         {
             SetStatus("Rotator failed to respond to firmware version request");
             return false;
+        }
+
+        // Extract version from e.g. "#AMRVJ1.0r" — chars 5-8
+        if (mrvResponse.Length >= 9)
+        {
+            string version = mrvResponse.Substring(5, 4).Trim();
+            SetStatus($"Rotator ready — firmware {version}");
         }
 
         return true;

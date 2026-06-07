@@ -392,14 +392,14 @@ public partial class MainViewModel : BaseViewModel
     {
         // 1. Camera prerequisites
         StatusText = "Checking FFmpeg...";
-        if (!await _dispatcher.SendAndWaitAsync(CameraFeature, "CHECK FFMPEG", "", _timeout))
+        if (await _dispatcher.SendAndWaitAsync(CameraFeature, "CHECK FFMPEG", "", _timeout) is null)
         {
             StatusText = "Enable failed — FFmpeg not available";
             return;
         }
 
         StatusText = "Checking MediaMTX...";
-        if (!await _dispatcher.SendAndWaitAsync(CameraFeature, "CHECK MTX VERSION", "", _timeout))
+        if (await _dispatcher.SendAndWaitAsync(CameraFeature, "CHECK MTX VERSION", "", _timeout) is null)
         {
             StatusText = "Enable failed — MediaMTX not available";
             return;
@@ -731,19 +731,19 @@ public partial class MainViewModel : BaseViewModel
         try
         {
             StatusText = "Checking video streams...";
-            if (!await _dispatcher.SendAndWaitAsync(CameraFeature, "CHECK MTX STREAMS", "", _timeout))
+            if (await _dispatcher.SendAndWaitAsync(CameraFeature, "CHECK MTX STREAMS", "", _timeout) is null)
             {
                 StatusText = "Streams not ready — attempting to start...";
                 var discoverJson = JsonSerializer.Serialize(new CameraDiscoverRequest { AutoAdd = true });
 
-                if (!await _dispatcher.SendAndWaitAsync(CameraFeature, "DISCOVER", discoverJson, _timeout))
+                if (await _dispatcher.SendAndWaitAsync(CameraFeature, "DISCOVER", discoverJson, _timeout) is null)
                 {
                     StatusText = "Failed to start video streams";
                     return;
                 }
 
                 StatusText = "Verifying streams...";
-                if (!await _dispatcher.SendAndWaitAsync(CameraFeature, "CHECK MTX STREAMS", "", _timeout))
+                if (await _dispatcher.SendAndWaitAsync(CameraFeature, "CHECK MTX STREAMS", "", _timeout) is null)
                 {
                     StatusText = "Video streams failed to start";
                     return;
@@ -751,7 +751,7 @@ public partial class MainViewModel : BaseViewModel
             }
 
             StatusText = "Opening FLIR control port...";
-            if (!await _dispatcher.SendAndWaitAsync(SerialFeature, "OPEN", "TOM FLIR", _timeout))
+            if (await _dispatcher.SendAndWaitAsync(SerialFeature, "OPEN", "TOM FLIR", _timeout) is null)
             {
                 StatusText = "FLIR control port open failed";
                 return;
@@ -859,7 +859,7 @@ public partial class MainViewModel : BaseViewModel
         StatusText = $"Opening {featureName}...";
 
         bool ok = await _dispatcher.SendAndWaitAsync(
-            SerialFeature, "OPEN", featureName, _timeout);
+            SerialFeature, "OPEN", featureName, _timeout) is not null;
 
         StatusText = ok
             ? $"{featureName} comm port opened"
@@ -873,7 +873,7 @@ public partial class MainViewModel : BaseViewModel
         StatusText = $"Closing {featureName}...";
 
         bool ok = await _dispatcher.SendAndWaitAsync(
-            SerialFeature, "CLOSE", featureName, _timeout);
+            SerialFeature, "CLOSE", featureName, _timeout) is not null;
 
         StatusText = ok
             ? $"{featureName} comm port closed"
@@ -889,24 +889,24 @@ public partial class MainViewModel : BaseViewModel
     private async Task<bool> EnableVideo()
     {
         StatusText = "Checking FFmpeg...";
-        if (!await _dispatcher.SendAndWaitAsync(CameraFeature, "CHECK FFMPEG", "", _timeout))
+        if (await _dispatcher.SendAndWaitAsync(CameraFeature, "CHECK FFMPEG", "", _timeout) is null)
         {
             StatusText = "Enable failed — FFmpeg not available";
             return false;
         }
 
         StatusText = "Checking MediaMTX...";
-        if (!await _dispatcher.SendAndWaitAsync(CameraFeature, "CHECK MTX VERSION", "", _timeout))
+        if (await _dispatcher.SendAndWaitAsync(CameraFeature, "CHECK MTX VERSION", "", _timeout) is null)
         {
             StatusText = "Enable failed — MediaMTX not available";
             return false;
         }
 
         // TOM power-on: send on "TOM Input", wait for push on "TOM Output"
-        if (!await _dispatcher.SendAndWaitForPushAsync(
+        if (await _dispatcher.SendAndWaitForPushAsync(
                 Feature.TOMInput, "WRITE TEXT", TOMCommands.TurnOnAllSystemsCommand,
                 Feature.TOMOutput, IsTomPowerOn,
-                _timeout))
+                _timeout) is null)
         {
             StatusText = "Enable failed — TOM did not confirm power on";
             return false;
@@ -921,7 +921,7 @@ public partial class MainViewModel : BaseViewModel
         bool ok = await _dispatcher.SendAndWaitForPushAsync(
             Feature.TOMInput, "WRITE TEXT", TOMCommands.TurnOffAllSystemsCommand,
             Feature.TOMOutput, IsTomPowerOff,
-            _timeout);
+            _timeout) is null;
 
         if (!ok)
             StatusText = "Warning — TOM did not confirm power off";

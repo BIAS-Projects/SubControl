@@ -18,6 +18,12 @@ namespace SubControlMAUI.Models
 
         public static int Speed { get; set; } = 40;
 
+        public static string Version { get; set; } = "";
+
+        public static int BackwardLimit { get; set; } = 0;
+
+        public static int ForwardLimit { get; set; } = 0;
+
         private static double _encoderScalingFactor = 0.0879;
 
         public static readonly HashSet<string> Headers =
