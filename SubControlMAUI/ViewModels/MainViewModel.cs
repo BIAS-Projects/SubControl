@@ -41,6 +41,8 @@ public partial class MainViewModel : BaseViewModel
     private static string SerialFeature => nameof(MainViewModel);
     private static string CameraFeature => nameof(MainViewModel) + "CAMERA";
 
+    private static string RotatorFeature => Feature.RotatorName;
+
 
     private TimeSpan timeout = TimeSpan.FromSeconds(10);
 
@@ -125,6 +127,13 @@ IsSystemEnabled
 
             // Serial feature responses (OPEN commands)
             if (msg.Value.Function.Equals(SerialFeature))
+            {
+                if (msg.Value.Command == _pendingCommandName)
+                    await ResolvePendingCommandAsync(msg.Value.Data);
+                return;
+            }
+
+            if (msg.Value.Function.Equals(Feature.RotatorName))
             {
                 if (msg.Value.Command == _pendingCommandName)
                     await ResolvePendingCommandAsync(msg.Value.Data);
@@ -1243,15 +1252,28 @@ IsSystemEnabled
 
     private async Task<bool> EnableRotator()
     {
+
+        if (!await SendAndWaitForPushAsync(
+                Feature.RotatorName,
+                "WRITE TEXT",
+                Models.Rotator.GenerateSetSpeedCommandString(),
+                Feature.PushNotification,
+                response => response.Contains("MSP"),
+                timeout))
+        {
+            StatusText = "Rotator failed to respond to set speed command";
+            return false;
+        }
+
         if (!await SendAndWaitForPushAsync(
                 Feature.RotatorName,
                 "WRITE TEXT",
                 Models.Rotator.GetFirmwareVersion,
                 Feature.RotatorName,
-                response => response.Contains("AMRV"),
+                response => response.Contains("MRV"),
                 timeout))
         {
-            StatusText = "Rotator enable failed";
+            StatusText = "Rotator failed to respond in firmware version request command";
             return false;
         }
         return true;
@@ -1665,13 +1687,24 @@ IsSystemEnabled
             else if (!feature.IsEnabled && !RotatorPreviouslyEnabled)
                     {
                 // CommOpen → Enabled (rotator enable always succeeds)
-                feature.IsEnabled = true;
-                AppState.UpdateFeature(feature);
-                RotatorPreviouslyEnabled = true;
-                AppState.SetRotatorEnabled(true);
-                StatusText = "Rotator enabled";
-                MainThread.BeginInvokeOnMainThread(() =>
-                    RotatorStatusColor = statusColours[Status.Enabled]);
+                if (await EnableRotator())
+                {
+
+
+                    feature.IsEnabled = true;
+                    AppState.UpdateFeature(feature);
+                    RotatorPreviouslyEnabled = true;
+                    AppState.SetRotatorEnabled(true);
+                    StatusText = "Rotator enabled";
+                    MainThread.BeginInvokeOnMainThread(() =>
+                        RotatorStatusColor = statusColours[Status.Enabled]);
+                }
+                else
+                {
+
+                    return;
+                }
+
             }
             else if (feature.IsEnabled && RotatorPreviouslyEnabled)
                     {

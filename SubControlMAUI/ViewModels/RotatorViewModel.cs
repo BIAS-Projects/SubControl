@@ -212,7 +212,7 @@ public partial class RotatorViewModel : BaseViewModel
                "Parking rotator...",
                "Rotator parking...",
                "Park rotator command failed",
-               Rotator.ParkMotorA,
+               Rotator.GenerateParkOrDeployCommandString(true),
                data => MatchesCommandCode(data, "MML"));
 
     [RelayCommand]
@@ -221,7 +221,7 @@ public partial class RotatorViewModel : BaseViewModel
                "Deploying rotator...",
                "Rotator deploying...",
                "Deploy rotator command failed",
-               Rotator.DeployMotorA,
+               Rotator.GenerateParkOrDeployCommandString(false),
                data => MatchesCommandCode(data, "MML"));
 
     [RelayCommand]
@@ -256,17 +256,22 @@ public partial class RotatorViewModel : BaseViewModel
     // ─────────────────────────────────────────────────────────────────────────
     [RelayCommand]
     private async Task AdjustBackward()
-    {
-        SetStatus($"Adjust backward by {AdjustValue}°");
-        await Task.CompletedTask;   // replace with real command when ready
-    }
+        => await RunCommandAsync(
+               "Adjusting rotator backwards...",
+               "Rotator moving...",
+               "Park rotator command failed",
+               Rotator.GenerateNudgeCommandString(true, ArmAngle),
+               data => MatchesCommandCode(data, "MML"));
+    
 
     [RelayCommand]
     private async Task AdjustForward()
-    {
-        SetStatus($"Adjust forward by {AdjustValue}°");
-        await Task.CompletedTask;   // replace with real command when ready
-    }
+        => await RunCommandAsync(
+               "Adjusting rotator forwards...",
+               "Rotator moving...",
+               "Park rotator command failed",
+               Rotator.GenerateNudgeCommandString(false, ArmAngle),
+               data => MatchesCommandCode(data, "MML"));
 
     [RelayCommand]
     private async Task GoBack()
@@ -355,7 +360,7 @@ public partial class RotatorViewModel : BaseViewModel
             if ((now - Interlocked.Read(ref _lastStatusTick)) >= StatusThrottleMs)
             {
                 Interlocked.Exchange(ref _lastStatusTick, now);
-                SetStatus(data);
+            //    SetStatus(data);
             }
 
             if (MatchesCommandCode(data, "MRL"))
@@ -454,9 +459,21 @@ public partial class RotatorViewModel : BaseViewModel
             response = response.Trim();
             if (response.Length < 10) return;
             if (!response.Substring(2, 3).Equals("MRL", StringComparison.OrdinalIgnoreCase)) return;
-            if (!int.TryParse(response.Substring(5, 4), out int encoder)) return;
+            if (!int.TryParse(response.Substring(5, 4), out int encoder))
+            {
+                StatusText = $"Rotator reported a non numeric position";
+                return;
+            }
+
 
             double degrees = Math.Clamp((encoder - 5000) * 0.0879, 0, 180);
+            if (degrees > maxRotatorValue || encoder < minRotatorValue)
+            {
+                StatusText = $"Rotator position reported as {encoder} minimum value is {minRotatorValue} maximum value is {maxRotatorValue}";
+                return;
+            }
+
+            OnArmAngleChanged(degrees);
             MainThread.BeginInvokeOnMainThread(() => ArmAngle = degrees);
         }
         catch (Exception ex)

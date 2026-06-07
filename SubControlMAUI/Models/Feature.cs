@@ -22,6 +22,7 @@ namespace SubControlMAUI.Models
         public static string TOMAHRS = "TOM AHRS";
         public static string TOMGNSS = "TOM GNSS";
         public static string TOMFLIR = "TOM FLIR";
+        public static string PushNotification = "PUSH";
 
         [ObservableProperty]
         private string name = string.Empty;

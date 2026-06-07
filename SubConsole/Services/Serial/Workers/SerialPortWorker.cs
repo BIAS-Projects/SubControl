@@ -147,7 +147,7 @@ public sealed class SerialPortWorker : ISerialWorker
     CancellationToken token = default)
 {
     _logger.LogDebug(
-        "Queueing {ByteCount} bytes to {Function} on {Port}",
+        "Queueing {data} bytes to {Function} on {Port}",
         data.Length,
         _functionName,
         PortPath);
@@ -340,6 +340,7 @@ public sealed class SerialPortWorker : ISerialWorker
 
                 try
                 {
+                    _logger.LogDebug("Writing {data} to {PortPath} for function {_functionName}", data, PortPath, _functionName);
                     await _port.BaseStream.WriteAsync(data, token).ConfigureAwait(false);
 }
                 catch (Exception ex) when(ex is not OperationCanceledException)
@@ -408,19 +409,21 @@ public sealed class SerialPortWorker : ISerialWorker
     }
 
     private bool TryParseRotatorFrame(
-    string frame,
-    out string normalized,
-    out string error)
+        string frame,
+        out string normalized,
+        out string error,
+        out bool homed)
     {
         normalized = string.Empty;
         error = string.Empty;
+        homed = false;
 
         frame = frame.Trim();
 
-        // Minimum valid size
-        if (frame.Length < 10)
+        // Exact frame length: # + node(1) + command(3) + digits(4) + terminator(1) = 10
+        if (frame.Length != 10)
         {
-            error = "Frame too short";
+            error = $"Invalid frame length {frame.Length}, expected 10";
             return false;
         }
 
@@ -438,26 +441,12 @@ public sealed class SerialPortWorker : ISerialWorker
         }
 
         // -------------------------------------------------
-        // TERMINATOR
-        // -------------------------------------------------
-
-        string terminator = frame[^1..];
-
-        if (!Rotator.Terminators.Any(t =>
-            t.Equals(terminator, StringComparison.OrdinalIgnoreCase)))
-        {
-            error = $"Invalid terminator '{terminator}'";
-            return false;
-        }
-
-        // -------------------------------------------------
         // NODE
         // -------------------------------------------------
 
         string node = frame.Substring(1, 1);
 
-        if (!node.Equals(Rotator.Node,
-            StringComparison.OrdinalIgnoreCase))
+        if (!node.Equals(Rotator.Node, StringComparison.OrdinalIgnoreCase))
         {
             _logger.LogWarning(
                 "ROTATOR: replacing invalid node '{Old}' with '{New}'",
@@ -474,8 +463,7 @@ public sealed class SerialPortWorker : ISerialWorker
         string command = frame.Substring(2, 3);
 
         if (!Rotator.Commands.Any(c =>
-            c.Equals(command,
-                StringComparison.OrdinalIgnoreCase)))
+            c.Equals(command, StringComparison.OrdinalIgnoreCase)))
         {
             error = $"Invalid command '{command}'";
             return false;
@@ -494,7 +482,29 @@ public sealed class SerialPortWorker : ISerialWorker
         }
 
         // -------------------------------------------------
-        // NORMALIZE
+        // TERMINATOR — must be R, r, W, or w at position 9
+        // R = Read command,  homed
+        // r = Read command,  not homed
+        // W = Write command, homed
+        // w = Write command, not homed
+        // -------------------------------------------------
+
+        string terminator = frame[9..];
+
+        bool isRead = terminator.Equals("R", StringComparison.OrdinalIgnoreCase);
+        bool isWrite = terminator.Equals("W", StringComparison.OrdinalIgnoreCase);
+
+        if (!isRead && !isWrite)
+        {
+            error = $"Invalid terminator '{terminator}' at position 9, expected R/r or W/w";
+            return false;
+        }
+
+        // Uppercase = homed, lowercase = not homed
+        homed = char.IsUpper(terminator[0]);
+
+        // -------------------------------------------------
+        // NORMALIZE — preserve terminator case (it carries state)
         // -------------------------------------------------
 
         normalized =
@@ -502,15 +512,21 @@ public sealed class SerialPortWorker : ISerialWorker
             $"{Rotator.Node.ToUpper()}" +
             $"{command.ToUpper()}" +
             $"{digits}" +
-            $"{terminator.ToUpper()}";
+            $"{terminator}";   // preserve original case — it encodes homed state
 
         return true;
     }
+
     private async Task ProcessRotatorFramesAsync(CancellationToken token)
     {
         while (!token.IsCancellationRequested)
         {
             var current = _lineBuffer.ToString();
+
+            _logger.LogDebug(
+                "ROTATOR: buffer ({Length} chars): '{Buffer}'",
+                current.Length,
+                current.Replace("\r", "\\r").Replace("\n", "\\n"));
 
             if (string.IsNullOrWhiteSpace(current))
                 return;
@@ -528,15 +544,13 @@ public sealed class SerialPortWorker : ISerialWorker
                     StringComparison.OrdinalIgnoreCase);
 
                 if (idx >= 0 && (start < 0 || idx < start))
-                {
                     start = idx;
-                }
             }
 
             if (start < 0)
             {
                 _logger.LogError(
-                    "ROTATOR: no valid header found. Discarding buffer: '{Buffer}'",
+                    "ROTATOR: no valid header found, discarding buffer: '{Buffer}'",
                     current.Replace("\r", "\\r").Replace("\n", "\\n"));
 
                 _lineBuffer.Clear();
@@ -546,7 +560,7 @@ public sealed class SerialPortWorker : ISerialWorker
             if (start > 0)
             {
                 _logger.LogWarning(
-                    "ROTATOR: discarding noise before frame: '{Noise}'",
+                    "ROTATOR: discarding noise before header: '{Noise}'",
                     current[..start].Replace("\r", "\\r").Replace("\n", "\\n"));
 
                 _lineBuffer.Remove(0, start);
@@ -554,38 +568,49 @@ public sealed class SerialPortWorker : ISerialWorker
             }
 
             // =========================================================
-            // 2. FIND TERMINATOR (back-to-front scan)
+            // 2. WAIT UNTIL WE HAVE A FULL 10-CHAR FRAME
+            //    Frame = header(1) + node(1) + command(3) + digits(4) + terminator(1)
             // =========================================================
 
-            int terminatorIndex = -1;
-
-            for (int i = current.Length - 1; i >= 0; i--)
-            {
-                char ch = current[i];
-
-                if (Rotator.Terminators.Contains(ch.ToString()))
-                {
-                    terminatorIndex = i;
-                    break;
-                }
-            }
-
-            if (terminatorIndex < 0)
+            if (current.Length < 10)
             {
                 _logger.LogDebug(
-                    "ROTATOR: waiting for terminator. Buffer: '{Buffer}'",
-                    current.Replace("\r", "\\r").Replace("\n", "\\n"));
-
+                    "ROTATOR: only {Length} chars in buffer, waiting for full 10-char frame",
+                    current.Length);
                 return;
             }
 
             // =========================================================
-            // 3. EXTRACT FRAME
+            // 3. EXTRACT EXACTLY 10 CHARACTERS
             // =========================================================
 
-            string frame = current[..(terminatorIndex + 1)];
+            string frame = current[..10];
 
-            int consumeUntil = terminatorIndex + 1;
+            // =========================================================
+            // 4. VALIDATE TERMINATOR IS R/r/W/w AT POSITION 9
+            //    If not, the frame is misaligned — discard one char and retry
+            // =========================================================
+
+            char terminatorChar = frame[9];
+
+            if (terminatorChar != 'R' && terminatorChar != 'r' &&
+                terminatorChar != 'W' && terminatorChar != 'w')
+            {
+                _logger.LogWarning(
+                    "ROTATOR: invalid terminator '{Char}' at position 9, " +
+                    "frame misaligned — discarding header and resyncing",
+                    terminatorChar);
+
+                // Discard the bad header byte and loop to resync
+                _lineBuffer.Remove(0, 1);
+                continue;
+            }
+
+            // =========================================================
+            // 5. CONSUME THE FRAME + ANY TRAILING CR/LF
+            // =========================================================
+
+            int consumeUntil = 10;
 
             while (consumeUntil < current.Length &&
                    (current[consumeUntil] == '\r' || current[consumeUntil] == '\n'))
@@ -595,35 +620,29 @@ public sealed class SerialPortWorker : ISerialWorker
 
             _lineBuffer.Remove(0, consumeUntil);
 
-            frame = frame.Trim();
-
-            if (string.IsNullOrWhiteSpace(frame))
-                return;
-
             // =========================================================
-            // 4. VALIDATE FRAME
+            // 6. VALIDATE AND PARSE
             // =========================================================
 
-            if (!TryParseRotatorFrame(
-                    frame,
-                    out var normalized,
-                    out var error))
+            if (!TryParseRotatorFrame(frame, out var normalized, out var error, out var homed))
             {
                 _logger.LogError(
                     "ROTATOR: discarding invalid frame '{Frame}': {Error}",
                     frame,
                     error);
 
-                return;
+                // Don't return — loop to process any remaining buffer data
+                continue;
             }
 
             // =========================================================
-            // 5. ACCEPTED FRAME
+            // 7. EMIT ACCEPTED FRAME
             // =========================================================
 
             _logger.LogDebug(
-                "ROTATOR: accepted frame '{Frame}'",
-                normalized);
+                "ROTATOR: accepted frame '{Frame}' | homed={Homed}",
+                normalized,
+                homed);
 
             var message = new SerialMessage
             {
@@ -636,6 +655,8 @@ public sealed class SerialPortWorker : ISerialWorker
             await _received.Writer
                 .WriteAsync(message, token)
                 .ConfigureAwait(false);
+
+            // Loop to handle any further complete frames in the buffer
         }
     }
 
