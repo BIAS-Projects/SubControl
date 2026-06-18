@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 
+
 namespace SubControlMAUI.Models
 {
     public static class Rotator
@@ -23,6 +24,10 @@ namespace SubControlMAUI.Models
         public static int BackwardLimit { get; set; } = 0;
 
         public static int ForwardLimit { get; set; } = 0;
+
+        public static string ReportedForwardLimit { get; set; } = "";
+
+        public static string ReportedBackwardLimit { get; set; } = "";
 
         private static double _encoderScalingFactor = 0.0879;
 
@@ -60,10 +65,22 @@ namespace SubControlMAUI.Models
 
         public static string EncoderLocationA { get; set; } = $"#AMRL0000R\r\n";
 
-        public static string GetFirmwareVersion { get; set; } = $"##AMRV0000R\r\n";
+        public static string GetFirmwareVersion { get; set; } = $"#AMRV0000R\r\n";
+
+        public static string FactoryReset { get; set; } = $"#AMFR0000W\r\n";
+
+        public static string MotorPositionResetToZero { get; set; } = $"#AMPR5000W\r\n";
+
+        public static string SetForwardLimitTo360 { get; set; } = $"#AMLF9095W\r\n";
+
+        public static string SetBackwardLimitTo360 { get; set; } = $"#AMLF0905W\r\n";
+
+        public static string GetForwardLimit { get; set; } = $"#AMRF0000R\r\n";
+
+        public static string GetBackwardLimit { get; set; } = $"#AMRB0000R\r\n";
 
 
-        public static int ConvertDegreesToCommandValue (int degrees)
+        public static string ConvertDegreesToCommandValue (int degrees)
         {
             //Command value = Degrees / Scale Factor of Encoder + 5000
             //Encode scale factor = 0.879
@@ -72,12 +89,8 @@ namespace SubControlMAUI.Models
             //180 / 0.0879 + 5000 = 7,047.78156996587 
 
 
-            if (degrees < 0 || degrees > 360)
-            {
-                return -1;
-            }
             var value = degrees / _encoderScalingFactor + 5000;
-            return (int)Math.Round(value);
+            return ((int)Math.Round(value)).ToString("D4");
         }
 
 
@@ -88,13 +101,12 @@ namespace SubControlMAUI.Models
             string command = "";
             if (IsPark)
             {
-                string minValueText = MinRotatorValue.ToString().PadLeft(4, '0');
-                command = prefix + minValueText + postfix;
+   
+                command = prefix + ConvertDegreesToCommandValue(MinRotatorValue) + postfix;
             }
             else
             {
-                string maxValueText = MaxRotatorValue.ToString().PadLeft(4, '0');
-                command = prefix + maxValueText + postfix;
+                command = prefix + ConvertDegreesToCommandValue(MaxRotatorValue) + postfix;
             }
             return command;
         }
@@ -112,8 +124,11 @@ namespace SubControlMAUI.Models
                 {
                     targetPosition = MinRotatorValue;
                 }
-                string targetPositionText = targetPosition.ToString().PadLeft(4, '0');
-                command = prefix + targetPositionText + postfix;
+              //  string targetPositionText = targetPosition.ToString().PadLeft(4, '0');
+
+                command = prefix + ConvertDegreesToCommandValue(targetPosition) + postfix;
+
+              //  command = prefix + targetPositionText + postfix;
             }
             else
             {
@@ -122,8 +137,10 @@ namespace SubControlMAUI.Models
                 {
                     targetPosition = MaxRotatorValue;
                 }
-                string targetPositionText = targetPosition.ToString().PadLeft(4, '0');
-                command = prefix + targetPositionText + postfix;
+                command = prefix + ConvertDegreesToCommandValue(targetPosition) + postfix;
+
+            //    string targetPositionText = targetPosition.ToString().PadLeft(4, '0');
+            //    command = prefix + targetPositionText + postfix;
             }
             return command;
         }
@@ -141,6 +158,29 @@ namespace SubControlMAUI.Models
             string speedText = Speed.ToString().PadLeft(4, '0');
             command = prefix + speedText + postfix;
             return command;
+        }
+
+
+        public static string ReturnCommandResponseAsDegrees(string response)
+        {
+
+                response = response.Trim();
+
+                if (response.Length < 10)
+                {
+                    return string.Empty;
+                }
+
+                if (!int.TryParse(response.Substring(5, 4), out int encoder))
+                {
+                    return string.Empty;
+                }
+
+                double degrees = (encoder - 5000) * 0.0879;
+                return Math.Round(degrees).ToString();
+
+            
+
         }
     }
 }

@@ -1,4 +1,5 @@
-﻿using CommunityToolkit.Mvvm.ComponentModel;
+﻿
+using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.Logging;
@@ -16,6 +17,7 @@ namespace SubControlMAUI.ViewModels
         private readonly ILogger<RotatorOptionsViewModel> _logger;
         private readonly ApplicationStateService _applicationStateService;
         private SQLiteService _sqliteService;
+        private readonly RotatorViewModel _rotatorViewModel;
 
         public List<int> RotatorValues { get; } = Enumerable.Range(0, 181).ToList();   // 0–180
         public List<int> AdjustmentValues { get; } = Enumerable.Range(1, 10).ToList(); // 1–10
@@ -24,7 +26,8 @@ namespace SubControlMAUI.ViewModels
             IMessenger messenger,
             ILogger<RotatorOptionsViewModel> logger,
             ApplicationStateService applicationStateService,
-            SQLiteService sqliteService)
+            SQLiteService sqliteService,
+            RotatorViewModel rotatorViewModel)
         {
             Title = "Rotator Options";
             _messenger = messenger;
@@ -37,6 +40,7 @@ namespace SubControlMAUI.ViewModels
             AdjustValue = Math.Clamp(Rotator.AdjustValue, 1, 10);
 
             UpdateStatus();
+            _rotatorViewModel = rotatorViewModel;
         }
 
         [ObservableProperty]
@@ -104,5 +108,104 @@ namespace SubControlMAUI.ViewModels
         {
             await Shell.Current.GoToAsync("..");
         }
+
+
+        [RelayCommand]
+        private async Task MoveRotatorForward()
+        {
+            try
+            {
+                IsBusy = true;
+                string result = await _rotatorViewModel.MoveRotatorForward();
+                if (String.IsNullOrEmpty(result))
+                {
+                    StatusText = "Rotator failed to respond to move forward command";
+                    return;
+                }
+                StatusText = "Rotator moving forward";
+            }
+            finally
+            { IsBusy = false; }
+
+        }
+
+        [RelayCommand]
+        private async Task MoveRotatorBackward()
+        {
+            try
+            {
+                IsBusy = true;
+                string result = await _rotatorViewModel.MoveRotatorBackward();
+                if (String.IsNullOrEmpty(result))
+                {
+                    StatusText = "Rotator failed to respond to move backward command";
+                    return;
+                }
+                StatusText = "Rotator moving backward";
+            }
+            finally
+            { IsBusy = false; }
+
+        }
+
+        [RelayCommand]
+        private async Task StopRotator()
+        {
+            try
+            {
+                IsBusy = true;
+                string result = await _rotatorViewModel.StopRotator();
+                if (String.IsNullOrEmpty(result))
+                {
+                    StatusText = "Rotator failed to respond to move stop command";
+                    return;
+                }
+                StatusText = "Rotator stopped";
+            }
+            finally
+            { IsBusy = false; }
+            
+
+        }
+
+        [RelayCommand]
+        private async Task GetRotatorLocation()
+        {
+            try
+            {
+                IsBusy = true;
+                string result = await _rotatorViewModel.GetRotatorLocation();
+                if (String.IsNullOrEmpty(result))
+                {
+                    StatusText = "Rotator failed to respond to location request";
+                    return;
+                }
+                StatusText = $"Current rotator location is {Rotator.ReturnCommandResponseAsDegrees(result)} degrees";
+            }
+            finally
+            { IsBusy = false; }
+
+        }
+
+
+        [RelayCommand]
+        private async Task RotatorPositionReset()
+        {
+            try
+            {
+                IsBusy = true;
+                string result = await _rotatorViewModel.RotatorPositionReset();
+                if (String.IsNullOrEmpty(result))
+                {
+                    StatusText = "Rotator failed to respond to set current location to zero command";
+                    return;
+                }
+                StatusText = "Current rotator location set to zero degrees";
+            }
+            finally
+            { IsBusy = false; }
+
+        }
+
     }
 }

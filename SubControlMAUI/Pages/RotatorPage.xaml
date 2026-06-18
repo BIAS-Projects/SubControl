@@ -67,6 +67,7 @@ Shell.NavBarIsVisible="False">
                        FontAttributes="Bold"
                        Margin="0,0,6,0" />
                 <GraphicsView Grid.Column="1"
+                              x:Name="GaugeView"
                               Drawable="{Binding GaugeDrawable}"
                               HeightRequest="180"
                               HorizontalOptions="Fill" />
@@ -87,7 +88,7 @@ Shell.NavBarIsVisible="False">
                         FontSize="20"
                         HeightRequest="80"
                         Command="{Binding AdjustBackwardCommand}"
-                        IsEnabled="{Binding IsNotBusy}"
+                        IsEnabled="{Binding CanNudgeBackward}"
                         BorderWidth="0" />
                 <Border Grid.Column="1"
                         StrokeThickness="2"
@@ -111,7 +112,7 @@ Shell.NavBarIsVisible="False">
                         FontSize="20"
                         HeightRequest="80"
                         Command="{Binding AdjustForwardCommand}"
-                        IsEnabled="{Binding IsNotBusy}"
+                        IsEnabled="{Binding CanNudgeForward}"
                         BorderWidth="0" />
             </Grid>
 
@@ -127,7 +128,7 @@ Shell.NavBarIsVisible="False">
                         ImageSource="{AppThemeBinding Light=light_park.png, Dark=dark_park.png}"
                         ContentLayout="Top, 4"
                         Command="{Binding ParkCommand}"
-                        IsEnabled="{Binding IsNotBusy}"/>
+                        IsEnabled="{Binding IsNotMinRotatorValue}"/>
                 <Button Grid.Column="1"
                         Text="STOP"
                         FontSize="20"
@@ -139,7 +140,7 @@ Shell.NavBarIsVisible="False">
                         FontSize="20"
                         HeightRequest="80"
                         Command="{Binding DeployCommand}"
-                        IsEnabled="{Binding IsNotBusy}"/>
+                        IsEnabled="{Binding IsNotMaxRotatorValue}"/>
             </Grid>
 
         </Grid>

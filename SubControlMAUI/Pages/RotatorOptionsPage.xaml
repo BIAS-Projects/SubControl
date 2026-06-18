@@ -83,6 +83,26 @@
                         SelectedItem="{Binding AdjustValue, Mode=TwoWay}" />
             </Grid>
 
+            <Button 
+                Text="Rotator Forward"
+                Command="{Binding MoveRotatorForwardCommand}"/>
+
+            <Button 
+                Text="Rotator Backwards"
+                Command="{Binding MoveRotatorBackwardCommand}"/>
+
+            <Button 
+                Text="Rotator Stop"
+                Command="{Binding StopRotatorCommand}"/>
+
+            <Button 
+                Text="Get Rotator Location"
+                Command="{Binding GetRotatorLocationCommand}"/>
+
+            <Button 
+                Text="Reset Current Position To Zero Degrees"
+                Command="{Binding RotatorPositionResetCommand}"/>
+
         </VerticalStackLayout>
 
         <!-- Save Button - disabled when min >= max -->

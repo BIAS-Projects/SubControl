@@ -13,6 +13,14 @@ public partial class RotatorPage : ContentPage
         _viewModel = viewModel;
 
         BindingContext = _viewModel;
+
+        _viewModel.RefreshGaugeView = () =>
+        {
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                GaugeView.Invalidate();
+            });
+        };
     }
 
     protected override void OnAppearing()
@@ -28,4 +36,6 @@ public partial class RotatorPage : ContentPage
 
         _viewModel.OnDisappearing();
     }
+
+
 }

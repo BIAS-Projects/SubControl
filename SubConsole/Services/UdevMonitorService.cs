@@ -189,24 +189,24 @@ namespace SubConsole.Services
         }
 
         public static bool checkLibudev()
-     {
-        try
         {
-            IntPtr handle = NativeLibrary.Load("libudev.so.1");
-            NativeLibrary.Free(handle);
-            return true;
+            try
+            {
+                IntPtr handle = NativeLibrary.Load("libudev.so.1");
+                NativeLibrary.Free(handle);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                return false;
+            }
         }
-        catch (Exception ex)
-        {
-            return false;
-        }
-     }
 
 
 
 
-private static string PtrToString(IntPtr ptr) =>
-            ptr == IntPtr.Zero ? "" : Marshal.PtrToStringAnsi(ptr) ?? "";
+        private static string PtrToString(IntPtr ptr) =>
+                    ptr == IntPtr.Zero ? "" : Marshal.PtrToStringAnsi(ptr) ?? "";
 
         [DllImport("libc", SetLastError = true)]
         private static extern int read(int fd, byte[] buffer, int count);

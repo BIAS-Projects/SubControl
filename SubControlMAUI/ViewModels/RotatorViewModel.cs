@@ -61,13 +61,16 @@ public partial class RotatorViewModel : BaseViewModel
 {
     // ── gauge ─────────────────────────────────────────────────────────────────
     public RotatorGaugeDrawable GaugeDrawable { get; } = new();
+    public Action? RefreshGaugeView { get; set; }
+
 
     private void RefreshGauge()
     {
         GaugeDrawable.ArmAngle = ArmAngle;
         GaugeDrawable.MinValue = MinRotatorValue;
         GaugeDrawable.MaxValue = MaxRotatorValue;
-        OnPropertyChanged(nameof(GaugeDrawable));
+        RefreshGaugeView?.Invoke();
+      //  OnPropertyChanged(nameof(GaugeDrawable));
     }
 
     // ── services ──────────────────────────────────────────────────────────────
@@ -75,6 +78,8 @@ public partial class RotatorViewModel : BaseViewModel
     private readonly IMessenger _messenger;
     private readonly TcpSocketService _tcp;
     private readonly IAlertService _alertService;
+
+    private int interCommandDelay = 500;
 
     /// <summary>
     /// Shared dispatcher for request/response and push-confirm operations.
@@ -181,9 +186,19 @@ public partial class RotatorViewModel : BaseViewModel
     [ObservableProperty] private string statusText = string.Empty;
 
     [ObservableProperty] private double armAngle;
+
+    [ObservableProperty] private bool isNotMinRotatorValue = false;
+
+    [ObservableProperty] private bool isNotMaxRotatorValue = false;
+
+    [ObservableProperty]
+    private bool canNudgeBackward = false;
+
+    [ObservableProperty]
+    private bool canNudgeForward = false;
     partial void OnArmAngleChanged(double value)
     {
-        Math.Clamp(value, 0, 180);
+    //    Math.Clamp(value, 0, 180);
         RefreshGauge();
     }
 
@@ -223,19 +238,35 @@ public partial class RotatorViewModel : BaseViewModel
             Rotator.GenerateParkOrDeployCommandString(false),
             data => MatchesCommandCode(data, "MML"));
 
+    //[RelayCommand]
+    //private Task Forward()
+    //    => RunCommandAsync(
+    //        "Driving rotator forward...", "Rotator forward command confirmed", "Forward rotator command failed",
+    //        Rotator.PanMotorAForward,
+    //        data => MatchesCommandCode(data, "MMF"));
+
+    //[RelayCommand]
+    //private Task Backward()
+    //    => RunCommandAsync(
+    //        "Driving rotator backward...", "Rotator backward command confirmed", "Backward rotator command failed",
+    //        Rotator.PanMotorABackward,
+    //        data => MatchesCommandCode(data, "MMB"));
+
     [RelayCommand]
     private Task Forward()
-        => RunCommandAsync(
-            "Driving rotator forward...", "Rotator forward command confirmed", "Forward rotator command failed",
-            Rotator.PanMotorAForward,
-            data => MatchesCommandCode(data, "MMF"));
+    => RunCommandAsync(
+        "Driving rotator forward...", "Rotator forward command confirmed", "Forward rotator command failed",
+        Rotator.GenerateParkOrDeployCommandString(false),
+        data => MatchesCommandCode(data, "MML"));
 
     [RelayCommand]
     private Task Backward()
         => RunCommandAsync(
             "Driving rotator backward...", "Rotator backward command confirmed", "Backward rotator command failed",
-            Rotator.PanMotorABackward,
-            data => MatchesCommandCode(data, "MMB"));
+            Rotator.GenerateParkOrDeployCommandString(true),
+            data => MatchesCommandCode(data, "MML"));
+
+
 
     [RelayCommand]
     private Task Stop()
@@ -409,18 +440,40 @@ public partial class RotatorViewModel : BaseViewModel
             if (response.Length < 10) return;
             if (!response.Substring(2, 3).Equals("MRL", StringComparison.OrdinalIgnoreCase)) return;
 
-            if (!int.TryParse(response.Substring(5, 4), out int encoder))
+            if (!double.TryParse(response.Substring(5, 4), out double encoder))
             {
                 StatusText = "Rotator reported a non-numeric position";
                 return;
             }
 
-            double degrees = Math.Clamp((encoder - 5000) * 0.0879, 0, 180);
-            if (degrees > MaxRotatorValue || encoder < MinRotatorValue)
+            double degrees = (encoder - 5000) * 0.0879;
+            double roundedDegrees = Math.Round(degrees);
+            IsNotMinRotatorValue = roundedDegrees > MinRotatorValue;
+            IsNotMaxRotatorValue = roundedDegrees < MaxRotatorValue;
+
+            CanNudgeBackward = (degrees - AdjustValue) >= MinRotatorValue;
+            CanNudgeForward = (degrees + AdjustValue) <= MaxRotatorValue;
+
+            //if (!(degrees <= MinRotatorValue))
+            //{
+            //    IsNotMinRotatorValue = true;
+            //}
+            //else
+            //{
+            //    IsNotMinRotatorValue = false;
+            //}
+            //if (!(degrees >= MaxRotatorValue))
+            //{
+            //    IsNotMaxRotatorValue = true;
+            //}
+            //else
+            //{
+            //    IsNotMaxRotatorValue = false;
+            //}
+            if (degrees > MaxRotatorValue || degrees < MinRotatorValue)
             {
-                StatusText = $"Rotator position reported as {encoder} — " +
+                StatusText = $"Rotator position reported as {degrees} — " +
                              $"min {MinRotatorValue}, max {MaxRotatorValue}";
-                return;
             }
 
             OnArmAngleChanged(degrees);
@@ -469,6 +522,7 @@ public partial class RotatorViewModel : BaseViewModel
 
     private async Task<bool> EnableRotatorInternalAsync()
     {
+
         var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
             Feature.RotatorName, "WRITE TEXT",
             Rotator.GenerateSetSpeedCommandString(),
@@ -481,6 +535,8 @@ public partial class RotatorViewModel : BaseViewModel
             SetStatus("Rotator failed to respond to set speed command");
             return false;
         }
+
+        await Task.Delay(interCommandDelay);
 
         var mrvResponse = await _dispatcher.SendAndWaitForPushAsync(
             Feature.RotatorName, "WRITE TEXT",
@@ -495,13 +551,258 @@ public partial class RotatorViewModel : BaseViewModel
             return false;
         }
 
+
+
         // Extract version from e.g. "#AMRVJ1.0r" — chars 5-8
         if (mrvResponse.Length >= 9)
         {
             string version = mrvResponse.Substring(5, 4).Trim();
-            SetStatus($"Rotator ready — firmware {version}");
+            Rotator.Version = version;
         }
+
+        await Task.Delay(interCommandDelay);
+
+        var mfrResponse = await _dispatcher.SendAndWaitForPushAsync(
+            Feature.RotatorName, "WRITE TEXT",
+            Rotator.FactoryReset,
+            Feature.RotatorName,
+            r => r.Contains("MFR"),
+            _commandTimeout);
+
+
+
+        if (mfrResponse is null)
+        {
+            SetStatus("Rotator failed to respond to factory reset request");
+            return false;
+        }
+
+        await Task.Delay(interCommandDelay);
+
+        var mlfResponse = await _dispatcher.SendAndWaitForPushAsync(
+            Feature.RotatorName, "WRITE TEXT",
+            Rotator.SetForwardLimitTo360,
+            Feature.RotatorName,
+            r => r.Contains("MLF"),
+            _commandTimeout);
+
+        if (mlfResponse is null)
+        {
+            SetStatus("Rotator failed to respond to set forward limit request");
+            return false;
+        }
+
+        await Task.Delay(interCommandDelay);
+
+        var mrfResponse = await _dispatcher.SendAndWaitForPushAsync(
+            Feature.RotatorName, "WRITE TEXT",
+            Rotator.GetForwardLimit,
+            Feature.RotatorName,
+            r => r.Contains("MRF"),
+            _commandTimeout);
+
+        if (mrfResponse is null)
+        {
+            SetStatus("Rotator failed to respond to report forward limit request");
+            return false;
+        }
+
+        await Task.Delay(interCommandDelay);
+
+        Rotator.ReportedForwardLimit = Rotator.ReturnCommandResponseAsDegrees(mrfResponse);
+
+        var mrbResponse = await _dispatcher.SendAndWaitForPushAsync(
+            Feature.RotatorName, "WRITE TEXT",
+            Rotator.GetBackwardLimit,
+            Feature.RotatorName,
+            r => r.Contains("MRB"),
+            _commandTimeout);
+
+        if (mrbResponse is null)
+        {
+            SetStatus("Rotator failed to respond to report backward limit request");
+            return false;
+        }
+
+        Rotator.ReportedBackwardLimit = Rotator.ReturnCommandResponseAsDegrees(mrbResponse);
 
         return true;
     }
+
+    public async Task<string> MoveRotatorForward()
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await MoveRotatorForwardInternal();
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+           
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> MoveRotatorForwardInternal()
+    {
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.PanMotorAForward,
+    Feature.RotatorName,
+    r => r.Contains("MMF"),
+    _commandTimeout);
+
+     return mspResponse!;
+    }
+
+    public async Task<string> MoveRotatorBackward()
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await MoveRotatorBackwardInternal();
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> MoveRotatorBackwardInternal()
+    {
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.PanMotorABackward,
+    Feature.RotatorName,
+    r => r.Contains("MMB"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+
+    public async Task<string> StopRotator()
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await StopRotatorInternal();
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> StopRotatorInternal()
+    {
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.StopPanMotorA,
+    Feature.RotatorName,
+    r => r.Contains("MST"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+    public async Task<string> GetRotatorLocation()
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await GetRotatorLocationInternal();
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> GetRotatorLocationInternal()
+    {
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.EncoderLocationA,
+    Feature.RotatorName,
+    r => r.Contains("MRL"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+    public async Task<string> RotatorPositionReset()
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await RotatorPositionResetInternal();
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> RotatorPositionResetInternal()
+    {
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.MotorPositionResetToZero,
+    Feature.RotatorName,
+    r => r.Contains("MPR"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
 }
