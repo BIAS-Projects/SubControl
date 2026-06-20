@@ -227,14 +227,14 @@ public partial class RotatorViewModel : BaseViewModel
     [RelayCommand]
     private Task Park()
         => RunCommandAsync(
-            "Parking rotator...", "Rotator parking...", "Park rotator command failed",
+            "Parking rotator...", "Rotator park command accepted", "Park rotator command failed",
             Rotator.GenerateParkOrDeployCommandString(true),
             data => MatchesCommandCode(data, "MML"));
 
     [RelayCommand]
     private Task Deploy()
         => RunCommandAsync(
-            "Deploying rotator...", "Rotator deploying...", "Deploy rotator command failed",
+            "Deploying rotator...", "Rotator deploy command accepted", "Deploy rotator command failed",
             Rotator.GenerateParkOrDeployCommandString(false),
             data => MatchesCommandCode(data, "MML"));
 
@@ -255,14 +255,14 @@ public partial class RotatorViewModel : BaseViewModel
     [RelayCommand]
     private Task Forward()
     => RunCommandAsync(
-        "Driving rotator forward...", "Rotator forward command confirmed", "Forward rotator command failed",
+        "Driving rotator forward...", "Rotator forward command accepted", "Forward rotator command failed",
         Rotator.GenerateParkOrDeployCommandString(false),
         data => MatchesCommandCode(data, "MML"));
 
     [RelayCommand]
     private Task Backward()
         => RunCommandAsync(
-            "Driving rotator backward...", "Rotator backward command confirmed", "Backward rotator command failed",
+            "Driving rotator backward...", "Rotator backward command accepted", "Backward rotator command failed",
             Rotator.GenerateParkOrDeployCommandString(true),
             data => MatchesCommandCode(data, "MML"));
 
@@ -271,21 +271,21 @@ public partial class RotatorViewModel : BaseViewModel
     [RelayCommand]
     private Task Stop()
         => RunCommandAsync(
-            "Stopping rotator...", "Rotator stop command confirmed", "Stop rotator command failed",
+            "Stopping rotator...", "Rotator stop command accepted", "Stop rotator command failed",
             Rotator.StopPanMotorA,
             data => MatchesCommandCode(data, "MST"));
 
     [RelayCommand]
     private Task AdjustBackward()
         => RunCommandAsync(
-            "Adjusting rotator backwards...", "Rotator moving...", "Adjust backward command failed",
+            "Adjusting rotator backwards...", "Rotator backwards adjust command accepted", "Adjust backward command failed",
             Rotator.GenerateNudgeCommandString(true, ArmAngle),
             data => MatchesCommandCode(data, "MML"));
 
     [RelayCommand]
     private Task AdjustForward()
         => RunCommandAsync(
-            "Adjusting rotator forwards...", "Rotator moving...", "Adjust forward command failed",
+            "Adjusting rotator forwards...", "Rotator forwards adjust command accepted", "Adjust forward command failed",
             Rotator.GenerateNudgeCommandString(false, ArmAngle),
             data => MatchesCommandCode(data, "MML"));
 
@@ -318,9 +318,17 @@ public partial class RotatorViewModel : BaseViewModel
             SetStatus(pendingMessage);
 
             bool ok = await _dispatcher.SendAndWaitForPushAsync(
-                Feature.RotatorName, "WRITE TEXT", payload,
-                Feature.RotatorName, confirmPredicate,
-                _commandTimeout) is null;
+    Feature.RotatorName,
+    "WRITE TEXT",
+    payload,
+    Feature.RotatorName,
+    confirmPredicate,
+    _commandTimeout) is not null;
+
+            //bool ok = await _dispatcher.SendAndWaitForPushAsync(
+            //    Feature.RotatorName, "WRITE TEXT", payload,
+            //    Feature.RotatorName, confirmPredicate,
+            //    _commandTimeout) is null;
 
             SetStatus(ok ? successMessage : failureMessage);
         }
@@ -800,6 +808,718 @@ public partial class RotatorViewModel : BaseViewModel
     Rotator.MotorPositionResetToZero,
     Feature.RotatorName,
     r => r.Contains("MPR"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+    public async Task<string> SetMotorDriveCurrent(int percentage)
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await SetMotorDriveCurrentInternal(percentage);
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> SetMotorDriveCurrentInternal(int percentage)
+    {
+        if(percentage < 0 || percentage > 100)
+        {
+            return String.Empty;
+        }
+
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.GenerateSetMotorCurrentCommand(percentage),
+    Feature.RotatorName,
+    r => r.Contains("MMC"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+    public async Task<string> SetMotorSpeed(int speed)
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await SetMotorSpeedInternal(speed);
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> SetMotorSpeedInternal(int speed)
+    {
+        if (speed < 1 || speed > 40)
+        {
+            return String.Empty;
+        }
+
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.GenerateMotorSpeedCommand(speed),
+    Feature.RotatorName,
+    r => r.Contains("MSP"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+
+
+    public async Task<string> SetMotorLimit(bool isBackwardLimit, int limitInDegrees)
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await SetMotorLimitInternal(isBackwardLimit, limitInDegrees);
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> SetMotorLimitInternal(bool isBackwardLimit, int limitInDegrees)
+    {
+        if (limitInDegrees < -360 || limitInDegrees > 360)
+        {
+            return String.Empty;
+        }
+
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.GenerateMotorLimitCommand(isBackwardLimit, limitInDegrees),
+    Feature.RotatorName,
+    r => r.Contains("ML"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+
+
+    public async Task<string> SetMotorBrake(bool brakeOn)
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await SetMotorBrakeInternal(brakeOn);
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> SetMotorBrakeInternal(bool brakeOn)
+    {
+
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.GenerateMotorBrakeCommand(brakeOn),
+    Feature.RotatorName,
+    r => r.Contains("MB"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+
+
+    public async Task<string> SetMotorBrakePower(int percentage)
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await SetMotorBrakePowerInternal(percentage);
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> SetMotorBrakePowerInternal(int percentage)
+    {
+        if (percentage < 0 || percentage > 100)
+        {
+            return String.Empty;
+        }
+
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.GenerateSetMotorBrakePowerCommand(percentage),
+    Feature.RotatorName,
+    r => r.Contains("MBP"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+
+    public async Task<string> WriteEepromRegister(string data)
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await WriteEepromRegisterInternal(data);
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> WriteEepromRegisterInternal(string data)
+    {
+
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.GenerateWriteEepromRegisterCommand(data),
+    Feature.RotatorName,
+    r => r.Contains("MEE"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+
+    public async Task<string> SetMotorStepType (int stepType)
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await SetMotorStepTypeInternal(stepType);
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> SetMotorStepTypeInternal(int stepType)
+    {
+
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.GenerateSetMotorStepTypeCommand(stepType),
+    Feature.RotatorName,
+    r => r.Contains("MMS"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+    public async Task<string> RestoreFactoryDefaults()
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await RestoreFactoryDefaultsInternal();
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> RestoreFactoryDefaultsInternal()
+    {
+
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.FactoryReset,
+    Feature.RotatorName,
+    r => r.Contains("MFR"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+
+    public async Task<string> GetSpeedSetting()
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await GetSpeedSettingInternal();
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> GetSpeedSettingInternal()
+    {
+
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.GetSpeedSetting,
+    Feature.RotatorName,
+    r => r.Contains("MRS"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+
+    public async Task<string> GetBackwardsLimit()
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await GetBackwardsLimitInternal();
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> GetBackwardsLimitInternal()
+    {
+
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.GetBackwardLimit,
+    Feature.RotatorName,
+    r => r.Contains("MRB"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+    public async Task<string> GetForwardsLimit()
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await GetForwardsLimitInternal();
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> GetForwardsLimitInternal()
+    {
+
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.GetForwardLimit,
+    Feature.RotatorName,
+    r => r.Contains("MRF"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+    public async Task<string> GetBrakeSetting()
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await GetBrakeSettingInternal();
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> GetBrakeSettingInternal()
+    {
+
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.GetBrakeSetting,
+    Feature.RotatorName,
+    r => r.Contains("MRK"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+    public async Task<string> GetBrakePower()
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await GetBrakePowerInternal();
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> GetBrakePowerInternal()
+    {
+
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.GetBrakePower,
+    Feature.RotatorName,
+    r => r.Contains("MRP"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+
+
+    public async Task<string> GetFirmwareVersion()
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await GetFirmwareVersionInternal();
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> GetFirmwareVersionInternal()
+    {
+
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.GetFirmwareVersion,
+    Feature.RotatorName,
+    r => r.Contains("MRV"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+    public async Task<string> ReadEepromLocation(int location)
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await ReadEepromLocationInternal(location);
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> ReadEepromLocationInternal(int location)
+    {
+
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.GenerateReadEepromLocationCommand(location),
+    Feature.RotatorName,
+    r => r.Contains("MRE"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+    public async Task<string> ReadRAMLocation(int location)
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await ReadRAMLocationInternal(location);
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> ReadRAMLocationInternal(int location)
+    {
+
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.GenerateReadEepromLocationCommand(location),
+    Feature.RotatorName,
+    r => r.Contains("MRR"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+    public async Task<string> GetMotorDriveCurrent()
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await GetMotorDriveCurrentInternal();
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> GetMotorDriveCurrentInternal()
+    {
+
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.GetMotorDriveCurrent,
+    Feature.RotatorName,
+    r => r.Contains("MRC"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+    public async Task<string> GetMotorStepType()
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await GetMotorStepTypeInternal();
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> GetMotorStepTypeInternal()
+    {
+
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.GetMotorStepType,
+    Feature.RotatorName,
+    r => r.Contains("MRM"),
+    _commandTimeout);
+
+        return mspResponse!;
+    }
+
+    public async Task<string> GetMotorTemp()
+    {
+        if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+        {
+            return String.Empty;
+        }
+        try
+        {
+            string result = await GetMotorTempInternal();
+            await Task.Delay(interCommandDelay);
+            if (String.IsNullOrEmpty(result))
+            {
+                return String.Empty;
+            }
+
+            return result;
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task<string> GetMotorTempInternal()
+    {
+
+        var mspResponse = await _dispatcher.SendAndWaitForPushAsync(
+    Feature.RotatorName, "WRITE TEXT",
+    Rotator.GetMotorTemp,
+    Feature.RotatorName,
+    r => r.Contains("TMP"),
     _commandTimeout);
 
         return mspResponse!;

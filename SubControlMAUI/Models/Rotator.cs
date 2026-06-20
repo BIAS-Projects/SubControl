@@ -1,7 +1,11 @@
 ﻿
+
+
+
 using System;
 using System.Collections.Generic;
 using System.Text;
+
 
 
 namespace SubControlMAUI.Models
@@ -69,6 +73,9 @@ namespace SubControlMAUI.Models
 
         public static string FactoryReset { get; set; } = $"#AMFR0000W\r\n";
 
+        public static string BrakeOn { get; set; } = $"#AMBS0000W\r\n";
+
+        public static string BrakeOff { get; set; } = $"#AMBR0000W\r\n";
         public static string MotorPositionResetToZero { get; set; } = $"#AMPR5000W\r\n";
 
         public static string SetForwardLimitTo360 { get; set; } = $"#AMLF9095W\r\n";
@@ -79,6 +86,17 @@ namespace SubControlMAUI.Models
 
         public static string GetBackwardLimit { get; set; } = $"#AMRB0000R\r\n";
 
+        public static string GetSpeedSetting { get; set; } = $"#AMRS0000R\r\n";
+
+        public static string GetBrakeSetting { get; set; } = $"#AMRK0000R\r\n";
+
+        public static string GetBrakePower { get; set; } = $"#AMRP0000R\r\n";
+
+        public static string GetMotorDriveCurrent { get; set; } = $"#AMRC0000R\r\n";
+
+        public static string GetMotorStepType { get; set; } = $"#AMRM0000R\r\n";
+
+        public static string GetMotorTemp { get; set; } = $"#ATMP0000R\r\n";
 
         public static string ConvertDegreesToCommandValue (int degrees)
         {
@@ -182,5 +200,169 @@ namespace SubControlMAUI.Models
             
 
         }
+
+        public static string GenerateSetMotorCurrentCommand(int percentage)
+        {
+            if (percentage > 0 || percentage < 100)
+            {
+                return string.Empty;
+            }
+            string prefix = $"#AMMC";
+            string postfix = $"W\\r\\n";
+            string command = percentage.ToString("D4");
+            command = prefix + command + postfix;
+            return command;
+
+
+        }
+
+        public static string GenerateMotorSpeedCommand(int speed)
+        {
+            if (speed > 1 || speed < 40)
+            {
+                return string.Empty;
+            }
+            string prefix = $"#AMSP";
+            string postfix = $"W\\r\\n";
+            string command = speed.ToString("D4");
+            command = prefix + command + postfix;
+            return command;
+
+
+        }
+
+        public static string GenerateMotorLimitCommand(bool isBackwardLimit, int limitInDegrees)
+        {
+            if (limitInDegrees < -360 || limitInDegrees > 360)
+            {
+                return String.Empty;
+            }
+            string prefix = $"#AMLF";
+            if (isBackwardLimit)
+            {
+                prefix = $"#AMLB";
+            }
+
+
+            string postfix = $"W\\r\\n";
+            string command = ConvertDegreesToCommandValue(limitInDegrees);
+            command = prefix + command + postfix;
+            return command;
+
+
+        }
+
+        public static string GenerateMotorBrakeCommand(bool brakeOn)
+        {
+            if(brakeOn)
+            {
+                return Rotator.BrakeOn;
+            }
+            else
+            {
+                return Rotator.BrakeOff;
+            }
+
+
+        }
+
+        public static string GenerateSetMotorBrakePowerCommand(int percentage)
+        {
+            if (percentage > 0 || percentage < 100)
+            {
+                return string.Empty;
+            }
+            string prefix = $"#AMBP";
+            string postfix = $"W\\r\\n";
+            string command = percentage.ToString("D4");
+            command = prefix + command + postfix;
+            return command;
+
+
+        }
+
+
+        public static string GenerateWriteEepromRegisterCommand(string data)
+        {
+
+            if(data.Length != 4)
+            {
+                return String.Empty;
+            }
+
+            string prefix = $"#AMEE";
+            string postfix = $"W\\r\\n";
+            string command = prefix + data + postfix;
+            return command;
+
+
+        }
+
+        public static string GenerateSetMotorStepTypeCommand(int stepType)
+        {
+            //step types as follows: Wave - 0, Full - 1,  Half - 2, Sine - 3.The default setting is sine.
+
+            if (stepType < 0 || stepType > 3)
+            {
+                return String.Empty;
+            }
+
+            string prefix = $"#AMMS";
+            string postfix = $"W\\r\\n";
+            string command = stepType.ToString("D4");
+            command = prefix + command + postfix;
+            return command;
+
+
+        }
+
+
+//        Useful MRE Addresses
+//The MRE command reads back a byte from the register address(0 – 255) indicated in the command’s data
+//bytes.These include the program variables.This can be useful in diagnostics.All bytes of 31 and below
+//are Special Function Registers, as are the bytes 128 – 159. EEPROM bytes of interest include:
+//DEVICEADDRESS at address 001
+//MOTORSPEED setting at address 002.
+//FLAGS1 at address 011. The MODEFLAG in bit 0 selects RS232 or RS485 communication protocol (1 =
+//RS485). The BRAKEFLAG in pit 1 sets the braking on(1) and off(0).
+//COMMANDRECORDS at address 016 – 239. 7 bytes for each record are stored in a FIFO arrangement.
+//It stores 32 records of the most recent ‘W’ commands, starting at the COMMANDPOINTER and wrapping
+//around.
+//COMMANDPOINTER at address 0240 points to the beginning of the next 7 byte stored command record.
+//See COMMANDRECORDS
+
+        public static string GenerateReadEepromLocationCommand(int location)
+        {
+
+            if (location < 0 || location > 255)
+            {
+                return String.Empty;
+            }
+
+            string prefix = $"#AMRE";
+            string postfix = $"W\\r\\n";
+            string command = prefix + location.ToString("D4") + postfix;
+            return command;
+
+
+        }
+
+
+        public static string GenerateReadRAMLocationCommand(int location)
+        {
+
+            if (location < 0 || location > 9999)
+            {
+                return String.Empty;
+            }
+
+            string prefix = $"#AMRR";
+            string postfix = $"W\\r\\n";
+            string command = prefix + location.ToString("D4") + postfix;
+            return command;
+
+
+        }
+
     }
 }

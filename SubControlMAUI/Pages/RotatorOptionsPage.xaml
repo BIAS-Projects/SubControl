@@ -7,7 +7,7 @@
              Title="{Binding Title}"
              Shell.NavBarIsVisible="False">
     <Grid Padding="10"
-          RowDefinitions="Auto,Auto,Auto,*,Auto"
+          RowDefinitions="Auto,Auto,*,Auto"
           IsEnabled="{Binding IsNotBusy}">
 
 
@@ -48,62 +48,217 @@
         </Label>
 
         <!-- Pickers Section -->
-        <VerticalStackLayout Grid.Row="2" Spacing="12" Margin="0,10,0,10">
 
-            <!-- Minimum Rotator Value -->
-            <Grid ColumnDefinitions="*,*">
-                <Label Text="Minimum Rotator Value"
+        <ScrollView Grid.Row="2">
+            <!--<VerticalStackLayout Grid.Row="2" Spacing="12" Margin="0,10,0,10">-->
+            <VerticalStackLayout Spacing="12" Margin="0,10,0,10">
+
+                <!-- Minimum Rotator Value -->
+                <Grid ColumnDefinitions="*,*">
+                    <Label Text="Minimum Rotator Value"
                        VerticalOptions="Center"
                        FontAttributes="Bold" />
-                <Picker Grid.Column="1"
+                    <Picker Grid.Column="1"
                         Title="Select Min"
                         ItemsSource="{Binding RotatorValues}"
                         SelectedItem="{Binding MinRotatorValue, Mode=TwoWay}" />
-            </Grid>
+                </Grid>
 
-            <!-- Maximum Rotator Value -->
-            <Grid ColumnDefinitions="*,*">
-                <Label Text="Maximum Rotator Value"
+                <!-- Maximum Rotator Value -->
+                <Grid ColumnDefinitions="*,*">
+                    <Label Text="Maximum Rotator Value"
                        VerticalOptions="Center"
                        FontAttributes="Bold" />
-                <Picker Grid.Column="1"
+                    <Picker Grid.Column="1"
                         Title="Select Max"
                         ItemsSource="{Binding RotatorValues}"
                         SelectedItem="{Binding MaxRotatorValue, Mode=TwoWay}" />
-            </Grid>
+                </Grid>
 
-            <!-- Adjustment Value -->
-            <Grid ColumnDefinitions="*,*">
-                <Label Text="Adjustment Value"
+                <!-- Adjustment Value -->
+                <Grid ColumnDefinitions="*,*">
+                    <Label Text="Adjustment Value"
                        VerticalOptions="Center"
                        FontAttributes="Bold" />
-                <Picker Grid.Column="1"
+                    <Picker Grid.Column="1"
                         Title="Select Adjustment"
                         ItemsSource="{Binding AdjustmentValues}"
                         SelectedItem="{Binding AdjustValue, Mode=TwoWay}" />
-            </Grid>
+                </Grid>
 
-            <Button 
+                <Button 
                 Text="Rotator Forward"
                 Command="{Binding MoveRotatorForwardCommand}"/>
 
-            <Button 
+                <Button 
                 Text="Rotator Backwards"
                 Command="{Binding MoveRotatorBackwardCommand}"/>
 
-            <Button 
+                <Button 
                 Text="Rotator Stop"
                 Command="{Binding StopRotatorCommand}"/>
 
-            <Button 
+                <Button 
+                Text="Get Rotator Settings"
+                Command="{Binding GetRotatorSettingsCommand}"/>
+
+                <Button 
                 Text="Get Rotator Location"
                 Command="{Binding GetRotatorLocationCommand}"/>
 
-            <Button 
+                <Button 
                 Text="Reset Current Position To Zero Degrees"
                 Command="{Binding RotatorPositionResetCommand}"/>
 
-        </VerticalStackLayout>
+                <!-- DriveCurrent -->
+                <Grid ColumnDefinitions="*,*">
+                  <Button 
+                  Margin="5"
+                Text="Set Rotator Drive Current"
+                Command="{Binding SetRotatorDriveCurrentCommand}"/>
+                    <Picker Grid.Column="1"
+                        Margin="5"
+                        Title="Current Values"
+                        ItemsSource="{Binding DriveCurrentValues}"
+                        SelectedItem="{Binding DriveCurrentValue, Mode=TwoWay}" />
+                </Grid>
+
+                <!-- DriveCurrent -->
+                <Grid ColumnDefinitions="*,*">
+                    <Button 
+                    Margin="5"
+                Text="Set Rotator Drive Speed"
+                Command="{Binding SetRotatorSpeedCommand}"/>
+                    <Picker Grid.Column="1"
+                        Margin="5"
+                        Title="Speed Values"
+                        ItemsSource="{Binding RotatorSpeeds}"
+                        SelectedItem="{Binding RotatorSpeed, Mode=TwoWay}" />
+                </Grid>
+
+                <!-- Forward Limit -->
+                <Grid ColumnDefinitions="*,*">
+                    <Button 
+                Margin="5"
+            Text="Set Forward Rotator Limit"
+            Command="{Binding SetRotatorForwardLimitCommand}"/>
+                    <Picker Grid.Column="1"
+                    Margin="5"
+                    Title="Degree Values"
+                    ItemsSource="{Binding MovementLimits}"
+                    SelectedItem="{Binding ForwardLimit, Mode=TwoWay}" />
+                </Grid>
+
+                <!-- Backward Limit -->
+                <Grid ColumnDefinitions="*,*">
+                    <Button 
+                Margin="5"
+            Text="Set Backward Rotator Limit"
+            Command="{Binding SetRotatorBackwardLimitCommand}"/>
+                    <Picker Grid.Column="1"
+                    Margin="5"
+                    Title="Degree Values"
+                    ItemsSource="{Binding MovementLimits}"
+                    SelectedItem="{Binding BackwardLimit, Mode=TwoWay}" />
+                </Grid>
+
+
+                <!-- Brake Settings -->
+                <Grid ColumnDefinitions="*,*">
+                    <Button 
+                        Grid.Column="0"
+                Margin="5"
+            Text="Turn On Rotator Brake"
+            Command="{Binding TurnOnBrakeCommand}"/>
+                    <Button 
+                     Grid.Column="1"
+                Margin="5"
+            Text="Turn Off Rotator Brake"
+            Command="{Binding TurnOffBrakeCommand}"/>
+                </Grid>
+
+
+                <!-- Brake Power -->
+                <Grid ColumnDefinitions="*,*">
+                    <Button 
+                Margin="5"
+            Text="Set Brake Power"
+            Command="{Binding SetBrakePowerCommand}"/>
+                    <Picker Grid.Column="1"
+                    Margin="5"
+                    Title="Brake Power"
+                    ItemsSource="{Binding BrakePowerValues}"
+                    SelectedItem="{Binding BrakePower, Mode=TwoWay}" />
+                </Grid>
+
+
+                <!-- Step Type -->
+                <Grid ColumnDefinitions="*,*">
+                    <Button 
+                Margin="5"
+            Text="Set Rotator Step Type"
+            Command="{Binding SetBrakePowerCommand}"/>
+                    <Picker Grid.Column="1"
+                    Margin="5"
+                    Title="Step Type"
+                    ItemsSource="{Binding AvailableRotatorSteps}"
+                    SelectedItem="{Binding RotatorStep, Mode=TwoWay}" />
+                </Grid>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                <!-- Reset Factory Defaults -->
+                <Button 
+                Text="Restore Factory Defaults"
+                Command="{Binding RestoreFactoryDefaultsCommand}"/>
+
+
+
+                <!-- Read EEPROM -->
+                <Grid ColumnDefinitions="*,*">
+                    <Button 
+                Margin="5"
+            Text="Read EEPROM Data From Selected Address"
+            Command="{Binding GetDataFromEepromLocationCommand}"/>
+                    <Picker Grid.Column="1"
+                    Margin="5"
+                    Title="EEPROM Address"
+                    ItemsSource="{Binding EepromAddresses}"
+                    SelectedItem="{Binding EepromReadAddress, Mode=TwoWay}" />
+                </Grid>
+
+
+                <!-- EEPROM write -->
+                <Grid ColumnDefinitions="*,*">
+                    <Button 
+                Margin="5"
+            Text="Write Data To EEPROM Address Last Read Rrom (MRE)"
+            Command="{Binding WriteEepromRegister}"/>
+                    <Entry Grid.Column="1"
+       Margin="5"
+       Text="{Binding EepromData, Mode=TwoWay}" />
+                </Grid>
+
+                
+                
+
+            </VerticalStackLayout>
+        </ScrollView>
 
         <!-- Save Button - disabled when min >= max -->
         <ImageButton Grid.Row="4"
