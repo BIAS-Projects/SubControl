@@ -70,6 +70,11 @@ namespace SubControlMAUI.Model
         [Required]
         public int AdjustValue { get; set; } = 1;
 
+        [Required]
+        public string PiUserName { get; set; } = "pi";
+
+        [Required]
+        public string PiPassword { get; set; } = "1234";
 
     }
 }

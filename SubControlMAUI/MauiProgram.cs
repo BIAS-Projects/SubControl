@@ -1,4 +1,5 @@
-﻿using CommunityToolkit.Maui;
+﻿
+using CommunityToolkit.Maui;
 using CommunityToolkit.Maui.Storage;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.Logging;
@@ -89,7 +90,13 @@ namespace SubControlMAUI
             builder.Services.AddSingleton<VideoOptionsPage>();
             builder.Services.AddSingleton<VideoOptionsViewModel>();
 
+            builder.Services.AddSingleton<PiPage>();
+            builder.Services.AddSingleton<PiViewModel>();
+
+
             builder.Services.AddSingleton<SQLiteService>();
+
+            builder.Services.AddSingleton<SshService>();
 
             builder.Services.AddSingleton<IAlertService, AlertService>();
 

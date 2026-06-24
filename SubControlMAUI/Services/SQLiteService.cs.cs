@@ -119,10 +119,12 @@ namespace SubControlMAUI.Services
                 Features = "CUTTER,PERISCOPE",
                 MinRotatorValue = 0,
                 MaxRotatorValue = 90,
-                AdjustValue = 1
+                AdjustValue = 1,
+                PiUserName = "pi",
+                PiPassword = "1234"
 
 
-    };
+            };
             if(await SaveConfigAsync(false) == 1)
             { 
                 return true;

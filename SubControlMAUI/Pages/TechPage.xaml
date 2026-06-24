@@ -6,10 +6,17 @@
              x:DataType="vm:TechViewModel"
              Title="{Binding Title}"
              Shell.NavBarIsVisible="False">
-    <VerticalStackLayout>
+
+
+        <Grid RowDefinitions="*,8*" Padding="10">
+        
+        
+        
+        
         <!-- CUSTOM TITLE BAR -->
         <Grid Grid.Row="0"
                   ColumnDefinitions="*,Auto,*"
+              
                   Margin="0,0,0,10">
 
             <Button Grid.Column="1"
@@ -30,5 +37,44 @@
             <Label Grid.Column="2" />
 
         </Grid>
-    </VerticalStackLayout>
+
+
+        <!-- Main Buttons -->
+            <Grid Grid.Row="1"
+                  ColumnDefinitions="*,*,*,*,*"
+                  ColumnSpacing="60"
+                  HorizontalOptions="Center"
+                  VerticalOptions="Center">
+
+
+
+
+                <!-- Pi -->
+                <VerticalStackLayout Grid.Column="0"
+                                     Spacing="8"
+                                     HorizontalOptions="Center">
+
+                    <ImageButton
+                        Source="{AppThemeBinding Light=light_i2c.png, Dark=dark_i2c.png}"
+                        WidthRequest="{Binding ButtonSize}"
+                        HeightRequest="{Binding ButtonSize}"
+                        BackgroundColor="Transparent"
+                        Command="{Binding PiCommand}"
+                        />
+
+
+                    <Label Text="Controller Management"
+                           HorizontalOptions="Center"/>
+                </VerticalStackLayout>
+
+                </Grid>
+
+
+
+
+
+
+
+
+    </Grid>
 </ContentPage>

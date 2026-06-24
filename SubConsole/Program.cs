@@ -15,6 +15,7 @@ using SubConsole.Services.Video;
 using System.Runtime.InteropServices;
 
 var levelSwitch = new LoggingLevelSwitch(LogEventLevel.Debug);
+
 try
 {
     Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "logs"));
@@ -30,24 +31,39 @@ try
             services.AddSingleton<TcpHostService>();
             services.AddSingleton<SerialPortManagerService>();
             services.AddSingleton<ISerialWorkerFactory, SerialWorkerFactory>();
-            services.AddHostedService(provider => provider.GetRequiredService<TcpHostService>());
+            services.AddHostedService(
+                provider => provider.GetRequiredService<TcpHostService>());
             services.AddSingleton<SQLiteService>();
             services.AddSingleton<TcpSerialCommandHandler>();
             services.AddSingleton<TcpCameraCommandHandler>();
 
+            // ── USB port monitor — runtime OS check, no compile-time guards ───────
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {
-                services.AddHostedService<UdevMonitorService>();
-                if (UdevMonitorService.checkLibudev())
+                // Fail fast if libudev isn't available rather than starting a
+                // monitor that will immediately error out in ExecuteAsync.
+                if (!UdevMonitorService.CheckLibudev())
                 {
                     throw new DllNotFoundException(
                         "libudev.so.1 could not be found/accessed on this system.");
                 }
+
+                services.AddHostedService<UdevMonitorService>();
+            }
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                // WmiMonitorService uses System.Management (NuGet) so it works
+                // on any TFM — no net10.0-windows required.
+                services.AddHostedService<WmiMonitorService>();
+            }
+            else
+            {
+                // macOS, FreeBSD, etc. — no monitor available.
+                // Ports must be opened manually; the rest of the service still works.
             }
 
             services.AddSerialPortManager();
-            services.AddCameraManager();                             
-
+            services.AddCameraManager();
             services.AddSingleton(levelSwitch);
             services.Configure<TcpSettings>(
                 context.Configuration.GetSection("TcpSettings"));
@@ -56,13 +72,11 @@ try
 
     var loggerFactory = host.Services.GetRequiredService<ILoggerFactory>();
 
-  
     UsbSerialPortMapper.ConfigureLogger(
         loggerFactory.CreateLogger("UsbSerialPortMapper"));
     UsbPortRegistry.ConfigureLogger(
         loggerFactory.CreateLogger<UsbPortRegistry>());
 
-    
     UsbCameraMapper.ConfigureLogger(
         loggerFactory.CreateLogger("UsbCameraMapper"));
     UsbCameraRegistry.ConfigureLogger(

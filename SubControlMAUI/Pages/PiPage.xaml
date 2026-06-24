@@ -1,0 +1,275 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:SubControlMAUI.ViewModels"
+             x:Class="SubControlMAUI.Pages.PiPage"
+             x:DataType="vm:PiViewModel"
+             Title="{Binding Title}"
+             Shell.NavBarIsVisible="False">
+
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto"
+          RowSpacing="8"
+          Padding="12">
+
+        <!-- ROW 0 – Title bar -->
+        <Grid Grid.Row="0"
+              ColumnDefinitions="Auto,*,Auto">
+
+            <Button Grid.Column="0"
+                    Text="Back"
+                    Command="{Binding GoBackCommand}" />
+
+            <Label Grid.Column="1"
+                   Text="{Binding Title}"
+                   FontSize="18"
+                   FontAttributes="Bold"
+                   HorizontalOptions="Center"
+                   VerticalOptions="Center" />
+
+            <Label Grid.Column="2"
+                   FontAttributes="Bold"
+                   VerticalOptions="Center">
+                <Label.Triggers>
+                    <DataTrigger TargetType="Label" Binding="{Binding IsConnected}" Value="True">
+                        <Setter Property="Text" Value="Connected" />
+                        <Setter Property="TextColor" Value="Green" />
+                    </DataTrigger>
+                    <DataTrigger TargetType="Label" Binding="{Binding IsConnected}" Value="False">
+                        <Setter Property="Text" Value="Disconnected" />
+                        <Setter Property="TextColor" Value="Red" />
+                    </DataTrigger>
+                </Label.Triggers>
+            </Label>
+        </Grid>
+
+        <!-- ROW 1 – Credentials -->
+        <Grid Grid.Row="1"
+              ColumnDefinitions="*,*"
+              ColumnSpacing="8">
+
+            <Entry Grid.Column="0"
+                   Placeholder="Username"
+                   Text="{Binding UserName}">
+                <Entry.Triggers>
+                    <DataTrigger TargetType="Entry" Binding="{Binding IsConnected}" Value="True">
+                        <Setter Property="IsEnabled" Value="False" />
+                    </DataTrigger>
+                    <DataTrigger TargetType="Entry" Binding="{Binding IsConnected}" Value="False">
+                        <Setter Property="IsEnabled" Value="True" />
+                    </DataTrigger>
+                </Entry.Triggers>
+            </Entry>
+
+            <Entry Grid.Column="1"
+                   Placeholder="Password"
+                   Text="{Binding Password}"
+                   IsPassword="True">
+                <Entry.Triggers>
+                    <DataTrigger TargetType="Entry" Binding="{Binding IsConnected}" Value="True">
+                        <Setter Property="IsEnabled" Value="False" />
+                    </DataTrigger>
+                    <DataTrigger TargetType="Entry" Binding="{Binding IsConnected}" Value="False">
+                        <Setter Property="IsEnabled" Value="True" />
+                    </DataTrigger>
+                </Entry.Triggers>
+            </Entry>
+        </Grid>
+
+        <!-- ROW 2 – Connect / Disconnect -->
+        <Grid Grid.Row="2"
+              ColumnDefinitions="*,*,Auto"
+              ColumnSpacing="8">
+
+            <Button Grid.Column="0"
+                    Text="Connect"
+                    Command="{Binding ConnectCommand}" />
+
+            <Button Grid.Column="1"
+                    Text="Disconnect"
+                    Command="{Binding DisconnectCommand}" />
+
+            <ActivityIndicator Grid.Column="2"
+                               IsRunning="{Binding IsBusy}"
+                               IsVisible="{Binding IsBusy}"
+                               WidthRequest="30"
+                               HeightRequest="30"
+                               VerticalOptions="Center" />
+        </Grid>
+
+        <!-- ROW 3 – MediaMTX Deployment -->
+        <Border Grid.Row="3"
+                Stroke="Gray"
+                StrokeThickness="1"
+                Padding="10">
+            <VerticalStackLayout Spacing="8">
+
+                <Label Text="MediaMTX Deployment"
+                       FontAttributes="Bold"
+                       FontSize="15" />
+
+                <!-- File picker -->
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <Entry Grid.Column="0"
+                           Placeholder="Select mediamtx_vX.X.X_linux_arm64.tar.gz"
+                           Text="{Binding MediaMtxLocalPath}"
+                           IsReadOnly="True"
+                           FontFamily="Courier New"
+                           FontSize="12" />
+                    <Button Grid.Column="1"
+                            Text="Browse"
+                            Command="{Binding PickMediaMtxFileCommand}" />
+                </Grid>
+
+                <!-- Install options -->
+                <Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="8">
+                    <Label Grid.Column="0" Text="Install dir:" VerticalOptions="Center" />
+                    <Entry Grid.Column="1"
+                           Text="{Binding MediaMtxInstallDir}"
+                           FontFamily="Courier New"
+                           FontSize="12" />
+                    <Label Grid.Column="2" Text="Run as:" VerticalOptions="Center" />
+                    <Entry Grid.Column="3"
+                           Text="{Binding MediaMtxServiceUser}"
+                           FontFamily="Courier New"
+                           FontSize="12" />
+                </Grid>
+
+                <!-- Deploy button + progress -->
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                    <Button Grid.Column="0"
+                            Text="Deploy"
+                            Command="{Binding DeployMediaMtxCommand}" />
+
+                    <VerticalStackLayout Grid.Column="1"
+                                         VerticalOptions="Center"
+                                         Spacing="2">
+                        <ProgressBar x:Name="DeployProgressBar"
+                                     HeightRequest="8" />
+                        <Label Text="{Binding DeployStatus}"
+                               FontSize="11"
+                               TextColor="Gray"
+                               IsVisible="{Binding IsDeploying}" />
+                    </VerticalStackLayout>
+                </Grid>
+
+            </VerticalStackLayout>
+        </Border>
+
+        <!-- ROW 4 – Terminal output -->
+        <Border Grid.Row="4"
+                Stroke="Gray"
+                StrokeThickness="1"
+                Padding="6">
+            <CollectionView x:Name="TerminalView"
+                            ItemsSource="{Binding TerminalLines}"
+                            SelectionMode="None">
+
+                <CollectionView.ItemTemplate>
+                    <DataTemplate x:DataType="vm:TerminalLine">
+                        <Label Text="{Binding Text}"
+                               FontFamily="Courier New"
+                               FontSize="12"
+                               LineBreakMode="WordWrap"
+                               Padding="0,1">
+                            <Label.Triggers>
+                                <DataTrigger TargetType="Label" Binding="{Binding Kind}" Value="Command">
+                                    <Setter Property="TextColor" Value="Orange" />
+                                    <Setter Property="FontAttributes" Value="Bold" />
+                                </DataTrigger>
+                                <DataTrigger TargetType="Label" Binding="{Binding Kind}" Value="Error">
+                                    <Setter Property="TextColor" Value="Red" />
+                                </DataTrigger>
+                                <DataTrigger TargetType="Label" Binding="{Binding Kind}" Value="Info">
+                                    <Setter Property="TextColor" Value="CornflowerBlue" />
+                                </DataTrigger>
+                                <DataTrigger TargetType="Label" Binding="{Binding Kind}" Value="Success">
+                                    <Setter Property="TextColor" Value="LimeGreen" />
+                                </DataTrigger>
+                                <DataTrigger TargetType="Label" Binding="{Binding Kind}" Value="Stream">
+                                    <Setter Property="TextColor" Value="MediumAquamarine" />
+                                </DataTrigger>
+                            </Label.Triggers>
+                        </Label>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+
+                <CollectionView.EmptyView>
+                    <Label Text="No output yet. Connect and run a command."
+                           HorizontalOptions="Center"
+                           VerticalOptions="Center"
+                           Margin="0,40"
+                           TextColor="Gray" />
+                </CollectionView.EmptyView>
+            </CollectionView>
+        </Border>
+
+        <!-- ROW 5 – Command input -->
+        <Grid Grid.Row="5"
+              ColumnDefinitions="Auto,*,Auto,Auto,Auto"
+              ColumnSpacing="6">
+
+            <Label Grid.Column="0"
+                   Text="$"
+                   FontSize="16"
+                   FontAttributes="Bold"
+                   VerticalOptions="Center" />
+
+            <Entry Grid.Column="1"
+                   Placeholder="Enter command"
+                   Text="{Binding CommandInput}"
+                   ReturnCommand="{Binding RunCommandCommand}"
+                   IsEnabled="{Binding IsConnected}"
+                   FontFamily="Courier New"
+                   FontSize="13" />
+
+            <Button Grid.Column="2"
+                    Text="Up"
+                    Padding="10,6"
+                    Command="{Binding HistoryUpCommand}"
+                    IsEnabled="{Binding IsConnected}" />
+
+            <Button Grid.Column="3"
+                    Text="Down"
+                    Padding="10,6"
+                    Command="{Binding HistoryDownCommand}"
+                    IsEnabled="{Binding IsConnected}" />
+
+            <Button Grid.Column="4"
+                    Text="Run"
+                    Command="{Binding RunCommandCommand}"
+                    IsEnabled="{Binding IsConnected}" />
+        </Grid>
+
+        <!-- ROW 6 – Toolbar -->
+        <ScrollView Grid.Row="6"
+                    Orientation="Horizontal">
+            <HorizontalStackLayout Spacing="8">
+
+                <Button Text="Clear"
+                        Command="{Binding ClearTerminalCommand}" />
+
+                <Button Text="Sys Info"
+                        Command="{Binding GetSystemInfoCommand}"
+                        IsEnabled="{Binding IsConnected}" />
+
+                <Label Text="Log:" VerticalOptions="Center" />
+
+                <Entry Text="{Binding LogFilePath}"
+                       WidthRequest="220"
+                       FontFamily="Courier New"
+                       FontSize="12"
+                       IsEnabled="{Binding IsConnected}" />
+
+                <Button Text="Tail"
+                        Command="{Binding TailLogCommand}"
+                        IsEnabled="{Binding IsConnected}" />
+
+                <Button Text="Stop"
+                        Command="{Binding StopStreamCommand}"
+                        IsEnabled="{Binding IsStreaming}" />
+
+            </HorizontalStackLayout>
+        </ScrollView>
+
+    </Grid>
+</ContentPage>

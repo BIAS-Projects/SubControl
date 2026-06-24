@@ -847,6 +847,8 @@ public partial class MainViewModel : BaseViewModel
             Models.Rotator.MinRotatorValue = _sqliteService.config.MinRotatorValue;
             Models.Rotator.MaxRotatorValue = _sqliteService.config.MaxRotatorValue;
             Models.Rotator.AdjustValue = _sqliteService.config.AdjustValue;
+            Models.RaspberryPi.UserName = _sqliteService.config.PiUserName;
+            Models.RaspberryPi.Password = _sqliteService.config.PiPassword;
         }
     }
 

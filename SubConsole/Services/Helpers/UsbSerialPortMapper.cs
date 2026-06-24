@@ -406,49 +406,31 @@ public sealed class PortChangedEventArgs(
 /// </summary>
 public sealed class UsbPortRegistry
 {
-
     private ILogger<UsbPortRegistry>? _logger;
+
     // ---- Singleton ----
-
     public static UsbPortRegistry Instance { get; } = new();
-
-
     private UsbPortRegistry() { }
 
     public static void ConfigureLogger(ILogger<UsbPortRegistry> logger)
-    {
-        Instance._logger = logger;
-    }
-    // ---- Storage ----
+        => Instance._logger = logger;
 
-    // Internal mutable store — all mutations happen under _refreshLock.
-    // ConcurrentDictionary gives lock-free reads on the hot path.
+    // ---- Storage ----
+    // Keyed on UsbSerialPortInfo.Key (hardware identity) not PortName,
+    // so we correctly detect port reassignment (COM11 → COM12).
     private readonly ConcurrentDictionary<string, UsbSerialPortInfo> _store =
         new(StringComparer.OrdinalIgnoreCase);
 
-    // Public read-only view — zero allocation, safe from any thread.
     public IReadOnlyDictionary<string, UsbSerialPortInfo> Ports => _store;
 
     // ---- Change event ----
-
-    /// <summary>
-    /// Raised on the thread that calls <see cref="RefreshAsync"/> whenever a port
-    /// is added, removed, or its metadata changes between two scans.
-    /// Subscribers must be thread-safe or marshal to their own context.
-    /// </summary>
     public event EventHandler<PortChangedEventArgs>? PortChanged;
 
-    // ---- Refresh guard (prevents concurrent scans) ----
-
+    // ---- Refresh guard ----
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
 
     // ---- Public API ----
 
-    /// <summary>
-    /// Rescans the host OS for USB serial ports and atomically updates the
-    /// registry.  Safe to call from multiple threads — concurrent callers
-    /// will queue behind a single semaphore so only one scan runs at a time.
-    /// </summary>
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
         await _refreshLock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -462,7 +444,8 @@ public sealed class UsbPortRegistry
 
             ApplySnapshot(discovered);
 
-            _logger?.LogInformation("Discovered {Count} ports from mapper", discovered.Count);
+            _logger?.LogInformation(
+                "Discovered {Count} ports from mapper", discovered.Count);
         }
         finally
         {
@@ -470,63 +453,91 @@ public sealed class UsbPortRegistry
         }
     }
 
-    /// <summary>
-    /// Convenience wrapper: returns a snapshot of <see cref="Ports"/> as an
-    /// <see cref="IReadOnlyList{T}"/> without triggering a rescan.
-    /// </summary>
     public IReadOnlyList<UsbSerialPortInfo> GetSnapshot() =>
         _store.Values.ToArray();
 
-    /// <summary>
-    /// Returns <c>true</c> if a port with the given name is currently known.
-    /// Comparison is case-insensitive (COM3 == com3, /dev/ttyUSB0 matches exactly).
-    /// </summary>
-    public bool TryGetPort(string portName, out UsbSerialPortInfo info) =>
-        _store.TryGetValue(portName, out info!);
+    public bool TryGetPort(string portName, out UsbSerialPortInfo info)
+    {
+        info = _store.Values.FirstOrDefault(p =>
+            string.Equals(p.PortName, portName, StringComparison.OrdinalIgnoreCase))!;
+        return info is not null;
+    }
+
+    public bool TryGetPortByKey(string key, out UsbSerialPortInfo info) =>
+        _store.TryGetValue(key, out info!);
 
     // ---- Private helpers ----
 
-    /// <summary>
-    /// Merges a freshly scanned list into the registry, firing events for
-    /// every add / remove / update.  Called under <see cref="_refreshLock"/>.
-    /// </summary>
     private void ApplySnapshot(IReadOnlyList<UsbSerialPortInfo> discovered)
     {
-        _logger?.LogDebug("Applying port snapshot. Incoming count: {Count}", discovered.Count);
+        _logger?.LogDebug(
+            "Applying port snapshot. Incoming count: {Count}", discovered.Count);
 
-        var incoming = discovered.ToDictionary(
-            p => p.PortName,
-            p => p,
-            StringComparer.OrdinalIgnoreCase);
+        foreach (var (k, v) in _store)
+            _logger?.LogDebug("Registry store entry: Key={Key} Port={Port}", k, v.PortName);
 
-        // --- Detect removals ---
-        foreach (var key in _store.Keys)
+        foreach (var p in discovered)
+            _logger?.LogDebug("Incoming device: Key={Key} Port={Port} VID={VID} PID={PID} SN={SN}",
+                p.Key, p.PortName, p.VendorId, p.ProductId, p.SerialNumber);
+
+
+        // Build incoming map keyed on hardware Key.
+        var incoming = discovered
+            .Where(p => !string.IsNullOrWhiteSpace(p.Key))
+            .ToDictionary(p => p.Key, p => p, StringComparer.OrdinalIgnoreCase);
+
+        // ── Detect removals ───────────────────────────────────────────────────
+        foreach (var key in _store.Keys.ToList())
         {
             if (!incoming.ContainsKey(key) && _store.TryRemove(key, out var removed))
             {
+                _logger?.LogInformation(
+                    "Port removed: {PortName} (Key={Key})",
+                    removed.PortName, key);
                 RaisePortChanged(PortChangeKind.Removed, removed);
-                _logger?.LogInformation("Port removed: {PortName}", removed.PortName);
             }
         }
 
-        // --- Detect additions and updates ---
+        // ── Detect additions and port-name changes ────────────────────────────
         foreach (var (key, newInfo) in incoming)
         {
             _store.AddOrUpdate(
                 key,
-                // add branch
+                // Add branch — new device
                 addKey =>
                 {
-                    _logger?.LogInformation("Port added: {PortName}", newInfo.PortName);
+                    _logger?.LogInformation(
+                        "Port added: {PortName} (Key={Key})",
+                        newInfo.PortName, key);
                     RaisePortChanged(PortChangeKind.Added, newInfo);
                     return newInfo;
                 },
-                // update branch — only raise event if something actually changed
+                // Update branch — device already known
                 (updateKey, existing) =>
                 {
-                    _logger?.LogInformation("Port updated: {PortName}", newInfo.PortName);
-                    if (!PortInfoEquals(existing, newInfo))
+                    // Port name changed (e.g. COM11 → COM12 after replug)
+                    if (!string.Equals(
+                            existing.PortName,
+                            newInfo.PortName,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        _logger?.LogInformation(
+                            "Port reassigned: {OldPort} → {NewPort} (Key={Key})",
+                            existing.PortName, newInfo.PortName, key);
+
+                        // Raise Removed for the old port name, then Added for
+                        // the new one so consumers can close and reopen cleanly.
+                        RaisePortChanged(PortChangeKind.Removed, existing);
+                        RaisePortChanged(PortChangeKind.Added, newInfo);
+                    }
+                    else if (!PortInfoEquals(existing, newInfo))
+                    {
+                        _logger?.LogInformation(
+                            "Port updated: {PortName} (Key={Key})",
+                            newInfo.PortName, key);
                         RaisePortChanged(PortChangeKind.Updated, newInfo);
+                    }
+
                     return newInfo;
                 });
         }
@@ -534,14 +545,12 @@ public sealed class UsbPortRegistry
 
     private void RaisePortChanged(PortChangeKind kind, UsbSerialPortInfo port)
     {
-        _logger?.LogDebug("Raising PortChanged event {Kind} for {PortName}", kind, port.PortName);
+        _logger?.LogDebug(
+            "Raising PortChanged event {Kind} for {PortName} (Key={Key})",
+            kind, port.PortName, port.Key);
         PortChanged?.Invoke(this, new PortChangedEventArgs(kind, port));
     }
 
-    /// <summary>
-    /// Value-equality check so we avoid spurious <see cref="PortChangeKind.Updated"/>
-    /// events when nothing actually changed between two scans.
-    /// </summary>
     private static bool PortInfoEquals(UsbSerialPortInfo a, UsbSerialPortInfo b) =>
         string.Equals(a.PortName, b.PortName, StringComparison.OrdinalIgnoreCase) &&
         string.Equals(a.VendorId, b.VendorId, StringComparison.OrdinalIgnoreCase) &&
