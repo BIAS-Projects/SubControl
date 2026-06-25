@@ -429,14 +429,15 @@ namespace SubControlMAUI.Services
         }
 
         /// <summary>
-        /// Deploy a .NET console application folder to the Pi.
-        /// Uploads all files in <paramref name="localFolder"/> to <paramref name="remoteFolder"/>,
-        /// then marks the entry point executable.
+        /// Deploy a .NET console application folder to the Pi using sudo elevation.
+        /// Uploads all files in <paramref name="localFolder"/> to a staging path,
+        /// transfers them safely to <paramref name="remoteFolder"/>, then marks the entry point executable.
         /// </summary>
         public async Task DeployDotNetAppAsync(
             string localFolder,
             string remoteFolder,
             string executableName,
+            string password = "1234",
             IProgress<(string File, double OverallPercent)>? progress = null,
             CancellationToken cancellationToken = default)
         {
@@ -445,33 +446,179 @@ namespace SubControlMAUI.Services
             _logger.LogInformation("Deploying .NET app from {Local} to {Remote}:{Folder}",
                 localFolder, Host, remoteFolder);
 
-            // Ensure remote directory exists
-            await ExecuteCommandAsync($"mkdir -p \"{remoteFolder}\"", cancellationToken);
+            // Escape single quotes in password to prevent shell context breaking
+            var escapedPwd = password.Replace("'", "'\\''");
+            var targetFolder = remoteFolder.TrimEnd('/');
+
+            // 1. Ensure the protected remote destination directory exists via sudo
+            await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S mkdir -p \"{targetFolder}\"", cancellationToken);
+
+            var verifyDir = await ExecuteCommandAsync($"test -d {targetFolder} && echo 'yes' || echo 'no'", cancellationToken);
+
+
+            if (verifyDir.StdOut.Trim() == "yes")
+            {
+                progress?.Report(($"Directory {targetFolder} was created successfully.", 35));
+                _logger.LogInformation("Directory: {Path} created", targetFolder);
+            }
+            else
+            {
+                progress?.Report(($"{targetFolder} creation failed.", 35));
+                _logger.LogError("Directory creation failed.");
+            }
 
             var files = Directory.GetFiles(localFolder, "*", SearchOption.AllDirectories);
+
+            string destinationFolder = "";
+
             for (int i = 0; i < files.Length; i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var localFile = files[i];
                 var relativePath = Path.GetRelativePath(localFolder, localFile).Replace('\\', '/');
-                var remotePath = $"{remoteFolder.TrimEnd('/')}/{relativePath}";
 
-                // Ensure remote subdirectory exists
-                var remoteDir = Path.GetDirectoryName(remotePath)?.Replace('\\', '/');
-                if (!string.IsNullOrEmpty(remoteDir))
-                    await ExecuteCommandAsync($"mkdir -p \"{remoteDir}\"", cancellationToken);
+                // The final system path and a safe temporary staging path
+                var finalRemotePath = $"{targetFolder}/{relativePath}";
+                var tmpStagingPath = $"/tmp/dotnet_deploy_{Guid.NewGuid():N}";
+                destinationFolder = finalRemotePath;
+
+                // 2. Ensure the destination subdirectory exists inside the system directory
+                var finalRemoteDir = Path.GetDirectoryName(finalRemotePath)?.Replace('\\', '/');
+                if (!string.IsNullOrEmpty(finalRemoteDir))
+                {
+                    await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S mkdir -p \"{finalRemoteDir}\"", cancellationToken);
+                }
 
                 progress?.Report((relativePath, (double)i / files.Length * 100.0));
-                await UploadFileAsync(localFile, remotePath, cancellationToken: cancellationToken);
+
+                // 3. Upload via SFTP to the open /tmp folder first (since SFTP cannot use sudo directly)
+                await UploadFileAsync(localFile, tmpStagingPath, cancellationToken: cancellationToken);
+
+                // 4. Move the file from /tmp to its final protected location using sudo
+                await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S mv \"{tmpStagingPath}\" \"{finalRemotePath}\"", cancellationToken);
             }
 
-            // Mark the entry-point executable
-            var exePath = $"{remoteFolder.TrimEnd('/')}/{executableName}";
-            await ExecuteCommandAsync($"chmod +x \"{exePath}\"", cancellationToken);
+            // Check the fils are in the destination dierctory:
+            var contents = await ExecuteCommandAsync($"ls -laR \"{targetFolder}\"", cancellationToken);
+
+            _logger.LogInformation("Current files in {installDir}:\n{Files}", targetFolder, contents.StdOut);
+
+            progress?.Report(($"Current files in {targetFolder} {contents.StdOut}", 100));
+
+            // 5. Mark the entry-point executable as executable using sudo
+            var exePath = $"{targetFolder}/{executableName}";
+            await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S chmod +x \"{exePath}\"", cancellationToken);
 
             _logger.LogInformation("Deployment complete. Entry point: {ExePath}", exePath);
             progress?.Report((executableName, 100.0));
         }
+
+
+
+        /// <summary>
+        /// Installs and configures the deployed .NET console application as a systemd service,
+        /// enabling it to run automatically on system boot.
+        /// </summary>
+        public async Task InstallDotNetServiceAsync(
+            string remoteFolder,
+            string executableName,
+            string serviceName = "mynetapp",
+            string serviceUser = "pi",
+            string password = "1234",
+            CancellationToken cancellationToken = default)
+        {
+            EnsureConnected();
+
+            var targetFolder = remoteFolder.TrimEnd('/');
+            var binaryPath = $"{targetFolder}/{executableName}";
+            var unitPath = $"/etc/systemd/system/{serviceName}.service";
+            var escapedPwd = password.Replace("'", "'\\''");
+
+            _logger.LogInformation("Installing .NET background service: {Service} -> {Binary}", serviceName, binaryPath);
+
+            // 1. Define the systemd configuration lines for a modern .NET environment
+            var unitLines = new[]
+            {
+             "[Unit]",
+             $"Description=.NET Application: {serviceName}",
+             "After=network.target",
+             "",
+             "[Service]",
+             "Type=notify", // Recommended for .NET Core apps using Microsoft.Extensions.Hosting
+             $"User={serviceUser}",
+             $"WorkingDirectory={targetFolder}",
+             $"ExecStart={binaryPath}",
+             "Restart=on-failure",
+             "RestartSec=5",
+             "StandardOutput=journal",
+             "StandardError=journal",
+             // Optional: Keeps .NET from flooding production logging frameworks with development details
+             "Environment=DOTNET_ENVIRONMENT=Production",
+             "",
+             "[Install]",
+             "WantedBy=multi-user.target"
+         };
+
+            // 2. Base64 encode the systemd payload within C# to prevent single/double quote injection breaks
+            var rawUnitContent = string.Join("\n", unitLines) + "\n";
+            var base64UnitBytes = System.Text.Encoding.UTF8.GetBytes(rawUnitContent);
+            var base64UnitString = Convert.ToBase64String(base64UnitBytes);
+
+            // 3. Securely write the unit file to the protected systemd path using sudo elevation
+            _logger.LogInformation("Writing service unit file to {Path}", unitPath);
+            await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S sh -c 'echo \"{base64UnitString}\" | base64 -d > {unitPath}'", cancellationToken);
+
+            // 4. Force systemd to scan the disk cache and register the new configuration file
+            await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S systemctl daemon-reload", cancellationToken);
+
+            // 5. Enable the background process so it boots automatically whenever the Pi turns on
+            _logger.LogInformation("Enabling service on system boot...");
+            await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S systemctl enable {serviceName}.service", cancellationToken);
+
+            // 6. Fire up the engine immediately
+            _logger.LogInformation("Starting service...");
+            await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S systemctl restart {serviceName}.service", cancellationToken);
+
+            // 7. Verify the process launched successfully
+            await Task.Delay(2000, cancellationToken);
+            var status = await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S systemctl is-active {serviceName}.service", cancellationToken);
+
+            if (status.StdOut.Trim() == "active")
+            {
+                _logger.LogInformation(".NET background service '{Service}' is active and running successfully!", serviceName);
+            }
+            else
+            {
+                var journal = await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S journalctl -u {serviceName}.service -n 20 --no-pager", cancellationToken);
+                _logger.LogError("Service failed to start. System Journal Logs:\n{Logs}", journal.StdOut);
+                throw new InvalidOperationException($"The .NET background service '{serviceName}' failed to enter an active running state.");
+            }
+        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         // ── MediaMTX Deployment ──────────────────────────────────────────────────
 
@@ -617,16 +764,19 @@ namespace SubControlMAUI.Services
                     "    source: publisher"
                 };
 
-                // Stream the block using a Heredoc container via a single sudo process
-                var sbConfig = new StringBuilder();
-                sbConfig.AppendLine($"printf '{escapedPwd}\\n' | sudo -S sh -c 'cat << \"EOF\" > {configPath}");
-                foreach (var line in configLines)
-                {
-                    sbConfig.AppendLine(line);
-                }
-                sbConfig.AppendLine("EOF'");
+                // 1. Join the array lines with standard Linux line endings (\n)
+                var rawConfigContent = string.Join("\n", configLines) + "\n";
 
-                await RunStep(sbConfig.ToString(), cancellationToken);
+                // 2. Base64 encode the string payload within C#
+                var base64ConfigBytes = System.Text.Encoding.UTF8.GetBytes(rawConfigContent);
+                var base64ConfigString = Convert.ToBase64String(base64ConfigBytes);
+
+                // 3. Pipe the base64 string directly into base64 -d as root to write the file cleanly
+                await RunStep($"printf '{escapedPwd}\\n' | sudo -S sh -c 'echo \"{base64ConfigString}\" | base64 -d > {configPath}'", cancellationToken);
+
+                // Debug: Verify the file actually exists on disk now and show its details
+                var checkConfigFile = await ExecuteCommandAsync($"ls -la {configPath}", cancellationToken);
+                _logger.LogInformation("Configuration file verification:\n{Result}", checkConfigFile.StdOut);
             }
             else
             {
@@ -634,6 +784,7 @@ namespace SubControlMAUI.Services
             }
 
             progress?.Report(("Configuration ready", 75));
+
 
             // ── Step 5: Install systemd unit ──────────────────────────────────
             progress?.Report(("Installing systemd service...", 80));
@@ -659,25 +810,26 @@ namespace SubControlMAUI.Services
                 "WantedBy=multi-user.target"
             };
 
-            // Stream the systemd block using a Heredoc container
-            var sbUnit = new StringBuilder();
-            sbUnit.AppendLine($"printf '{escapedPwd}\\n' | sudo -S sh -c 'cat << \"EOF\" > {unitPath}");
-            foreach (var line in unitLines)
-            {
-                sbUnit.AppendLine(line);
-            }
-            sbUnit.AppendLine("EOF'");
+            // 1. Join array lines with actual Linux line-endings (\n)
+            var rawUnitContent = string.Join("\n", unitLines) + "\n";
 
-            await RunStep(sbUnit.ToString(), cancellationToken);
+            // 2. Base64 encode the entire payload within C#
+            var base64UnitBytes = Encoding.UTF8.GetBytes(rawUnitContent);
+            var base64UnitString = Convert.ToBase64String(base64UnitBytes);
 
+            // 3. Write it to disk by piping the base64 string directly into base64 -d as root
+            await RunStep($"printf '{escapedPwd}\\n' | sudo -S sh -c 'echo \"{base64UnitString}\" | base64 -d > {unitPath}'", cancellationToken);
+
+            // 4. Force systemd to cache your new configuration file
             await RunStep($"printf '{escapedPwd}\\n' | sudo -S systemctl daemon-reload", cancellationToken);
 
-            // Debug: Verify the file actually exists on disk and show its contents
+            // Debug: Verify the file actually exists on disk now
             var checkUnitFile = await ExecuteCommandAsync($"ls -la {unitPath}", cancellationToken);
             progress?.Report(($"Systemd unit file check:\n{checkUnitFile.StdOut}", 80));
             _logger.LogInformation("Systemd unit file check:\n{Result}", checkUnitFile.StdOut);
 
             await RunStep($"printf '{escapedPwd}\\n' | sudo -S systemctl enable mediamtx.service", cancellationToken);
+
 
             // ── Step 6: Start and verify ──────────────────────────────────────
             progress?.Report(("Starting MediaMTX service...", 90));

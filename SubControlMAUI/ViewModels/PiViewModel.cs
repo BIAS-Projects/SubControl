@@ -1,12 +1,13 @@
-﻿using CommunityToolkit.Mvvm.ComponentModel;
+﻿using CommunityToolkit.Maui.Storage;
+using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.Logging;
 using SubControlMAUI.Services;
 using System;
 using System.Collections.ObjectModel;
-using System.Threading;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace SubControlMAUI.ViewModels
@@ -76,6 +77,7 @@ namespace SubControlMAUI.ViewModels
         [NotifyCanExecuteChangedFor(nameof(TailLogCommand))]
         [NotifyCanExecuteChangedFor(nameof(StopStreamCommand))]
         [NotifyCanExecuteChangedFor(nameof(DeployMediaMtxCommand))]
+        [NotifyCanExecuteChangedFor(nameof(DeployDotNetAppCommand))]
         private bool isConnected;
 
         [ObservableProperty]
@@ -128,6 +130,48 @@ namespace SubControlMAUI.ViewModels
         public ObservableCollection<string> CommandHistory { get; }
 
         private int _historyIndex = -1;
+
+
+
+
+
+
+
+        [ObservableProperty]
+       [NotifyCanExecuteChangedFor(nameof(DeployDotNetAppCommand))]
+   //     [NotifyCanExecuteChangedFor(nameof(DeployDotNetApp))]
+        private string dotNetLocalPath = "D:\\repository\\SubControl\\SubConsole\\bin\\Debug\\net10.0\\publish\\linux-arm64";
+
+        [ObservableProperty]
+        private string dotNetInstallDir = "/opt/subconsole";
+
+        [ObservableProperty]
+        private string dotNetExecutableName = "SubConsole";
+
+        [ObservableProperty]
+        private string dotNetServiceName = "subconsole";
+
+        [ObservableProperty]
+        [NotifyPropertyChangedFor(nameof(DotNetDeployProgressConverted))]
+        private double dotNetDeployProgress;
+
+        // Converts double (0-100) from script callback payload to native MAUI ProgressBar range (0.0 - 1.0)
+        public double DotNetDeployProgressConverted => DotNetDeployProgress / 100.0;
+
+        [ObservableProperty]
+        private string dotNetDeployStatus = string.Empty;
+
+        [ObservableProperty]
+        [NotifyCanExecuteChangedFor(nameof(DeployDotNetAppCommand))]
+        private bool isDotNetDeploying;
+
+
+
+
+
+
+
+
 
         // ── Connection commands ───────────────────────────────────────────────
 
@@ -417,6 +461,116 @@ namespace SubControlMAUI.ViewModels
                 AddLine($"File picker error: {ex.Message}", TerminalLineKind.Error);
             }
         }
+
+
+
+
+
+        [RelayCommand(CanExecute = nameof(CanDeployDotNetApp))]
+        private async Task DeployDotNetApp()
+        {
+            IsDotNetDeploying = true;
+            DotNetDeployProgress = 0;
+            DotNetDeployStatus = string.Empty;
+
+            var progress = new Progress<(string File, double OverallPercent)>(report =>
+            {
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                    DotNetDeployProgress = report.OverallPercent;
+                    DotNetDeployStatus = $"Uploading: {report.File} ({report.OverallPercent:F0}%)";
+                    AddLine($"Syncing: {report.File}", TerminalLineKind.Info);
+                });
+            });
+
+            try
+            {
+                AddLine($"▶ Starting pipeline sync deployment from folder: {DotNetLocalPath}", TerminalLineKind.Info);
+
+                // Step 1: Push binary configurations down the active channel
+                await _sshService.DeployDotNetAppAsync(
+                    localFolder: DotNetLocalPath,
+                    remoteFolder: DotNetInstallDir,
+                    executableName: DotNetExecutableName,
+                    password: Password, // passes user password entered at Row 1 credentials panel
+                    progress: progress);
+
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                    DotNetDeployStatus = "Registering background system service...";
+                });
+
+                // Step 2: Establish base configuration files and init system hooks
+                await _sshService.InstallDotNetServiceAsync(
+                    remoteFolder: DotNetInstallDir,
+                    executableName: DotNetExecutableName,
+                    serviceName: DotNetServiceName,
+                    serviceUser: UserName, // targets the user specified in UI text configurations
+                    password: Password);
+
+                AddLine($"✓ .NET App '{DotNetServiceName}' successfully registered and activated on boot.", TerminalLineKind.Success);
+
+                // Step 3: Automatically hook system logs stream up to target display terminal panels
+                await StopStreamIfActive();
+                LogFilePath = "/var/log/syslog";
+                AddLine($"▶ Tracking systemd runtime feedback messages for {DotNetServiceName}...", TerminalLineKind.Info);
+                IsStreaming = true;
+                _activeStream = _sshService.StartStreamingCommand($"sudo journalctl -u {DotNetServiceName}.service -f -n 30 --no-pager");
+                _activeStream.LineReceived += OnStreamLine;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, ".NET deployment process exception caught.");
+                AddLine($"✗ Application installation deployment failed: {ex.Message}", TerminalLineKind.Error);
+                DotNetDeployStatus = "Deployment aborted due to configuration errors.";
+            }
+            finally
+            {
+                IsDotNetDeploying = false;
+            }
+        }
+
+        private bool CanDeployDotNetApp() =>
+            IsConnected &&
+            !IsDotNetDeploying &&
+            !string.IsNullOrWhiteSpace(DotNetLocalPath) &&
+            Directory.Exists(DotNetLocalPath);
+
+        [RelayCommand]
+        private async Task PickDotNetFolder()
+        {
+            try
+            {
+                // Folder picking requires CommunityToolkit or native platform folder selector extensions 
+                // Using standard FolderPicker mapping abstraction patterns:
+                var result = await FolderPicker.Default.PickAsync(CancellationToken.None);
+
+                if (result.IsSuccessful && result.Folder is not null)
+                {
+                    DotNetLocalPath = result.Folder.Path;
+                    AddLine($"Target deployment path selected: {result.Folder.Name}", TerminalLineKind.Info);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Folder extraction lookup pointer exception.");
+                AddLine($"Folder selection failed: {ex.Message}", TerminalLineKind.Error);
+            }
+        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         // ── Navigation ────────────────────────────────────────────────────────
 
