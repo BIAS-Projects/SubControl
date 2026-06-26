@@ -118,62 +118,135 @@ public sealed class WindowsUsbDeviceEnumerator : IUsbDeviceEnumerator
 // Linux — /sys/bus/usb/devices + /dev/serial/by-id symlinks
 // ═════════════════════════════════════════════════════════════════════════════
 
+
+
 public sealed class LinuxUsbDeviceEnumerator : IUsbDeviceEnumerator
 {
     private static readonly string SysUsbBase = "/sys/bus/usb/devices";
     private static readonly string ByIdDir = "/dev/serial/by-id";
-    private static readonly string ByPathDir = "/dev/serial/by-path";
+    private static readonly string SysTtyClass = "/sys/class/tty";
 
     private readonly ILogger<LinuxUsbDeviceEnumerator> _logger;
 
-    public LinuxUsbDeviceEnumerator(ILogger<LinuxUsbDeviceEnumerator> logger) => _logger = logger;
+    public LinuxUsbDeviceEnumerator(ILogger<LinuxUsbDeviceEnumerator> logger)
+        => _logger = logger;
 
     public Task<IReadOnlyList<(DeviceIdentifier, string)>> EnumerateAsync(
-           CancellationToken token = default)
+        CancellationToken token = default)
     {
         return Task.Run<IReadOnlyList<(DeviceIdentifier, string)>>(() =>
         {
             var results = new List<(DeviceIdentifier, string)>();
 
-            _logger.LogInformation("Starting USB serial enumeration (Linux)");
+            _logger.LogInformation("=== Linux USB enumeration starting ===");
+
+            // ── Sanity-check key paths ────────────────────────────────────────
+
+            _logger.LogInformation(
+                "/sys/bus/usb/devices exists: {Exists}",
+                Directory.Exists(SysUsbBase));
+
+            _logger.LogInformation(
+                "/sys/class/tty exists: {Exists}",
+                Directory.Exists(SysTtyClass));
+
+            _logger.LogInformation(
+                "/dev/serial/by-id exists: {Exists}",
+                Directory.Exists(ByIdDir));
+
+            // ── Dump all ttyACM / ttyUSB entries in /sys/class/tty ────────────
+
+            try
+            {
+                var ttyEntries = Directory.GetDirectories(SysTtyClass)
+                    .Select(Path.GetFileName)
+                    .Where(n => n != null &&
+                                (n.StartsWith("ttyUSB", StringComparison.Ordinal) ||
+                                 n.StartsWith("ttyACM", StringComparison.Ordinal)))
+                    .ToList();
+
+                _logger.LogInformation(
+                    "/sys/class/tty USB serial entries ({Count}): {Entries}",
+                    ttyEntries.Count,
+                    ttyEntries.Count == 0 ? "(none)" : string.Join(", ", ttyEntries));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to enumerate /sys/class/tty");
+            }
+
+            // ── Dump top-level entries in /sys/bus/usb/devices ───────────────
+
+            try
+            {
+                var usbDirs = Directory.GetDirectories(SysUsbBase)
+                    .Select(Path.GetFileName)
+                    .ToList();
+
+                _logger.LogInformation(
+                    "/sys/bus/usb/devices entries ({Count}): {Entries}",
+                    usbDirs.Count,
+                    string.Join(", ", usbDirs));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to enumerate /sys/bus/usb/devices");
+            }
+
+            // ── by-id ─────────────────────────────────────────────────────────
 
             try
             {
                 if (Directory.Exists(ByIdDir))
                 {
-                    _logger.LogDebug("Enumerating via /dev/serial/by-id");
-                    results.AddRange(EnumerateByIdDir(token));
+                    _logger.LogInformation("Enumerating /dev/serial/by-id");
+                    var byIdResults = EnumerateByIdDir(token).ToList();
+                    _logger.LogInformation(
+                        "by-id produced {Count} result(s)", byIdResults.Count);
+                    results.AddRange(byIdResults);
                 }
                 else
                 {
-                    _logger.LogDebug("/dev/serial/by-id not found");
+                    _logger.LogInformation(
+                        "/dev/serial/by-id not present — skipping");
                 }
-
-                _logger.LogDebug("Enumerating via /sys/bus/usb/devices");
-                results.AddRange(EnumerateSysUsbDevices(token));
-
-                var deduped = results
-                    .GroupBy(r => r.Item2, StringComparer.OrdinalIgnoreCase)
-                    .Select(g => g.OrderByDescending(r => r.Item1.SerialNumber.Length).First())
-                    .ToList()
-                    .AsReadOnly();
-
-                _logger.LogInformation(
-                    "Completed USB serial enumeration (Linux). Found {DeviceCount} device(s)",
-                    deduped.Count);
-
-                return deduped;
             }
-            catch (OperationCanceledException)
-            {
-                _logger.LogDebug("USB enumeration cancelled (Linux)");
-                throw;
-            }
+            catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Linux USB enumeration failed");
-                return results;
+                _logger.LogError(ex, "by-id enumeration failed");
             }
+
+            // ── sysfs ─────────────────────────────────────────────────────────
+
+            try
+            {
+                _logger.LogInformation("Enumerating via /sys/bus/usb/devices");
+                var sysResults = EnumerateSysUsbDevices(token).ToList();
+                _logger.LogInformation(
+                    "sysfs produced {Count} result(s)", sysResults.Count);
+                results.AddRange(sysResults);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "sysfs enumeration failed");
+            }
+
+            // ── Deduplicate ───────────────────────────────────────────────────
+
+            var deduped = results
+                .GroupBy(r => r.Item2, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.OrderByDescending(r => r.Item1.SerialNumber.Length).First())
+                .ToList()
+                .AsReadOnly();
+
+            _logger.LogInformation(
+                "=== Linux USB enumeration complete. Returning {Count} device(s) ===",
+                deduped.Count);
+
+            return deduped;
+
         }, token);
     }
 
@@ -181,38 +254,225 @@ public sealed class LinuxUsbDeviceEnumerator : IUsbDeviceEnumerator
 
     private IEnumerable<(DeviceIdentifier, string)> EnumerateByIdDir(CancellationToken token)
     {
-        // Symlink name format (udev):
-        //   usb-<Manufacturer>_<Product>_<SerialNumber>-<port>
-        // e.g. usb-FTDI_FT232R_USB_UART_A6003F2H-if00-port0 → /dev/ttyUSB0
         foreach (var symlink in Directory.GetFiles(ByIdDir))
         {
             token.ThrowIfCancellationRequested();
 
             var portPath = ResolveSymlink(symlink);
+            _logger.LogDebug(
+                "by-id: {Symlink} → {PortPath}",
+                symlink, portPath ?? "(unresolvable)");
+
             if (portPath is null) continue;
 
             var name = Path.GetFileName(symlink);
-
-            // Parse  usb-<mfr>_<product>_<sn>-if00-port0
             var parts = name.Split('-', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length < 2) continue;
+            if (parts.Length < 2)
+            {
+                _logger.LogDebug("by-id: skipping {Name} — too few '-' segments", name);
+                continue;
+            }
 
-            // Extract VID / PID from sysfs using the resolved tty name
             var (vid, pid) = ReadVidPidFromSysFs(portPath);
             var sn = ExtractSnFromByIdName(name);
             var mfr = parts.Length >= 2 ? parts[1] : "Unknown";
-            var desc = name;
 
-            var identifier = new DeviceIdentifier(vid, pid, sn, mfr, desc);
-            _logger.LogDebug(
-                "Discovered USB serial device {DeviceKey} on {PortPath} via {Strategy}",
-                identifier.Key,
-                portPath,
-                "by-id");
+            var identifier = new DeviceIdentifier(vid, pid, sn, mfr, name);
+            _logger.LogInformation(
+                "by-id: discovered {Key} on {Port}", identifier.Key, portPath);
 
             yield return (identifier, portPath);
         }
     }
+
+    // ── /sys/bus/usb/devices ─────────────────────────────────────────────────
+
+    private IEnumerable<(DeviceIdentifier, string)> EnumerateSysUsbDevices(
+        CancellationToken token)
+    {
+        if (!Directory.Exists(SysUsbBase))
+        {
+            _logger.LogWarning("SysUsbBase does not exist: {Path}", SysUsbBase);
+            yield break;
+        }
+
+        string[] deviceDirs;
+        try
+        {
+            deviceDirs = Directory.GetDirectories(SysUsbBase);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Cannot list {SysUsbBase}", SysUsbBase);
+            yield break;
+        }
+
+        _logger.LogDebug(
+            "sysfs: found {Count} top-level entries", deviceDirs.Length);
+
+        foreach (var devDir in deviceDirs)
+        {
+            token.ThrowIfCancellationRequested();
+
+            var vid = ReadSysFile(devDir, "idVendor");
+            var pid = ReadSysFile(devDir, "idProduct");
+
+            if (string.IsNullOrEmpty(vid))
+            {
+                _logger.LogDebug(
+                    "sysfs: {Dir} has no idVendor — skipping", devDir);
+                continue;
+            }
+
+            var sn = ReadSysFile(devDir, "serial");
+            var mfr = ReadSysFile(devDir, "manufacturer");
+            var desc = ReadSysFile(devDir, "product");
+
+            _logger.LogInformation(
+                "sysfs: device at {Dir} — VID={Vid} PID={Pid} SN={Sn} MFR={Mfr} DESC={Desc}",
+                devDir, vid, pid, sn, mfr, desc);
+
+            var ttyPorts = FindTtyDescendants(devDir).ToList();
+
+            _logger.LogInformation(
+                "sysfs: FindTtyDescendants({Dir}) → {Count} port(s): [{Ports}]",
+                devDir,
+                ttyPorts.Count,
+                string.Join(", ", ttyPorts));
+
+            foreach (var tty in ttyPorts)
+            {
+                var identifier = new DeviceIdentifier(
+                    vid.ToUpperInvariant(),
+                    pid.ToUpperInvariant(),
+                    sn.ToUpperInvariant(),
+                    mfr,
+                    desc);
+
+                _logger.LogInformation(
+                    "sysfs: yielding {Key} on {Port}", identifier.Key, tty);
+
+                yield return (identifier, tty);
+            }
+        }
+    }
+
+    // ── FindTtyDescendants — uses /sys/class/tty to avoid BFS/colon issues ───
+
+    private List<string> FindTtyDescendants(string baseDir)
+    {
+        var results = new List<string>();
+
+        string baseDirReal;
+        try
+        {
+            baseDirReal = ResolvePath(baseDir);
+            _logger.LogDebug(
+                "FindTtyDescendants: baseDir={BaseDir} resolved={Real}",
+                baseDir, baseDirReal);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "FindTtyDescendants: failed to resolve baseDir {BaseDir}", baseDir);
+            return results;
+        }
+
+        string[] ttyDirs;
+        try
+        {
+            ttyDirs = Directory.GetDirectories(SysTtyClass);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "FindTtyDescendants: cannot list {SysTtyClass}", SysTtyClass);
+            return results;
+        }
+
+        foreach (var ttyDir in ttyDirs)
+        {
+            var name = Path.GetFileName(ttyDir);
+
+            if (!name.StartsWith("ttyUSB", StringComparison.Ordinal) &&
+                !name.StartsWith("ttyACM", StringComparison.Ordinal))
+                continue;
+
+            try
+            {
+                var deviceLink = Path.Combine(ttyDir, "device");
+                var resolved = ResolvePath(deviceLink);
+
+                _logger.LogDebug(
+                    "FindTtyDescendants: {Name} device link → {Resolved}",
+                    name, resolved ?? "(null)");
+
+                if (resolved is not null && resolved.StartsWith(
+                        baseDirReal, StringComparison.Ordinal))
+                {
+                    _logger.LogInformation(
+                        "FindTtyDescendants: {Name} matches {BaseDir} ✓", name, baseDir);
+                    results.Add(Path.Combine("/dev", name));
+                }
+                else
+                {
+                    _logger.LogDebug(
+                        "FindTtyDescendants: {Name} resolved to {Resolved} " +
+                        "which does not start with {Base} — skipping",
+                        name, resolved ?? "(null)", baseDirReal);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "FindTtyDescendants: error processing {Name}", name);
+            }
+        }
+
+        return results;
+    }
+
+    // ── ReadVidPidFromSysFs ───────────────────────────────────────────────────
+
+    private (string vid, string pid) ReadVidPidFromSysFs(string devPath)
+    {
+        var devName = Path.GetFileName(devPath);
+
+        try
+        {
+            var ttyDeviceLink = Path.Combine(SysTtyClass, devName, "device");
+            var interfaceDir = ResolvePath(ttyDeviceLink);
+
+            _logger.LogDebug(
+                "ReadVidPid: {DevName} device link → {InterfaceDir}",
+                devName, interfaceDir ?? "(null)");
+
+            if (interfaceDir is null) return (string.Empty, string.Empty);
+
+            var deviceDir = Path.GetDirectoryName(interfaceDir);
+
+            _logger.LogDebug(
+                "ReadVidPid: deviceDir={DeviceDir}", deviceDir ?? "(null)");
+
+            if (deviceDir is null) return (string.Empty, string.Empty);
+
+            var vid = ReadSysFile(deviceDir, "idVendor").ToUpperInvariant();
+            var pid = ReadSysFile(deviceDir, "idProduct").ToUpperInvariant();
+
+            _logger.LogDebug(
+                "ReadVidPid: {DevName} → VID={Vid} PID={Pid}", devName, vid, pid);
+
+            return (vid, pid);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "ReadVidPid: failed for {DevName}", devName);
+            return (string.Empty, string.Empty);
+        }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static string? ResolveSymlink(string path)
     {
@@ -224,120 +484,29 @@ public sealed class LinuxUsbDeviceEnumerator : IUsbDeviceEnumerator
         catch { return null; }
     }
 
+    private static string ResolvePath(string path)
+    {
+        try
+        {
+            return new FileInfo(path)
+                .ResolveLinkTarget(returnFinalTarget: true)
+                ?.FullName ?? Path.GetFullPath(path);
+        }
+        catch
+        {
+            return Path.GetFullPath(path);
+        }
+    }
+
     private static string ExtractSnFromByIdName(string name)
     {
-        // usb-<mfr>_<product>_<SN>-<suffix>
-        // SN is the last _-delimited token before the first '-if' or '-port'
         var withoutPrefix = name.StartsWith("usb-") ? name[4..] : name;
         var ifIdx = withoutPrefix.IndexOf("-if", StringComparison.Ordinal);
         var portIdx = withoutPrefix.IndexOf("-port", StringComparison.Ordinal);
         var end = new[] { ifIdx, portIdx }.Where(i => i >= 0).DefaultIfEmpty(-1).Min();
-
         var core = end >= 0 ? withoutPrefix[..end] : withoutPrefix;
-        var underscored = core.Split('_');
-        return underscored.Length >= 3 ? underscored[^1].ToUpperInvariant() : string.Empty;
-    }
-
-    // ── /sys/bus/usb/devices ─────────────────────────────────────────────────
-
-    private IEnumerable<(DeviceIdentifier, string)> EnumerateSysUsbDevices(CancellationToken token)
-    {
-        if (!Directory.Exists(SysUsbBase)) yield break;
-
-        foreach (var devDir in Directory.GetDirectories(SysUsbBase))
-        {
-            token.ThrowIfCancellationRequested();
-
-            var vid = ReadSysFile(devDir, "idVendor");
-            var pid = ReadSysFile(devDir, "idProduct");
-            var sn = ReadSysFile(devDir, "serial");
-            var mfr = ReadSysFile(devDir, "manufacturer");
-            var desc = ReadSysFile(devDir, "product");
-
-            if (string.IsNullOrEmpty(vid)) continue;
-
-            // Look for tty children: devDir/<intf>/<intf>.1/tty/ttyUSB0
-            var ttyPorts = FindTtyDescendants(devDir);
-            foreach (var tty in ttyPorts)
-            {
-                var identifier = new DeviceIdentifier(
-                    vid.ToUpperInvariant(),
-                    pid.ToUpperInvariant(),
-                    sn.ToUpperInvariant(),
-                    mfr,
-                    desc);
-
-                _logger.LogDebug(
-                    "Discovered USB serial device {DeviceKey} on {PortPath} via {Strategy}",
-                    identifier.Key,
-                    tty,
-                    "sysfs");
-                yield return (identifier, tty);
-            }
-        }
-    }
-
-    private static IEnumerable<string> FindTtyDescendants(string baseDir)
-    {
-        // Breadth-first search for directories named "tty".
-        // Cannot yield inside a try/catch (CS1626), so results are collected
-        // into a list and yielded after the loop completes.
-        var queue = new Queue<string>();
-        var results = new List<string>();
-        queue.Enqueue(baseDir);
-
-        while (queue.Count > 0)
-        {
-            var dir = queue.Dequeue();
-            var toEnqueue = new List<string>();
-
-            try
-            {
-                foreach (var sub in Directory.GetDirectories(dir))
-                {
-                    if (Path.GetFileName(sub) == "tty")
-                    {
-                        foreach (var ttyEntry in Directory.GetDirectories(sub))
-                            results.Add(Path.Combine("/dev", Path.GetFileName(ttyEntry)));
-
-                        continue; // don't recurse into tty/
-                    }
-
-                    toEnqueue.Add(sub);
-                }
-            }
-            catch { /* permission denied on some sysfs paths — skip silently */ }
-
-            foreach (var sub in toEnqueue)
-                queue.Enqueue(sub);
-        }
-
-        foreach (var path in results)
-            yield return path;
-    }
-
-    private static (string vid, string pid) ReadVidPidFromSysFs(string devPath)
-    {
-        // e.g. /dev/ttyUSB0 → /sys/bus/usb-serial/drivers/ftdi_sio/ttyUSB0/../../..
-        // Simpler: walk /sys/bus/usb/devices looking for matching tty
-        var devName = Path.GetFileName(devPath);
-
-        try
-        {
-            foreach (var dir in Directory.GetDirectories(SysUsbBase))
-            {
-                var tty = FindTtyDescendants(dir)
-                    .Any(t => Path.GetFileName(t) == devName);
-
-                if (!tty) continue;
-
-                return (ReadSysFile(dir, "idVendor").ToUpperInvariant(),
-                        ReadSysFile(dir, "idProduct").ToUpperInvariant());
-            }
-        }
-        catch { }
-
-        return (string.Empty, string.Empty);
+        var parts = core.Split('_');
+        return parts.Length >= 3 ? parts[^1].ToUpperInvariant() : string.Empty;
     }
 
     private static string ReadSysFile(string dir, string file)

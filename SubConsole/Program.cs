@@ -26,6 +26,8 @@ try
             .ReadFrom.Configuration(context.Configuration)
             .ReadFrom.Services(services)
             .Enrich.FromLogContext())
+        // FIX 1: Hook the systemd lifetime manager into the host builder chain
+        .UseSystemd()
         .ConfigureServices((context, services) =>
         {
             services.AddSingleton<TcpHostService>();
@@ -52,15 +54,10 @@ try
             }
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                // WmiMonitorService uses System.Management (NuGet) so it works
-                // on any TFM — no net10.0-windows required.
                 services.AddHostedService<WmiMonitorService>();
             }
-            else
-            {
-                // macOS, FreeBSD, etc. — no monitor available.
-                // Ports must be opened manually; the rest of the service still works.
-            }
+
+            // NOTE: REMOVED services.AddSystemd() from here as it belongs on the host builder chain above.
 
             services.AddSerialPortManager();
             services.AddCameraManager();
@@ -69,6 +66,7 @@ try
                 context.Configuration.GetSection("TcpSettings"));
         })
         .Build();
+
 
     var loggerFactory = host.Services.GetRequiredService<ILoggerFactory>();
 
@@ -87,6 +85,7 @@ try
 catch (Exception ex)
 {
     Log.Fatal(ex, "Application crashed unexpectedly");
+    throw;
 }
 finally
 {

@@ -225,51 +225,57 @@
 
         <!-- ROW 4 – Terminal output -->
         <Border Grid.Row="5"
-                Stroke="Gray"
-                StrokeThickness="1"
-                Padding="6">
+        Stroke="Gray"
+        StrokeThickness="1"
+        Padding="6">
             <CollectionView x:Name="TerminalView"
-                            ItemsSource="{Binding TerminalLines}"
-                            SelectionMode="None">
+                    ItemsSource="{Binding TerminalLines}"
+                    SelectionMode="None">
 
                 <CollectionView.ItemTemplate>
                     <DataTemplate x:DataType="vm:TerminalLine">
-                        <Label Text="{Binding Text}"
-                               FontFamily="Courier New"
-                               FontSize="12"
-                               LineBreakMode="WordWrap"
-                               Padding="0,1">
-                            <Label.Triggers>
-                                <DataTrigger TargetType="Label" Binding="{Binding Kind}" Value="Command">
+                        <!-- FIX: Changed Label to Editor, set IsReadOnly and transparent backgrounds -->
+                        <Editor Text="{Binding Text}"
+                        FontFamily="Courier New"
+                        FontSize="12"
+                        IsReadOnly="True"
+                        AutoSize="TextChanges"
+                        BackgroundColor="Transparent"
+                        Margin="0"
+                       
+                        >
+                            <Editor.Triggers>
+                                <DataTrigger TargetType="Editor" Binding="{Binding Kind}" Value="Command">
                                     <Setter Property="TextColor" Value="Orange" />
                                     <Setter Property="FontAttributes" Value="Bold" />
                                 </DataTrigger>
-                                <DataTrigger TargetType="Label" Binding="{Binding Kind}" Value="Error">
+                                <DataTrigger TargetType="Editor" Binding="{Binding Kind}" Value="Error">
                                     <Setter Property="TextColor" Value="Red" />
                                 </DataTrigger>
-                                <DataTrigger TargetType="Label" Binding="{Binding Kind}" Value="Info">
+                                <DataTrigger TargetType="Editor" Binding="{Binding Kind}" Value="Info">
                                     <Setter Property="TextColor" Value="CornflowerBlue" />
                                 </DataTrigger>
-                                <DataTrigger TargetType="Label" Binding="{Binding Kind}" Value="Success">
+                                <DataTrigger TargetType="Editor" Binding="{Binding Kind}" Value="Success">
                                     <Setter Property="TextColor" Value="LimeGreen" />
                                 </DataTrigger>
-                                <DataTrigger TargetType="Label" Binding="{Binding Kind}" Value="Stream">
+                                <DataTrigger TargetType="Editor" Binding="{Binding Kind}" Value="Stream">
                                     <Setter Property="TextColor" Value="MediumAquamarine" />
                                 </DataTrigger>
-                            </Label.Triggers>
-                        </Label>
+                            </Editor.Triggers>
+                        </Editor>
                     </DataTemplate>
                 </CollectionView.ItemTemplate>
 
                 <CollectionView.EmptyView>
                     <Label Text="No output yet. Connect and run a command."
-                           HorizontalOptions="Center"
-                           VerticalOptions="Center"
-                           Margin="0,40"
-                           TextColor="Gray" />
+                   HorizontalOptions="Center"
+                   VerticalOptions="Center"
+                   Margin="0,40"
+                   TextColor="Gray" />
                 </CollectionView.EmptyView>
             </CollectionView>
         </Border>
+
 
         <!-- ROW 5 – Command input -->
         <Grid Grid.Row="6"

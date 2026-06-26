@@ -180,7 +180,7 @@ namespace SubControlMAUI.ViewModels
         {
             IsBusy = true;
 
-            _sQLiteService.config.IPAddress = "10.1.16.144";
+          //  _sQLiteService.config.IPAddress = "192.168.0.173";
 
             AddLine($"Connecting to {_sQLiteService.config.IPAddress} as '{UserName}'…", TerminalLineKind.Info);
 

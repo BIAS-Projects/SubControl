@@ -70,6 +70,28 @@ public abstract class UsbMonitorServiceBase : BackgroundService
 
 public sealed class UdevMonitorService : UsbMonitorServiceBase
 {
+    // ── poll() interop ────────────────────────────────────────────────────────
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PollFd
+    {
+        public int fd;
+        public short events;
+        public short revents;
+    }
+
+    private const short POLLIN = 0x0001;
+
+    // Timeout in milliseconds for each poll() call.
+    // Short enough to check stoppingToken regularly; not so short it spins.
+    private const int PollTimeoutMs = 500;
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int poll(
+        [In, Out] PollFd[] fds, uint nfds, int timeout);
+
+    // ── Constructor ───────────────────────────────────────────────────────────
+
     public UdevMonitorService(ILogger<UdevMonitorService> logger)
         : base(logger) { }
 
@@ -124,22 +146,31 @@ public sealed class UdevMonitorService : UsbMonitorServiceBase
 
             Udev.udev_monitor_enable_receiving(monitor);
 
-            var fd = Udev.udev_monitor_get_fd(monitor);
-            var buffer = new byte[1];
+            int fd = Udev.udev_monitor_get_fd(monitor);
 
             Logger.LogInformation("Udev monitor started (fd={Fd})", fd);
 
+            var pollFds = new PollFd[]
+            {
+                new PollFd { fd = fd, events = POLLIN }
+            };
+
             while (!stoppingToken.IsCancellationRequested)
             {
-                int read = 0;
+                // ── Wait for the fd to become readable ────────────────────────
+                //
+                // poll() blocks in native code for up to PollTimeoutMs ms.
+                // Offloading to the thread pool keeps the async scheduler free.
+                // On timeout (ret == 0) we loop back to check stoppingToken.
+                // On error (ret < 0) we log errno, delay, and retry rather than
+                // spinning — this replaces the old read()-returns-(-1) hot loop.
+
+                int ret;
 
                 try
                 {
-                    // read() blocks until the kernel signals activity on the
-                    // netlink socket.  Offload to the thread pool so we do not
-                    // tie up an async scheduler thread indefinitely.
-                    read = await Task.Run(
-                        () => ReadFd(fd, buffer, 1),
+                    ret = await Task.Run(
+                        () => poll(pollFds, 1, PollTimeoutMs),
                         stoppingToken);
                 }
                 catch (OperationCanceledException) { break; }
@@ -147,20 +178,32 @@ public sealed class UdevMonitorService : UsbMonitorServiceBase
                 {
                     Logger.LogError(
                         ex,
-                        "Error reading from udev monitor (fd={Fd})",
-                        fd);
+                        "Unexpected error awaiting poll() on udev fd={Fd}", fd);
+                    await Task.Delay(1000, stoppingToken);
                     continue;
                 }
 
-                if (read <= 0)
+                if (ret < 0)
                 {
-                    Logger.LogDebug(
-                        "Udev monitor read returned {ReadBytes}",
-                        read);
+                    int errno = Marshal.GetLastWin32Error();
+                    Logger.LogError(
+                        "poll() on udev fd={Fd} failed (errno={Errno})",
+                        fd, errno);
+                    // Back off to avoid a tight error loop
+                    await Task.Delay(1000, stoppingToken);
                     continue;
                 }
 
-                var device = Udev.udev_monitor_receive_device(monitor);
+                if (ret == 0)
+                {
+                    // Timeout — no event ready; loop to check stoppingToken
+                    continue;
+                }
+
+                // ── fd is readable: receive the pending device event ───────────
+
+                IntPtr device = Udev.udev_monitor_receive_device(monitor);
+
                 if (device == IntPtr.Zero)
                 {
                     Logger.LogWarning(
@@ -218,16 +261,10 @@ public sealed class UdevMonitorService : UsbMonitorServiceBase
 
     // ── Native helpers ────────────────────────────────────────────────────────
 
-    private static string PtrToString(System.IntPtr ptr) =>
-        ptr == System.IntPtr.Zero
+    private static string PtrToString(IntPtr ptr) =>
+        ptr == IntPtr.Zero
             ? ""
-            : System.Runtime.InteropServices.Marshal.PtrToStringAnsi(ptr) ?? "";
-
-    [System.Runtime.InteropServices.DllImport("libc", SetLastError = true)]
-    private static extern int read(int fd, byte[] buffer, int count);
-
-    private static int ReadFd(int fd, byte[] buffer, int count) =>
-        read(fd, buffer, count);
+            : Marshal.PtrToStringAnsi(ptr) ?? "";
 }
 
 // ── libudev P/Invoke declarations ─────────────────────────────────────────────
@@ -236,52 +273,48 @@ internal static class Udev
 {
     private const string Lib = "libudev.so.1";
 
-    [System.Runtime.InteropServices.DllImport(Lib)]
-    internal static extern System.IntPtr udev_new();
+    [DllImport(Lib)]
+    internal static extern IntPtr udev_new();
 
-    [System.Runtime.InteropServices.DllImport(Lib)]
-    internal static extern void udev_unref(System.IntPtr udev);
+    [DllImport(Lib)]
+    internal static extern void udev_unref(IntPtr udev);
 
-    [System.Runtime.InteropServices.DllImport(Lib)]
-    internal static extern System.IntPtr udev_monitor_new_from_netlink(
-        System.IntPtr udev,
-        [System.Runtime.InteropServices.MarshalAs(
-            System.Runtime.InteropServices.UnmanagedType.LPStr)] string name);
+    [DllImport(Lib)]
+    internal static extern IntPtr udev_monitor_new_from_netlink(
+        IntPtr udev,
+        [MarshalAs(UnmanagedType.LPStr)] string name);
 
-    [System.Runtime.InteropServices.DllImport(Lib)]
-    internal static extern void udev_monitor_unref(System.IntPtr monitor);
+    [DllImport(Lib)]
+    internal static extern void udev_monitor_unref(IntPtr monitor);
 
-    [System.Runtime.InteropServices.DllImport(Lib)]
+    [DllImport(Lib)]
     internal static extern int udev_monitor_filter_add_match_subsystem_devtype(
-        System.IntPtr monitor,
-        [System.Runtime.InteropServices.MarshalAs(
-            System.Runtime.InteropServices.UnmanagedType.LPStr)] string subsystem,
-        [System.Runtime.InteropServices.MarshalAs(
-            System.Runtime.InteropServices.UnmanagedType.LPStr)] string? devtype);
+        IntPtr monitor,
+        [MarshalAs(UnmanagedType.LPStr)] string subsystem,
+        [MarshalAs(UnmanagedType.LPStr)] string? devtype);
 
-    [System.Runtime.InteropServices.DllImport(Lib)]
-    internal static extern int udev_monitor_enable_receiving(System.IntPtr monitor);
+    [DllImport(Lib)]
+    internal static extern int udev_monitor_enable_receiving(IntPtr monitor);
 
-    [System.Runtime.InteropServices.DllImport(Lib)]
-    internal static extern int udev_monitor_get_fd(System.IntPtr monitor);
+    [DllImport(Lib)]
+    internal static extern int udev_monitor_get_fd(IntPtr monitor);
 
-    [System.Runtime.InteropServices.DllImport(Lib)]
-    internal static extern System.IntPtr udev_monitor_receive_device(System.IntPtr monitor);
+    [DllImport(Lib)]
+    internal static extern IntPtr udev_monitor_receive_device(IntPtr monitor);
 
-    [System.Runtime.InteropServices.DllImport(Lib)]
-    internal static extern void udev_device_unref(System.IntPtr device);
+    [DllImport(Lib)]
+    internal static extern void udev_device_unref(IntPtr device);
 
-    [System.Runtime.InteropServices.DllImport(Lib)]
-    internal static extern System.IntPtr udev_device_get_action(System.IntPtr device);
+    [DllImport(Lib)]
+    internal static extern IntPtr udev_device_get_action(IntPtr device);
 
-    [System.Runtime.InteropServices.DllImport(Lib)]
-    internal static extern System.IntPtr udev_device_get_devnode(System.IntPtr device);
+    [DllImport(Lib)]
+    internal static extern IntPtr udev_device_get_devnode(IntPtr device);
 
-    [System.Runtime.InteropServices.DllImport(Lib)]
-    internal static extern System.IntPtr udev_device_get_property_value(
-        System.IntPtr device,
-        [System.Runtime.InteropServices.MarshalAs(
-            System.Runtime.InteropServices.UnmanagedType.LPStr)] string key);
+    [DllImport(Lib)]
+    internal static extern IntPtr udev_device_get_property_value(
+        IntPtr device,
+        [MarshalAs(UnmanagedType.LPStr)] string key);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

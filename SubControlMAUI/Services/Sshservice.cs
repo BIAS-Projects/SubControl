@@ -505,6 +505,24 @@ namespace SubControlMAUI.Services
 
             progress?.Report(($"Current files in {targetFolder} {contents.StdOut}", 100));
 
+
+            // 1. Force your service user as the absolute recursive owner of the entire deployment folder structure
+            await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S chown -R {Username}:{Username} \"{remoteFolder}\"", cancellationToken);
+
+            // 2. Set directory guidelines: Owner can Read/Write/Execute, Group/Others can read/enter
+            await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S chmod -R 755 \"{remoteFolder}\"", cancellationToken);
+
+            // 3. Explicitly guarantee the main application binary has execution rights flags
+            await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S chmod +x \"{remoteFolder}\"/{executableName}", cancellationToken);
+
+            // Check the folder permissions are in the destination dierctory:
+            contents = await ExecuteCommandAsync($"ls -la \"{remoteFolder}\"", cancellationToken);
+
+            _logger.LogInformation("Current files in {installDir}:\n{Files}", remoteFolder, contents.StdOut);
+
+            progress?.Report(($"Current files in {remoteFolder} {contents.StdOut}", 100));
+
+
             // 5. Mark the entry-point executable as executable using sudo
             var exePath = $"{targetFolder}/{executableName}";
             await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S chmod +x \"{exePath}\"", cancellationToken);
