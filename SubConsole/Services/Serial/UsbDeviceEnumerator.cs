@@ -241,6 +241,20 @@ public sealed class LinuxUsbDeviceEnumerator : IUsbDeviceEnumerator
                 .ToList()
                 .AsReadOnly();
 
+
+            _logger.LogInformation(
+    "Linux enumeration summary:");
+
+            foreach (var device in deduped)
+            {
+                _logger.LogInformation(
+                    "  {Port}  VID={Vid} PID={Pid} SN={Sn}",
+                    device.Item2,
+                    device.Item1.VendorId,
+                    device.Item1.ProductId,
+                    device.Item1.SerialNumber);
+            }
+
             _logger.LogInformation(
                 "=== Linux USB enumeration complete. Returning {Count} device(s) ===",
                 deduped.Count);
@@ -403,23 +417,37 @@ public sealed class LinuxUsbDeviceEnumerator : IUsbDeviceEnumerator
                 var deviceLink = Path.Combine(ttyDir, "device");
                 var resolved = ResolvePath(deviceLink);
 
-                _logger.LogDebug(
-                    "FindTtyDescendants: {Name} device link → {Resolved}",
-                    name, resolved ?? "(null)");
+                _logger.LogInformation(
+                    "FindTtyDescendants\n" +
+                    "  tty      : {Tty}\n" +
+                    "  base     : {Base}\n" +
+                    "  resolved : {Resolved}",
+                    name,
+                    baseDirReal,
+                    resolved ?? "(null)");
 
-                if (resolved is not null && resolved.StartsWith(
-                        baseDirReal, StringComparison.Ordinal))
+                if (resolved is not null &&
+                    resolved.StartsWith(baseDirReal, StringComparison.Ordinal))
                 {
                     _logger.LogInformation(
-                        "FindTtyDescendants: {Name} matches {BaseDir} ✓", name, baseDir);
+                        "FindTtyDescendants: MATCH -> {Tty}",
+                        name);
+                    baseDirReal = ResolvePath(baseDir);
+
+                    _logger.LogInformation(
+    "Searching USB device:\n" +
+    "  sysfs dir : {BaseDir}\n" +
+    "  real path : {RealPath}",
+    baseDir,
+    baseDirReal);
+
                     results.Add(Path.Combine("/dev", name));
                 }
                 else
                 {
-                    _logger.LogDebug(
-                        "FindTtyDescendants: {Name} resolved to {Resolved} " +
-                        "which does not start with {Base} — skipping",
-                        name, resolved ?? "(null)", baseDirReal);
+                    _logger.LogInformation(
+                        "FindTtyDescendants: NO MATCH -> {Tty}",
+                        name);
                 }
             }
             catch (Exception ex)

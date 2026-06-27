@@ -4,6 +4,7 @@ using SubConsole.Models;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -255,32 +256,79 @@ public static class UsbCameraMapper
             _logger?.LogError(ex, "Linux USB camera enumeration failed");
         }
 
-        return results;
+        // Filter out duplicate video nodes mapping to the same physical device ID
+        return results.DistinctBy(c => c.DeviceId).ToList();
     }
 
     /// <summary>
     /// Checks the V4L2 capabilities file to confirm this is a capture node,
     /// not a metadata or output-only node.
     /// </summary>
-    private static bool IsVideoCaptureNode(string sysfsPath)
+    //private static bool IsVideoCaptureNode(string sysfsPath)
+    //{
+    //    // The "name" file is present on real capture nodes; metadata nodes
+    //    // often land under a different subdirectory.  A belt-and-braces check
+    //    // is to look for the capabilities file exposed by the driver.
+    //    var namePath = Path.Combine(sysfsPath, "name");
+    //    return File.Exists(namePath); // crude but effective for most drivers
+    //}
+
+    private static bool IsVideoCaptureNode(string videoPath)
     {
-        // The "name" file is present on real capture nodes; metadata nodes
-        // often land under a different subdirectory.  A belt-and-braces check
-        // is to look for the capabilities file exposed by the driver.
-        var namePath = Path.Combine(sysfsPath, "name");
-        return File.Exists(namePath); // crude but effective for most drivers
+        try
+        {
+            string namePath = Path.Combine(videoPath, "name");
+            if (File.Exists(namePath))
+            {
+                string name = File.ReadAllText(namePath);
+
+                // Case-insensitive checks without altering the original string
+                if (name.Contains("metadata", StringComparison.OrdinalIgnoreCase) ||
+                    name.Contains("telemetry", StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
+
+
 
     private static string? ResolveSysfsPath(string path)
     {
         try
         {
             var deviceLink = Path.Combine(path, "device");
-            if (!Directory.Exists(deviceLink)) return null;
 
-            var resolved = new DirectoryInfo(deviceLink)
-                .ResolveLinkTarget(returnFinalTarget: true);
+            // Fix: Handles both /sys/class folder structures and direct symlink files cleanly
+            string targetLink = Directory.Exists(deviceLink) ? deviceLink : path;
 
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = "readlink",
+                    Arguments = $"-f \"{targetLink}\"",
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using var process = Process.Start(startInfo);
+                if (process != null)
+                {
+                    string output = process.StandardOutput.ReadToEnd().Trim();
+                    process.WaitForExit();
+                    if (Directory.Exists(output) || File.Exists(output)) return output;
+                }
+            }
+
+            var resolved = new DirectoryInfo(targetLink).ResolveLinkTarget(returnFinalTarget: true);
             return resolved?.FullName;
         }
         catch
@@ -288,6 +336,7 @@ public static class UsbCameraMapper
             return null;
         }
     }
+
 
     private static string? FindUsbDeviceNode(string startPath)
     {

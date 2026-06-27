@@ -1,8 +1,10 @@
 ﻿using Microsoft.Extensions.Logging;
+using Serilog.Core;
 using SubConsole.Models;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -262,13 +264,33 @@ public static class UsbSerialPortMapper
 
             if (!Directory.Exists(ttyRoot))
             {
-                System.Diagnostics.Debug.WriteLine(
-                    "[UsbSerialPortMapper] /sys/class/tty not found");
+                _logger?.LogDebug("[UsbSerialPortMapper] /sys/class/tty not found");
                 return results;
+            }
+
+            // Cache the /dev/serial/by-id directory entries if it exists to easily match persistent paths
+            var byIdMapping = new Dictionary<string, string>();
+            var byIdRoot = "/dev/serial/by-id";
+            if (Directory.Exists(byIdRoot))
+            {
+                foreach (var file in Directory.GetFiles(byIdRoot))
+                {
+                    var target = ResolveSysfsPath(file);
+                    if (target != null)
+                    {
+                        var targetName = Path.GetFileName(target);
+                        if (!byIdMapping.ContainsKey(targetName))
+                        {
+                            byIdMapping[targetName] = file;
+                        }
+                    }
+                }
             }
 
             foreach (var ttyPath in Directory.GetDirectories(ttyRoot))
             {
+                token.ThrowIfCancellationRequested();
+
                 var ttyName = Path.GetFileName(ttyPath);
 
                 if (!ttyName.StartsWith("ttyUSB", StringComparison.Ordinal) &&
@@ -279,56 +301,102 @@ public static class UsbSerialPortMapper
                 var realPath = ResolveSysfsPath(ttyPath);
                 if (realPath == null)
                 {
-                    System.Diagnostics.Debug.WriteLine(
-                        $"[UsbSerialPortMapper] Could not resolve sysfs path for {ttyName}");
+                    _logger?.LogDebug($"[UsbSerialPortMapper] Could not resolve sysfs path for {ttyName}");
                     continue;
                 }
 
                 var usbDevicePath = FindUsbDeviceNode(realPath);
                 if (usbDevicePath == null)
                 {
-                    System.Diagnostics.Debug.WriteLine(
-                        $"[UsbSerialPortMapper] No USB device node found for {ttyName}");
+                    _logger?.LogInformation($"[UsbSerialPortMapper] No USB device node found for {ttyName}");
                     continue;
                 }
 
+                // FIX: Check realPath first. If it's not there, climb to parent to find 'bInterfaceNumber'
+                string? interfaceNum = ReadSysfsFile(realPath, "bInterfaceNumber");
+                if (string.IsNullOrEmpty(interfaceNum))
+                {
+                    var parentDir = Directory.GetParent(realPath);
+                    if (parentDir != null)
+                    {
+                        interfaceNum = ReadSysfsFile(parentDir.FullName, "bInterfaceNumber");
+                    }
+                }
+
+                // Final fallback if the system doesn't expose it
+                interfaceNum ??= "00";
+
+                string rawSerial = ReadSysfsFile(usbDevicePath, "serial") ?? "UnknownSerial";
+
+                // Determine if a persistent /dev/serial/by-id shortcut exists for this port
+                string persistentPortName = byIdMapping.TryGetValue(ttyName, out var matchedPath)
+                    ? matchedPath
+                    : $"/dev/{ttyName}";
+
                 var info = new UsbSerialPortInfo
                 {
-                    PortName = $"/dev/{ttyName}",
+                    PortName = persistentPortName,
                     VendorId = ReadSysfsFile(usbDevicePath, "idVendor"),
                     ProductId = ReadSysfsFile(usbDevicePath, "idProduct"),
-                    SerialNumber = ReadSysfsFile(usbDevicePath, "serial"),
+
+                    // This will now successfully output "BP04126-01-00", "BP04126-01-01", etc.
+                    SerialNumber = $"{rawSerial}-{interfaceNum}",
+
                     Description = ReadSysfsFile(usbDevicePath, "product"),
                     DeviceId = usbDevicePath
                 };
 
+                // Recalculate your downstream tracking 'Key' property inside your wrapper if needed
+                // e.g., info.Key = $"{info.VendorId}:{info.ProductId}:{info.DeviceId}:{info.SerialNumber}";
+
                 results.Add(info);
 
-                System.Diagnostics.Debug.WriteLine(
+                _logger?.LogDebug(
                     $"[sysfs] Port={info.PortName} VID={info.VendorId} " +
                     $"PID={info.ProductId} SN={info.SerialNumber} " +
                     $"Desc={info.Description}");
             }
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine(
-                $"[UsbSerialPortMapper] Linux enumeration failed: {ex.Message}");
+            _logger?.LogError($"[UsbSerialPortMapper] Linux enumeration failed: {ex.Message}");
         }
 
         return results;
     }
 
-    private static string? ResolveSysfsPath(string ttyPath)
+    private static string? ResolveSysfsPath(string path)
     {
         try
         {
-            var deviceLink = Path.Combine(ttyPath, "device");
-            if (!Directory.Exists(deviceLink)) return null;
+            var deviceLink = Path.Combine(path, "device");
+            string targetLink = Directory.Exists(deviceLink) ? deviceLink : path;
 
-            var resolved = new DirectoryInfo(deviceLink)
-                .ResolveLinkTarget(returnFinalTarget: true);
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = "readlink",
+                    Arguments = $"-f \"{targetLink}\"",
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
 
+                using var process = Process.Start(startInfo);
+                if (process != null)
+                {
+                    string output = process.StandardOutput.ReadToEnd().Trim();
+                    process.WaitForExit();
+                    if (Directory.Exists(output) || File.Exists(output)) return output;
+                }
+            }
+
+            var resolved = new DirectoryInfo(targetLink).ResolveLinkTarget(returnFinalTarget: true);
             return resolved?.FullName;
         }
         catch
@@ -337,12 +405,18 @@ public static class UsbSerialPortMapper
         }
     }
 
+
+
     private static string? FindUsbDeviceNode(string startPath)
     {
+        _logger?.LogDebug(
+            string.Join(Environment.NewLine, Directory.GetFileSystemEntries(startPath)));
+
         var current = new DirectoryInfo(startPath);
 
         while (current != null && current.Exists)
         {
+
             if (File.Exists(Path.Combine(current.FullName, "idVendor")))
                 return current.FullName;
 

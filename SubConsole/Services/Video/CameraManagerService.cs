@@ -468,48 +468,60 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
 
 
     public async Task<OperationResultWithValue<string>> CheckFfmpegAsync(
-    CancellationToken token = default)
-{
-    try
+        CancellationToken token = default)
     {
-        var fileName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-            ? "ffmpeg.exe"
-            : "ffmpeg";
-
-        var psi = new ProcessStartInfo
+        try
         {
-            FileName = fileName,
-            Arguments = "-version",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
+            var fileName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                ? "ffmpeg.exe"
+                : "ffmpeg";
 
-        using var process = Process.Start(psi);
-        if (process is null)
-            return OperationResultWithValue<string>.Failure("Failed to start ffmpeg process");
+            var psi = new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = "-version",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true // Prevents flashing a command window on Windows
+            };
 
-        var output = await process.StandardOutput.ReadLineAsync();
-        var error = await process.StandardError.ReadToEndAsync();
+            using var process = Process.Start(psi);
+            if (process is null)
+                return OperationResultWithValue<string>.Failure("Failed to start ffmpeg process");
 
-        await process.WaitForExitAsync(token);
+            // FIX: Start reading both streams completely to prevent OS pipe deadlocks
+            var outputTask = process.StandardOutput.ReadToEndAsync(token);
+            var errorTask = process.StandardError.ReadToEndAsync(token);
 
-        if (process.ExitCode != 0)
+            // Wait for the process to finish execution
+            await process.WaitForExitAsync(token);
+
+            // Await the reading tasks to ensure we have all the text data
+            var fullOutput = await outputTask;
+            var fullError = await errorTask;
+
+            if (process.ExitCode != 0)
+            {
+                return OperationResultWithValue<string>.Failure(
+                    $"ffmpeg exited with code {process.ExitCode}: {fullError}");
+            }
+
+            // Grab just the first line of the captured output for your success string
+            string firstLine = !string.IsNullOrWhiteSpace(fullOutput)
+                ? fullOutput.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)[0]
+                : "ffmpeg OK";
+
+            return OperationResultWithValue<string>.Success(firstLine);
+        }
+        catch (Exception ex)
         {
             return OperationResultWithValue<string>.Failure(
-                $"ffmpeg exited with code {process.ExitCode}: {error}");
+                $"ffmpeg not found or failed to execute: {ex.Message}");
         }
-
-        return OperationResultWithValue<string>.Success(output ?? "ffmpeg OK");
     }
-    catch (Exception ex)
-    {
-        return OperationResultWithValue<string>.Failure(
-            $"ffmpeg not found or failed to execute: {ex.Message}");
-    }
-}
 
-public async Task<OperationResultWithValue<string>> GetMediaMtxVersionAsync(
+    public async Task<OperationResultWithValue<string>> GetMediaMtxVersionAsync(
     CancellationToken token = default)
     {
         _logger.LogInformation("Checking MediaMTX version");
