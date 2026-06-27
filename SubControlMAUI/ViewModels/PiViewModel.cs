@@ -78,6 +78,7 @@ namespace SubControlMAUI.ViewModels
         [NotifyCanExecuteChangedFor(nameof(StopStreamCommand))]
         [NotifyCanExecuteChangedFor(nameof(DeployMediaMtxCommand))]
         [NotifyCanExecuteChangedFor(nameof(DeployDotNetAppCommand))]
+        [NotifyCanExecuteChangedFor(nameof(DeployFfmpegCommand))]
         private bool isConnected;
 
         [ObservableProperty]
@@ -123,6 +124,32 @@ namespace SubControlMAUI.ViewModels
         [NotifyCanExecuteChangedFor(nameof(DeployMediaMtxCommand))]
         private bool isDeploying;
 
+        // ── FFmpeg deployment properties ──────────────────────────────────────
+
+        [ObservableProperty]
+        [NotifyCanExecuteChangedFor(nameof(DeployFfmpegCommand))]
+        private string ffmpegLocalPath = string.Empty;
+
+        [ObservableProperty]
+        private string ffmpegInstallDir = "/usr/local/bin";
+
+        [ObservableProperty]
+        private string ffmpegServiceUser = "root";
+
+        [ObservableProperty]
+        [NotifyPropertyChangedFor(nameof(FfmpegDeployProgressConverted))]
+        private double ffmpegDeployProgress;
+
+        // Converts double (0-100) to native MAUI ProgressBar range (0.0 – 1.0)
+        public double FfmpegDeployProgressConverted => FfmpegDeployProgress / 100.0;
+
+        [ObservableProperty]
+        private string ffmpegDeployStatus = string.Empty;
+
+        [ObservableProperty]
+        [NotifyCanExecuteChangedFor(nameof(DeployFfmpegCommand))]
+        private bool isFfmpegDeploying;
+
         /// <summary>All lines displayed in the terminal panel.</summary>
         public ObservableCollection<TerminalLine> TerminalLines { get; }
 
@@ -131,15 +158,8 @@ namespace SubControlMAUI.ViewModels
 
         private int _historyIndex = -1;
 
-
-
-
-
-
-
         [ObservableProperty]
-       [NotifyCanExecuteChangedFor(nameof(DeployDotNetAppCommand))]
-   //     [NotifyCanExecuteChangedFor(nameof(DeployDotNetApp))]
+        [NotifyCanExecuteChangedFor(nameof(DeployDotNetAppCommand))]
         private string dotNetLocalPath = "D:\\repository\\SubControl\\SubConsole\\bin\\Debug\\net10.0\\publish\\linux-arm64";
 
         [ObservableProperty]
@@ -165,22 +185,12 @@ namespace SubControlMAUI.ViewModels
         [NotifyCanExecuteChangedFor(nameof(DeployDotNetAppCommand))]
         private bool isDotNetDeploying;
 
-
-
-
-
-
-
-
-
         // ── Connection commands ───────────────────────────────────────────────
 
         [RelayCommand(CanExecute = nameof(CanConnect))]
         private async Task Connect()
         {
             IsBusy = true;
-
-          //  _sQLiteService.config.IPAddress = "192.168.0.173";
 
             AddLine($"Connecting to {_sQLiteService.config.IPAddress} as '{UserName}'…", TerminalLineKind.Info);
 
@@ -404,6 +414,23 @@ namespace SubControlMAUI.ViewModels
 
                 AddLine("✓ MediaMTX deployed, enabled on boot, and started.", TerminalLineKind.Success);
 
+                // ── Enable the API programmatically via SSH ──
+                AddLine("▶ Configuring MediaMTX API...", TerminalLineKind.Info);
+
+                string configPath = Path.Combine(MediaMtxInstallDir, "mediamtx.yml").Replace('\\', '/');
+                // Use sed to turn api: false into api: true, and restart the service if it's already running
+                // Matches 'api: false' or 'api: no' even if spaces exist around the colon
+                string enableApiCommand = $"sudo sed -i 's/^api:\\s*\\(false\\|no\\)/api: true/' {configPath} && sudo systemctl restart mediamtx.service";
+
+
+                var result = await _sshService.ExecuteCommandAsync(enableApiCommand);
+                AddLine("✓ MediaMTX API settings file upadted", TerminalLineKind.Success);
+
+                string command = $"sudo sed -i 's/^api: no/api: yes/' {configPath} && sudo systemctl restart mediamtx.service";
+                await _sshService.ExecuteCommandAsync(command);
+
+                AddLine("✓ MediaMTX Restarted to apply updates.", TerminalLineKind.Success);
+
                 // Start tailing the service log automatically
                 await StopStreamIfActive();
                 LogFilePath = "/var/log/syslog";
@@ -441,7 +468,6 @@ namespace SubControlMAUI.ViewModels
                     PickerTitle = "Select MediaMTX .tar.gz archive",
                     FileTypes = new FilePickerFileType(new Dictionary<DevicePlatform, IEnumerable<string>>
                     {
-                        // WinUI only accepts single-dot extensions — .gz covers .tar.gz files
                         { DevicePlatform.WinUI,       new[] { ".gz", ".tgz" } },
                         { DevicePlatform.Android,     new[] { "application/gzip", "application/x-gzip", "application/x-tar" } },
                         { DevicePlatform.iOS,         new[] { "public.tar-archive", "org.gnu.gnu-zip-archive" } },
@@ -462,9 +488,92 @@ namespace SubControlMAUI.ViewModels
             }
         }
 
+        // ── FFmpeg deployment ─────────────────────────────────────────────────
 
+        [RelayCommand(CanExecute = nameof(CanDeployFfmpeg))]
+        private async Task DeployFfmpeg()
+        {
+            IsFfmpegDeploying = true;
+            FfmpegDeployProgress = 0;
+            FfmpegDeployStatus = string.Empty;
 
+            var progress = new Progress<(string Step, double Percent)>(report =>
+            {
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                    FfmpegDeployProgress = report.Percent;
+                    FfmpegDeployStatus = $"{report.Step} ({report.Percent:F0}%)";
+                    AddLine(report.Step, TerminalLineKind.Info);
+                });
+            });
 
+            try
+            {
+                AddLine($"▶ Deploying FFmpeg from: {Path.GetFileName(FfmpegLocalPath)}", TerminalLineKind.Info);
+
+                await _sshService.DeployFfmpegAsync(
+                    localTarGzPath: FfmpegLocalPath,
+                    remoteInstallDir: FfmpegInstallDir,
+                    serviceUser: FfmpegServiceUser,
+                    progress: progress);
+
+                AddLine("✓ FFmpeg deployed and available on PATH.", TerminalLineKind.Success);
+
+                // Verify the install by printing the version
+                AddLine("▶ Verifying FFmpeg install…", TerminalLineKind.Info);
+                var result = await _sshService.ExecuteCommandAsync("ffmpeg -version", CancellationToken.None);
+                foreach (var line in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                    AddLine(line, TerminalLineKind.Output);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "FFmpeg deployment failed");
+                AddLine($"✗ FFmpeg deployment failed: {ex.Message}", TerminalLineKind.Error);
+                FfmpegDeployStatus = "Deployment failed";
+            }
+            finally
+            {
+                IsFfmpegDeploying = false;
+            }
+        }
+
+        private bool CanDeployFfmpeg() =>
+            IsConnected &&
+            !IsFfmpegDeploying &&
+            !string.IsNullOrWhiteSpace(FfmpegLocalPath) &&
+            File.Exists(FfmpegLocalPath);
+
+        [RelayCommand]
+        private async Task PickFfmpegFile()
+        {
+            try
+            {
+                var result = await FilePicker.Default.PickAsync(new PickOptions
+                {
+                    PickerTitle = "Select FFmpeg .tar.gz / .tar.xz archive",
+                    FileTypes = new FilePickerFileType(new Dictionary<DevicePlatform, IEnumerable<string>>
+                    {
+                        { DevicePlatform.WinUI,       new[] { ".gz", ".tgz", ".xz" } },
+                        { DevicePlatform.Android,     new[] { "application/gzip", "application/x-gzip", "application/x-xz", "application/x-tar" } },
+                        { DevicePlatform.iOS,         new[] { "public.tar-archive", "org.gnu.gnu-zip-archive" } },
+                        { DevicePlatform.MacCatalyst, new[] { "public.tar-archive", "org.gnu.gnu-zip-archive" } },
+                    })
+                });
+
+                if (result is not null)
+                {
+                    FfmpegLocalPath = result.FullPath;
+                    AddLine($"Selected: {result.FileName}", TerminalLineKind.Info);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "File picker error");
+                AddLine($"File picker error: {ex.Message}", TerminalLineKind.Error);
+            }
+        }
+
+        // ── .NET App deployment ───────────────────────────────────────────────
 
         [RelayCommand(CanExecute = nameof(CanDeployDotNetApp))]
         private async Task DeployDotNetApp()
@@ -487,12 +596,11 @@ namespace SubControlMAUI.ViewModels
             {
                 AddLine($"▶ Starting pipeline sync deployment from folder: {DotNetLocalPath}", TerminalLineKind.Info);
 
-                // Step 1: Push binary configurations down the active channel
                 await _sshService.DeployDotNetAppAsync(
                     localFolder: DotNetLocalPath,
                     remoteFolder: DotNetInstallDir,
                     executableName: DotNetExecutableName,
-                    password: Password, // passes user password entered at Row 1 credentials panel
+                    password: Password,
                     progress: progress);
 
                 MainThread.BeginInvokeOnMainThread(() =>
@@ -500,17 +608,15 @@ namespace SubControlMAUI.ViewModels
                     DotNetDeployStatus = "Registering background system service...";
                 });
 
-                // Step 2: Establish base configuration files and init system hooks
                 await _sshService.InstallDotNetServiceAsync(
                     remoteFolder: DotNetInstallDir,
                     executableName: DotNetExecutableName,
                     serviceName: DotNetServiceName,
-                    serviceUser: UserName, // targets the user specified in UI text configurations
+                    serviceUser: UserName,
                     password: Password);
 
                 AddLine($"✓ .NET App '{DotNetServiceName}' successfully registered and activated on boot.", TerminalLineKind.Success);
 
-                // Step 3: Automatically hook system logs stream up to target display terminal panels
                 await StopStreamIfActive();
                 LogFilePath = "/var/log/syslog";
                 AddLine($"▶ Tracking systemd runtime feedback messages for {DotNetServiceName}...", TerminalLineKind.Info);
@@ -541,8 +647,6 @@ namespace SubControlMAUI.ViewModels
         {
             try
             {
-                // Folder picking requires CommunityToolkit or native platform folder selector extensions 
-                // Using standard FolderPicker mapping abstraction patterns:
                 var result = await FolderPicker.Default.PickAsync(CancellationToken.None);
 
                 if (result.IsSuccessful && result.Folder is not null)
@@ -557,20 +661,6 @@ namespace SubControlMAUI.ViewModels
                 AddLine($"Folder selection failed: {ex.Message}", TerminalLineKind.Error);
             }
         }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
         // ── Navigation ────────────────────────────────────────────────────────
 

@@ -595,7 +595,7 @@ public partial class MainViewModel : BaseViewModel
                 {
                     MainThread.BeginInvokeOnMainThread(() =>
                         VideoStatusColor = _statusColours[Status.Disabled]);
-                    StatusText = "Video enable failed";
+              //      StatusText = "Video enable failed";
                 }
             }
             else if (tomInput.IsCommPortOpen && tomInput.IsEnabled)
@@ -891,14 +891,16 @@ public partial class MainViewModel : BaseViewModel
     private async Task<bool> EnableVideo()
     {
         StatusText = "Checking FFmpeg...";
-        if (await _dispatcher.SendAndWaitAsync(CameraFeature, "CHECK FFMPEG", "", _timeout) is null)
+        string result = await _dispatcher.SendAndWaitAsync(CameraFeature, "CHECK FFMPEG", "", _timeout);
+        if (result is null)
         {
             StatusText = "Enable failed — FFmpeg not available";
             return false;
         }
 
         StatusText = "Checking MediaMTX...";
-        if (await _dispatcher.SendAndWaitAsync(CameraFeature, "CHECK MTX VERSION", "", _timeout) is null)
+        result = await _dispatcher.SendAndWaitAsync(CameraFeature, "CHECK MTX VERSION", "", _timeout);
+        if (result is null)
         {
             StatusText = "Enable failed — MediaMTX not available";
             return false;

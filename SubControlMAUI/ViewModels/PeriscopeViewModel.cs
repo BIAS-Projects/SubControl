@@ -179,8 +179,8 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
 
             // Currently using localhost; swap to _sqliteService.config.IPAddress
             // + MTXRTSPPort + endpoint when the server is remote.
-            RtspVideoUrl = "rtsp://localhost:8554/usbcamera";
-            RtspFLIRUrl = "rtsp://localhost:8554/flir";
+            RtspVideoUrl = $"rtsp://{_sqliteService.config.IPAddress}:8554/usbcamera";
+            RtspFLIRUrl = $"rtsp://{_sqliteService.config.IPAddress}:8554/flir";
         }
         catch (Exception ex)
         {

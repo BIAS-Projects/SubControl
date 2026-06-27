@@ -73,7 +73,7 @@
                         <Border.StrokeShape>
                             <RoundRectangle CornerRadius="8"/>
                         </Border.StrokeShape>
-                        <Grid ColumnDefinitions="*,*">
+                        <Grid ColumnDefinitions="*,*" Padding="5">
                             <!-- USB Device Name -->
                             <Label Text="{Binding Name}"
                            VerticalOptions="Center"

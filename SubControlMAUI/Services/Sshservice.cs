@@ -184,7 +184,7 @@ namespace SubControlMAUI.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to connect to {Username}@{Host}:{Port} with key", username, host, port);
+                _logger.LogError(ex, "Failed to connect to {Username}@{Port} with key", username, port);
                 DisposeClients();
                 throw;
             }
@@ -376,7 +376,6 @@ namespace SubControlMAUI.Services
 
         /// <summary>
         /// Upload a local file to the remote host over SFTP.
-        /// Ideal for deploying .NET console app binaries.
         /// </summary>
         public async Task UploadFileAsync(
             string localPath,
@@ -399,7 +398,6 @@ namespace SubControlMAUI.Services
 
                 _sftpClient!.UploadFile(fs, remotePath, uploaded =>
                 {
-                    // SSH.NET calls this with bytes uploaded
                     Interlocked.Add(ref uploaded, 0); // suppress CS0728
                     progress?.Report((double)uploaded / totalBytes * 100.0);
                 });
@@ -430,8 +428,6 @@ namespace SubControlMAUI.Services
 
         /// <summary>
         /// Deploy a .NET console application folder to the Pi using sudo elevation.
-        /// Uploads all files in <paramref name="localFolder"/> to a staging path,
-        /// transfers them safely to <paramref name="remoteFolder"/>, then marks the entry point executable.
         /// </summary>
         public async Task DeployDotNetAppAsync(
             string localFolder,
@@ -446,15 +442,12 @@ namespace SubControlMAUI.Services
             _logger.LogInformation("Deploying .NET app from {Local} to {Remote}:{Folder}",
                 localFolder, Host, remoteFolder);
 
-            // Escape single quotes in password to prevent shell context breaking
             var escapedPwd = password.Replace("'", "'\\''");
             var targetFolder = remoteFolder.TrimEnd('/');
 
-            // 1. Ensure the protected remote destination directory exists via sudo
             await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S mkdir -p \"{targetFolder}\"", cancellationToken);
 
             var verifyDir = await ExecuteCommandAsync($"test -d {targetFolder} && echo 'yes' || echo 'no'", cancellationToken);
-
 
             if (verifyDir.StdOut.Trim() == "yes")
             {
@@ -477,12 +470,10 @@ namespace SubControlMAUI.Services
                 var localFile = files[i];
                 var relativePath = Path.GetRelativePath(localFolder, localFile).Replace('\\', '/');
 
-                // The final system path and a safe temporary staging path
                 var finalRemotePath = $"{targetFolder}/{relativePath}";
                 var tmpStagingPath = $"/tmp/dotnet_deploy_{Guid.NewGuid():N}";
                 destinationFolder = finalRemotePath;
 
-                // 2. Ensure the destination subdirectory exists inside the system directory
                 var finalRemoteDir = Path.GetDirectoryName(finalRemotePath)?.Replace('\\', '/');
                 if (!string.IsNullOrEmpty(finalRemoteDir))
                 {
@@ -491,39 +482,22 @@ namespace SubControlMAUI.Services
 
                 progress?.Report((relativePath, (double)i / files.Length * 100.0));
 
-                // 3. Upload via SFTP to the open /tmp folder first (since SFTP cannot use sudo directly)
                 await UploadFileAsync(localFile, tmpStagingPath, cancellationToken: cancellationToken);
-
-                // 4. Move the file from /tmp to its final protected location using sudo
                 await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S mv \"{tmpStagingPath}\" \"{finalRemotePath}\"", cancellationToken);
             }
 
-            // Check the fils are in the destination dierctory:
             var contents = await ExecuteCommandAsync($"ls -laR \"{targetFolder}\"", cancellationToken);
-
             _logger.LogInformation("Current files in {installDir}:\n{Files}", targetFolder, contents.StdOut);
-
             progress?.Report(($"Current files in {targetFolder} {contents.StdOut}", 100));
 
-
-            // 1. Force your service user as the absolute recursive owner of the entire deployment folder structure
             await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S chown -R {Username}:{Username} \"{remoteFolder}\"", cancellationToken);
-
-            // 2. Set directory guidelines: Owner can Read/Write/Execute, Group/Others can read/enter
             await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S chmod -R 755 \"{remoteFolder}\"", cancellationToken);
-
-            // 3. Explicitly guarantee the main application binary has execution rights flags
             await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S chmod +x \"{remoteFolder}\"/{executableName}", cancellationToken);
 
-            // Check the folder permissions are in the destination dierctory:
             contents = await ExecuteCommandAsync($"ls -la \"{remoteFolder}\"", cancellationToken);
-
             _logger.LogInformation("Current files in {installDir}:\n{Files}", remoteFolder, contents.StdOut);
-
             progress?.Report(($"Current files in {remoteFolder} {contents.StdOut}", 100));
 
-
-            // 5. Mark the entry-point executable as executable using sudo
             var exePath = $"{targetFolder}/{executableName}";
             await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S chmod +x \"{exePath}\"", cancellationToken);
 
@@ -531,11 +505,8 @@ namespace SubControlMAUI.Services
             progress?.Report((executableName, 100.0));
         }
 
-
-
         /// <summary>
-        /// Installs and configures the deployed .NET console application as a systemd service,
-        /// enabling it to run automatically on system boot.
+        /// Installs and configures the deployed .NET console application as a systemd service.
         /// </summary>
         public async Task InstallDotNetServiceAsync(
             string remoteFolder,
@@ -554,50 +525,42 @@ namespace SubControlMAUI.Services
 
             _logger.LogInformation("Installing .NET background service: {Service} -> {Binary}", serviceName, binaryPath);
 
-            // 1. Define the systemd configuration lines for a modern .NET environment
             var unitLines = new[]
             {
-             "[Unit]",
-             $"Description=.NET Application: {serviceName}",
-             "After=network.target",
-             "",
-             "[Service]",
-             "Type=notify", // Recommended for .NET Core apps using Microsoft.Extensions.Hosting
-             $"User={serviceUser}",
-             $"WorkingDirectory={targetFolder}",
-             $"ExecStart={binaryPath}",
-             "Restart=on-failure",
-             "RestartSec=5",
-             "StandardOutput=journal",
-             "StandardError=journal",
-             // Optional: Keeps .NET from flooding production logging frameworks with development details
-             "Environment=DOTNET_ENVIRONMENT=Production",
-             "",
-             "[Install]",
-             "WantedBy=multi-user.target"
-         };
+                "[Unit]",
+                $"Description=.NET Application: {serviceName}",
+                "After=network.target",
+                "",
+                "[Service]",
+                "Type=notify",
+                $"User={serviceUser}",
+                $"WorkingDirectory={targetFolder}",
+                $"ExecStart={binaryPath}",
+                "Restart=on-failure",
+                "RestartSec=5",
+                "StandardOutput=journal",
+                "StandardError=journal",
+                "Environment=DOTNET_ENVIRONMENT=Production",
+                "",
+                "[Install]",
+                "WantedBy=multi-user.target"
+            };
 
-            // 2. Base64 encode the systemd payload within C# to prevent single/double quote injection breaks
             var rawUnitContent = string.Join("\n", unitLines) + "\n";
             var base64UnitBytes = System.Text.Encoding.UTF8.GetBytes(rawUnitContent);
             var base64UnitString = Convert.ToBase64String(base64UnitBytes);
 
-            // 3. Securely write the unit file to the protected systemd path using sudo elevation
             _logger.LogInformation("Writing service unit file to {Path}", unitPath);
             await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S sh -c 'echo \"{base64UnitString}\" | base64 -d > {unitPath}'", cancellationToken);
 
-            // 4. Force systemd to scan the disk cache and register the new configuration file
             await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S systemctl daemon-reload", cancellationToken);
 
-            // 5. Enable the background process so it boots automatically whenever the Pi turns on
             _logger.LogInformation("Enabling service on system boot...");
             await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S systemctl enable {serviceName}.service", cancellationToken);
 
-            // 6. Fire up the engine immediately
             _logger.LogInformation("Starting service...");
             await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S systemctl restart {serviceName}.service", cancellationToken);
 
-            // 7. Verify the process launched successfully
             await Task.Delay(2000, cancellationToken);
             var status = await ExecuteCommandAsync($"printf '{escapedPwd}\\n' | sudo -S systemctl is-active {serviceName}.service", cancellationToken);
 
@@ -612,31 +575,6 @@ namespace SubControlMAUI.Services
                 throw new InvalidOperationException($"The .NET background service '{serviceName}' failed to enter an active running state.");
             }
         }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
         // ── MediaMTX Deployment ──────────────────────────────────────────────────
 
@@ -670,8 +608,6 @@ namespace SubControlMAUI.Services
             var binaryPath = installDir + "/mediamtx";
             var configPath = installDir + "/mediamtx.yml";
             var unitPath = "/etc/systemd/system/mediamtx.service";
-
-            // Escape single quotes in password if any exist to avoid breaking shell arguments
             var escapedPwd = password.Replace("'", "'\\''");
 
             _logger.LogInformation(
@@ -701,12 +637,9 @@ namespace SubControlMAUI.Services
             progress?.Report(("Preparing install directory...", 30));
             _logger.LogInformation("Step 2/6 - Creating {Dir}", installDir);
 
-        //    await RunStep($"printf '{escapedPwd}\\n' | sudo -S mkdir -p {installDir}", cancellationToken);
             await RunStep($"printf '{escapedPwd}\\n' | sudo -S mkdir -p {installDir} && test -d {installDir} && echo 'SUCCESS'", cancellationToken);
 
-
             var verifyDir = await ExecuteCommandAsync($"test -d {installDir} && echo 'yes' || echo 'no'", cancellationToken);
-          
 
             if (verifyDir.StdOut.Trim() == "yes")
             {
@@ -719,30 +652,18 @@ namespace SubControlMAUI.Services
                 _logger.LogError("Directory creation failed.");
             }
 
-
-
-
             progress?.Report(("Extracting archive...", 40));
             _logger.LogInformation("Step 3/6 - Extracting {File} into {Dir}", fileName, installDir);
 
-            // --strip-components=1 flattens the versioned top-level folder in the tarball
-            //  await RunStep($"printf '{escapedPwd}\\n' | sudo -S tar -xzf {remoteTar} -C {installDir} --strip-components=1", cancellationToken);
             await RunStep($"printf '{escapedPwd}\\n' | sudo -S tar -xzf {remoteTar} -C {installDir}", cancellationToken);
             await RunStep($"rm -f {remoteTar}", cancellationToken);
 
             progress?.Report(("Extraction complete", 55));
             _logger.LogInformation("Binary expected at: {Path}", binaryPath);
 
-
-            // Run this right after the extraction step to see exactly what is inside /opt/mediamtx:
             var contents = await ExecuteCommandAsync($"ls -la {installDir}", cancellationToken);
             _logger.LogInformation("Current files in {installDir}:\n{Files}", installDir, contents.StdOut);
-
             progress?.Report(($"Current files in {installDir} {contents.StdOut}", 55));
-
-
-
-
 
             // ── Step 3: Permissions and capabilities ──────────────────────────
             progress?.Report(("Setting permissions and capabilities...", 60));
@@ -750,10 +671,6 @@ namespace SubControlMAUI.Services
 
             await RunStep($"printf '{escapedPwd}\\n' | sudo -S chmod +x {binaryPath}", cancellationToken);
             await RunStep($"printf '{escapedPwd}\\n' | sudo -S chown {serviceUser}:{serviceUser} {binaryPath}", cancellationToken);
-
-            // CAP_NET_BIND_SERVICE  - bind ports < 1024 (RTSP 554, HLS 80)
-            // CAP_NET_ADMIN         - network interface / multicast management
-            // CAP_NET_RAW           - raw sockets for some stream sources
             await RunStep($"printf '{escapedPwd}\\n' | sudo -S setcap cap_net_bind_service,cap_net_admin,cap_net_raw=+ep {binaryPath}", cancellationToken);
 
             progress?.Report(("Capabilities granted", 70));
@@ -782,17 +699,12 @@ namespace SubControlMAUI.Services
                     "    source: publisher"
                 };
 
-                // 1. Join the array lines with standard Linux line endings (\n)
                 var rawConfigContent = string.Join("\n", configLines) + "\n";
-
-                // 2. Base64 encode the string payload within C#
                 var base64ConfigBytes = System.Text.Encoding.UTF8.GetBytes(rawConfigContent);
                 var base64ConfigString = Convert.ToBase64String(base64ConfigBytes);
 
-                // 3. Pipe the base64 string directly into base64 -d as root to write the file cleanly
                 await RunStep($"printf '{escapedPwd}\\n' | sudo -S sh -c 'echo \"{base64ConfigString}\" | base64 -d > {configPath}'", cancellationToken);
 
-                // Debug: Verify the file actually exists on disk now and show its details
                 var checkConfigFile = await ExecuteCommandAsync($"ls -la {configPath}", cancellationToken);
                 _logger.LogInformation("Configuration file verification:\n{Result}", checkConfigFile.StdOut);
             }
@@ -802,7 +714,6 @@ namespace SubControlMAUI.Services
             }
 
             progress?.Report(("Configuration ready", 75));
-
 
             // ── Step 5: Install systemd unit ──────────────────────────────────
             progress?.Report(("Installing systemd service...", 80));
@@ -828,26 +739,18 @@ namespace SubControlMAUI.Services
                 "WantedBy=multi-user.target"
             };
 
-            // 1. Join array lines with actual Linux line-endings (\n)
             var rawUnitContent = string.Join("\n", unitLines) + "\n";
-
-            // 2. Base64 encode the entire payload within C#
             var base64UnitBytes = Encoding.UTF8.GetBytes(rawUnitContent);
             var base64UnitString = Convert.ToBase64String(base64UnitBytes);
 
-            // 3. Write it to disk by piping the base64 string directly into base64 -d as root
             await RunStep($"printf '{escapedPwd}\\n' | sudo -S sh -c 'echo \"{base64UnitString}\" | base64 -d > {unitPath}'", cancellationToken);
-
-            // 4. Force systemd to cache your new configuration file
             await RunStep($"printf '{escapedPwd}\\n' | sudo -S systemctl daemon-reload", cancellationToken);
 
-            // Debug: Verify the file actually exists on disk now
             var checkUnitFile = await ExecuteCommandAsync($"ls -la {unitPath}", cancellationToken);
             progress?.Report(($"Systemd unit file check:\n{checkUnitFile.StdOut}", 80));
             _logger.LogInformation("Systemd unit file check:\n{Result}", checkUnitFile.StdOut);
 
             await RunStep($"printf '{escapedPwd}\\n' | sudo -S systemctl enable mediamtx.service", cancellationToken);
-
 
             // ── Step 6: Start and verify ──────────────────────────────────────
             progress?.Report(("Starting MediaMTX service...", 90));
@@ -878,6 +781,211 @@ namespace SubControlMAUI.Services
             }
         }
 
+        // ── FFmpeg Deployment ────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Full FFmpeg deployment pipeline for a Raspberry Pi (arm64/armhf):
+        ///
+        ///   1. Upload the static build archive (.tar.gz or .tar.xz) via SFTP to /tmp
+        ///   2. Detect the compression type and extract into a staging directory
+        ///   3. Locate the ffmpeg / ffprobe binaries inside the extracted tree
+        ///      (handles both flat archives and versioned subdirectory layouts)
+        ///   4. Copy the binaries to <paramref name="remoteInstallDir"/> (default /usr/local/bin)
+        ///      using sudo so they land on PATH for all users and services
+        ///   5. Mark them executable and verify the install with `ffmpeg -version`
+        ///
+        /// Compatible with archives from:
+        ///   - https://johnvansickle.com/ffmpeg/  (ffmpeg-release-arm64-static.tar.xz)
+        ///   - https://github.com/BtbN/FFmpeg-Builds/releases  (ffmpeg-*-linux-arm64-*.tar.gz)
+        ///   - Any static build that contains an `ffmpeg` binary somewhere in the tree
+        ///
+        /// Progress is reported as (StepDescription, 0.0-100.0).
+        /// </summary>
+        public async Task DeployFfmpegAsync(
+            string localTarGzPath,
+            string remoteInstallDir = "/usr/local/bin",
+            string serviceUser = "root",
+            string password = "1234",
+            IProgress<(string Step, double Percent)>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            EnsureConnected();
+
+            if (!File.Exists(localTarGzPath))
+                throw new FileNotFoundException("FFmpeg archive not found.", localTarGzPath);
+
+            var fileName = Path.GetFileName(localTarGzPath);
+            var remoteTar = "/tmp/" + fileName;
+            var stagingDir = "/tmp/ffmpeg_deploy_staging";
+            var installDir = remoteInstallDir.TrimEnd('/');
+            var escapedPwd = password.Replace("'", "'\\''");
+
+            // Detect whether we need -xzf (gzip) or -xJf (xz) based on extension.
+            // .tar.xz uses the J flag; .tar.gz / .tgz use z.
+            var isXz = fileName.EndsWith(".tar.xz", StringComparison.OrdinalIgnoreCase) ||
+                       fileName.EndsWith(".xz", StringComparison.OrdinalIgnoreCase);
+            var tarFlags = isXz ? "-xJf" : "-xzf";
+
+            _logger.LogInformation(
+                "Starting FFmpeg deployment: {Archive} ({Compression}) -> {Host}:{Dir}",
+                fileName, isXz ? "xz" : "gzip", Host, installDir);
+
+            // ── Step 1: Upload ────────────────────────────────────────────────
+            progress?.Report(("Uploading archive...", 5));
+            _logger.LogInformation("Step 1/5 - Uploading {File}", fileName);
+
+            await Task.Run(() =>
+            {
+                using var fs = File.OpenRead(localTarGzPath);
+                var totalBytes = fs.Length;
+
+                _sftpClient!.UploadFile(fs, remoteTar, bytesUploaded =>
+                {
+                    var pct = Math.Min(5 + bytesUploaded * 20.0 / totalBytes, 24);
+                    progress?.Report(($"Uploading... {bytesUploaded / 1024 / 1024} MB", pct));
+                });
+            }, cancellationToken);
+
+            _logger.LogInformation("Upload complete: {RemotePath}", remoteTar);
+            progress?.Report(("Upload complete", 25));
+
+            // ── Step 2: Clean staging dir and extract ─────────────────────────
+            progress?.Report(("Preparing staging directory...", 28));
+            _logger.LogInformation("Step 2/5 - Extracting into {Dir}", stagingDir);
+
+            // Remove any leftovers from a previous attempt then recreate clean
+            await RunStep($"rm -rf {stagingDir} && mkdir -p {stagingDir}", cancellationToken);
+
+            progress?.Report(("Extracting archive (this may take a moment)...", 30));
+
+            // xz-compressed static builds can be large; give the command up to 10 minutes
+            using var extractCmd = _sshClient!.CreateCommand($"tar {tarFlags} {remoteTar} -C {stagingDir}");
+            extractCmd.CommandTimeout = TimeSpan.FromMinutes(10);
+            await Task.Run(() => extractCmd.Execute(), cancellationToken);
+
+            if ((extractCmd.ExitStatus ?? -1) != 0)
+            {
+                throw new InvalidOperationException(
+                    $"FFmpeg archive extraction failed (exit {extractCmd.ExitStatus}):\n{extractCmd.Error}");
+            }
+
+            // Tidy up the uploaded archive immediately to recover /tmp space
+            await ExecuteCommandAsync($"rm -f {remoteTar}", cancellationToken);
+
+            progress?.Report(("Extraction complete", 50));
+
+            // Log staging contents to help diagnose unexpected archive layouts
+            var stagingContents = await ExecuteCommandAsync($"find {stagingDir} -maxdepth 3 | head -40", cancellationToken);
+            _logger.LogInformation("Staging directory contents:\n{Contents}", stagingContents.StdOut);
+            progress?.Report(($"Archive extracted:\n{stagingContents.StdOut}", 52));
+
+            // ── Step 3: Locate the ffmpeg binary inside the extracted tree ────
+            //
+            // Static build archives use several different layouts:
+            //   • johnvansickle: ffmpeg-N-arm64-static/ffmpeg  (binary in a version subdirectory)
+            //   • BtbN nightly:  ffmpeg-master-arm64-static/bin/ffmpeg
+            //   • Some flat builds: ffmpeg  (binary at the root of the staging dir)
+            //
+            // `find` with -name ffmpeg -type f handles all of these without hard-coding paths.
+            progress?.Report(("Locating ffmpeg binary in archive...", 55));
+            _logger.LogInformation("Step 3/5 - Locating ffmpeg binary");
+
+            var findFfmpeg = await ExecuteCommandAsync($"find {stagingDir} -type f -name 'ffmpeg' | head -1", cancellationToken);
+            var ffmpegSrcPath = findFfmpeg.StdOut.Trim();
+
+            if (string.IsNullOrEmpty(ffmpegSrcPath))
+            {
+                throw new InvalidOperationException(
+                    "Could not locate an 'ffmpeg' binary inside the extracted archive. " +
+                    "Ensure the archive is a static FFmpeg build for arm64/armhf.\n" +
+                    $"Archive contents:\n{stagingContents.StdOut}");
+            }
+
+            _logger.LogInformation("Found ffmpeg at: {Path}", ffmpegSrcPath);
+
+            // Also look for ffprobe — it ships alongside ffmpeg in most static builds
+            var findFfprobe = await ExecuteCommandAsync($"find {stagingDir} -type f -name 'ffprobe' | head -1", cancellationToken);
+            var ffprobeSrcPath = findFfprobe.StdOut.Trim();
+
+            if (!string.IsNullOrEmpty(ffprobeSrcPath))
+                _logger.LogInformation("Found ffprobe at: {Path}", ffprobeSrcPath);
+
+            progress?.Report(("Binaries located", 60));
+
+            // ── Step 4: Install binaries to the target directory ──────────────
+            progress?.Report(($"Installing ffmpeg to {installDir}...", 65));
+            _logger.LogInformation("Step 4/5 - Copying binaries to {Dir}", installDir);
+
+            // Ensure the target directory exists (it always should for /usr/local/bin, but be safe)
+            await RunStep($"printf '{escapedPwd}\\n' | sudo -S mkdir -p {installDir}", cancellationToken);
+
+            // Copy ffmpeg
+            await RunStep(
+                $"printf '{escapedPwd}\\n' | sudo -S cp \"{ffmpegSrcPath}\" \"{installDir}/ffmpeg\"",
+                cancellationToken);
+
+            await RunStep(
+                $"printf '{escapedPwd}\\n' | sudo -S chmod +x \"{installDir}/ffmpeg\"",
+                cancellationToken);
+
+            // Copy ffprobe if it was found
+            if (!string.IsNullOrEmpty(ffprobeSrcPath))
+            {
+                await RunStep(
+                    $"printf '{escapedPwd}\\n' | sudo -S cp \"{ffprobeSrcPath}\" \"{installDir}/ffprobe\"",
+                    cancellationToken);
+
+                await RunStep(
+                    $"printf '{escapedPwd}\\n' | sudo -S chmod +x \"{installDir}/ffprobe\"",
+                    cancellationToken);
+
+                _logger.LogInformation("ffprobe installed to {Dir}/ffprobe", installDir);
+            }
+
+            // Set ownership on the installed binaries
+            var chownTargets = string.IsNullOrEmpty(ffprobeSrcPath)
+                ? $"\"{installDir}/ffmpeg\""
+                : $"\"{installDir}/ffmpeg\" \"{installDir}/ffprobe\"";
+
+            await RunStep(
+                $"printf '{escapedPwd}\\n' | sudo -S chown root:root {chownTargets}",
+                cancellationToken);
+
+            // Clean up the staging directory
+            await ExecuteCommandAsync($"rm -rf {stagingDir}", cancellationToken);
+
+            progress?.Report(("Binaries installed", 85));
+
+            // ── Step 5: Verify ────────────────────────────────────────────────
+            progress?.Report(("Verifying FFmpeg install...", 90));
+            _logger.LogInformation("Step 5/5 - Verifying installation");
+
+            // Use the full path in case /usr/local/bin isn't on the non-login shell PATH
+            var verify = await ExecuteCommandAsync($"\"{installDir}/ffmpeg\" -version 2>&1 | head -3", cancellationToken);
+
+            if (verify.ExitCode == 0 || !string.IsNullOrWhiteSpace(verify.StdOut))
+            {
+                var versionLine = verify.StdOut.Split('\n')[0].Trim();
+                _logger.LogInformation("FFmpeg verified: {Version}", versionLine);
+                progress?.Report(($"✓ {versionLine}", 100));
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "ffmpeg -version returned no output. Binary may not match the Pi's architecture.\n" +
+                    "stderr: {Err}", verify.StdErr);
+
+                progress?.Report(("Installed but version check produced no output — check architecture", 100));
+
+                // Not thrown as an exception: the copy succeeded, the binary may still work;
+                // the caller will see the warning in the terminal stream.
+            }
+
+            _logger.LogInformation(
+                "FFmpeg deployment complete. Binary at {Dir}/ffmpeg", installDir);
+        }
+
+        // ── Private step runner ──────────────────────────────────────────────────
 
         /// <summary>
         /// Executes a command and throws <see cref="InvalidOperationException"/> if it exits non-zero.

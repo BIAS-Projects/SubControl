@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using SubConsole.Models;
 using SubConsole.Services.Helpers;
 using SubConsole.Services.Video;
@@ -9,9 +10,41 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using static System.Net.WebRequestMethods;
 
 namespace SubConsole.Services.Video;
+
+// ═════════════════════════════════════════════════════════════════════════════
+// MediaMTX connection options  — bind in DI via appsettings.json / env vars
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// <summary>
+/// Configures how <see cref="MediaMtxClient"/> reaches the MediaMTX REST API.
+///
+/// Bind via <c>appsettings.json</c>:
+/// <code>
+/// "MediaMtx": {
+///   "BaseUrl": "http://127.0.0.1:9997/"
+/// }
+/// </code>
+/// Or override per-environment with an env var:
+/// <c>MediaMtx__BaseUrl=http://192.168.1.10:9997/</c>
+///
+/// IMPORTANT — the URL MUST end with a trailing slash so that
+/// <see cref="HttpClient"/> relative paths resolve correctly.
+/// </summary>
+public sealed class MediaMtxOptions
+{
+    public const string Section = "MediaMtx";
+
+    /// <summary>
+    /// Base URL of the MediaMTX HTTP API, e.g. <c>http://127.0.0.1:9997/</c>.
+    /// Defaults to the MediaMTX out-of-the-box address on loopback.
+    /// Using 127.0.0.1 instead of "localhost" avoids IPv6/IPv4 resolution
+    /// differences between Windows and Linux (on Linux, "localhost" can
+    /// resolve to ::1 when MediaMTX is only listening on 0.0.0.0).
+    /// </summary>
+    public string BaseUrl { get; set; } = "http://127.0.0.1:9997/";
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Public surface
@@ -80,15 +113,15 @@ public interface ICameraManagerService
         ICameraCommand command,
         CancellationToken token = default);
 
-    // ── Tests ────────────────────────────────────────────────────
-
+    // ── Tests ─────────────────────────────────────────────────────────────────
     Task<OperationResultWithValue<string>> CheckFfmpegAsync(
-    CancellationToken token = default);
-    Task<OperationResultWithValue<string>> GetMediaMtxVersionAsync(
-    CancellationToken token = default);
-    Task<OperationResult> CheckMediaMtxStreamsAsync(
-    CancellationToken token = default);
+        CancellationToken token = default);
 
+    Task<OperationResultWithValue<string>> GetMediaMtxVersionAsync(
+        CancellationToken token = default);
+
+    Task<OperationResult> CheckMediaMtxStreamsAsync(
+        CancellationToken token = default);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -103,7 +136,7 @@ public interface ICameraCommand
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Result type  (mirrors PortRemapResult)
+// Result type
 // ═════════════════════════════════════════════════════════════════════════════
 
 public sealed record CameraRemapResult(
@@ -137,6 +170,34 @@ public sealed class MediaMtxClient
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
             WriteIndented = false
         };
+
+        // Guard: HttpClient.BaseAddress must end with '/' for relative URLs to
+        // resolve correctly. HttpClient silently drops the last path segment of
+        // the base address when it does NOT end in '/', which causes every API
+        // call to hit the wrong endpoint and produces connection-refused / 404
+        // errors that are hard to diagnose.
+        if (_http.BaseAddress is null)
+        {
+            throw new InvalidOperationException(
+                "MediaMtxClient requires HttpClient.BaseAddress to be set. " +
+                "Register it in DI: services.AddHttpClient<MediaMtxClient>(c => " +
+                "c.BaseAddress = new Uri(options.BaseUrl)) " +
+                "and ensure MediaMtxOptions.BaseUrl ends with '/'.");
+        }
+
+        if (!_http.BaseAddress.OriginalString.EndsWith('/'))
+        {
+            // Fix it rather than throw — one trailing slash won't hurt
+            _http.BaseAddress = new Uri(_http.BaseAddress.OriginalString + "/");
+
+            _logger.LogWarning(
+                "MediaMtxClient: BaseAddress did not end with '/'. " +
+                "Corrected to {BaseAddress}. Update MediaMtxOptions.BaseUrl to suppress this warning.",
+                _http.BaseAddress);
+        }
+
+        _logger.LogInformation(
+            "MediaMtxClient initialised. API base: {BaseAddress}", _http.BaseAddress);
     }
 
     /// <summary>POST /v3/config/paths/add/{name}</summary>
@@ -157,9 +218,9 @@ public sealed class MediaMtxClient
             $"v3/config/paths/patch/{pathName}", config, token);
     }
 
-
+    /// <summary>GET /v3/info — returns the server version string.</summary>
     public async Task<OperationResultWithValue<string>> GetVersionAsync(
-            CancellationToken token = default)
+        CancellationToken token = default)
     {
         var result = await SendAsyncWithResponse(HttpMethod.Get, "v3/info", null, token);
 
@@ -170,7 +231,6 @@ public sealed class MediaMtxClient
         {
             using var doc = JsonDocument.Parse(result.Value!);
             var version = doc.RootElement.GetProperty("version").GetString();
-
             return OperationResultWithValue<string>.Success(version ?? "unknown");
         }
         catch (Exception ex)
@@ -180,36 +240,48 @@ public sealed class MediaMtxClient
         }
     }
 
+    /// <summary>GET /v3/paths/list — returns all currently registered paths.</summary>
+    /// <summary>GET /v3/paths/list — returns paths only if they are present and actively running.</summary>
     public async Task<OperationResultWithValue<IReadOnlyList<MediaMtxPathItem>>> GetPathsAsync(
-    CancellationToken token = default)
+        CancellationToken token = default)
     {
         _logger.LogDebug("Fetching MediaMTX paths");
 
         var result = await SendAsyncWithResponse(HttpMethod.Get, "v3/paths/list", null, token);
 
         if (!result.IsSuccess)
-            return OperationResultWithValue<IReadOnlyList<MediaMtxPathItem>>
-                .Failure(result.Message);
+            return OperationResultWithValue<IReadOnlyList<MediaMtxPathItem>>.Failure(result.Message);
 
         try
         {
-            var response = JsonSerializer.Deserialize<MediaMtxPathListResponse>(
-                result.Value!,
-                _jsonOpts);
-
+            var response = JsonSerializer.Deserialize<MediaMtxPathListResponse>(result.Value!, _jsonOpts);
             var items = response?.Items ?? new List<MediaMtxPathItem>();
 
-            _logger.LogDebug("MediaMTX returned {Count} paths", items.Count);
+            // 1. Check if any cameras/paths are present
+            if (items.Count == 0)
+            {
+                _logger.LogWarning("MediaMTX paths check failed: No cameras are present.");
+                return OperationResultWithValue<IReadOnlyList<MediaMtxPathItem>>.Failure("Cameras not present");
+            }
 
-            return OperationResultWithValue<IReadOnlyList<MediaMtxPathItem>>
-                .Success(items);
+            // 2. Check if all paths (or at least one, depending on your business logic) are actively running
+            // Using .Any() here assumes you want to fail if *any* of them are down. 
+            // Swap to .All(x => !x.Ready) if you only want to fail if *all* of them are down.
+            bool anyCameraNotRunning = items.Any(x => !x.Ready);
+
+            if (anyCameraNotRunning)
+            {
+                _logger.LogWarning("MediaMTX paths check failed: One or more paths are configured but not streaming.");
+                return OperationResultWithValue<IReadOnlyList<MediaMtxPathItem>>.Failure("Cameras not running");
+            }
+
+            _logger.LogDebug("MediaMTX returned {Count} paths, all are running successfully.", items.Count);
+            return OperationResultWithValue<IReadOnlyList<MediaMtxPathItem>>.Success(items);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to parse MediaMTX paths response");
-
-            return OperationResultWithValue<IReadOnlyList<MediaMtxPathItem>>
-                .Failure("Invalid paths response");
+            return OperationResultWithValue<IReadOnlyList<MediaMtxPathItem>>.Failure("Invalid paths response");
         }
     }
 
@@ -221,29 +293,59 @@ public sealed class MediaMtxClient
         _logger.LogInformation("Deleting MediaMTX path '{PathName}'", pathName);
         try
         {
-            var response = await _http.DeleteAsync($"v3/config/paths/delete/{pathName}", token);
+            var response = await _http.DeleteAsync(
+                $"v3/config/paths/delete/{pathName}", token);
+
             return response.IsSuccessStatusCode
                 ? OperationResult.Success()
                 : OperationResult.Failure(
                     $"MediaMTX DELETE returned {(int)response.StatusCode}");
         }
+        catch (HttpRequestException ex)
+        {
+            // Provide a clear diagnosis for the most common Linux failure mode
+            _logger.LogError(ex,
+                "MediaMTX DELETE path '{PathName}' failed — is MediaMTX running at {BaseAddress}?",
+                pathName, _http.BaseAddress);
+
+            return OperationResult.Failure(BuildConnectionErrorMessage(ex));
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "MediaMTX DELETE path '{PathName}' failed", pathName);
+            _logger.LogError(ex, "MediaMTX DELETE path '{PathName}' threw", pathName);
             return OperationResult.Failure(ex.Message);
         }
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Sends an HTTP request with a <see cref="MediaMtxPathConfig"/> body and
+    /// returns a plain success/failure result.
+    ///
+    /// Root cause of the Linux "connection refused" bug:
+    ///   On Linux, "localhost" can resolve to the IPv6 loopback (::1) when
+    ///   MediaMTX is only bound to 0.0.0.0 (IPv4). Using 127.0.0.1 in
+    ///   <see cref="MediaMtxOptions.BaseUrl"/> avoids this entirely.
+    ///   This method also catches <see cref="HttpRequestException"/> separately
+    ///   so the log message explicitly names the base address, making it
+    ///   immediately obvious when the URL is wrong.
+    /// </summary>
     private async Task<OperationResult> SendAsync(
-        HttpMethod method, string url, MediaMtxPathConfig config, CancellationToken token)
+        HttpMethod method,
+        string url,
+        MediaMtxPathConfig config,
+        CancellationToken token)
     {
         try
         {
             var json = JsonSerializer.Serialize(config, _jsonOpts);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
             var request = new HttpRequestMessage(method, url) { Content = content };
+
+            _logger.LogDebug(
+                "MediaMTX → {Method} {BaseAddress}{Url}",
+                method, _http.BaseAddress, url);
 
             var response = await _http.SendAsync(request, token);
 
@@ -259,6 +361,19 @@ public sealed class MediaMtxClient
 
             return OperationResult.Success();
         }
+        catch (HttpRequestException ex)
+        {
+            // Separate catch so the error message names the full URL and gives
+            // actionable advice — "connection refused at http://127.0.0.1:9997/"
+            // is far easier to diagnose than a bare socket error.
+            _logger.LogError(ex,
+                "MediaMTX {Method} {Url} — connection error to {BaseAddress}. " +
+                "Ensure MediaMTX is running and MediaMtxOptions.BaseUrl is correct " +
+                "(use 127.0.0.1, not 'localhost', to avoid IPv6 resolution on Linux).",
+                method, url, _http.BaseAddress);
+
+            return OperationResult.Failure(BuildConnectionErrorMessage(ex));
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "MediaMTX {Method} {Url} threw", method, url);
@@ -266,12 +381,15 @@ public sealed class MediaMtxClient
         }
     }
 
-
+    /// <summary>
+    /// Sends an HTTP request and returns the raw response body string on success.
+    /// Used for GET endpoints that return a JSON payload (version, paths list).
+    /// </summary>
     private async Task<OperationResultWithValue<string?>> SendAsyncWithResponse(
-    HttpMethod method,
-    string url,
-    object? body,
-    CancellationToken token)
+        HttpMethod method,
+        string url,
+        object? body,
+        CancellationToken token)
     {
         try
         {
@@ -283,10 +401,11 @@ public sealed class MediaMtxClient
                 content = new StringContent(json, Encoding.UTF8, "application/json");
             }
 
-            var request = new HttpRequestMessage(method, url)
-            {
-                Content = content
-            };
+            var request = new HttpRequestMessage(method, url) { Content = content };
+
+            _logger.LogDebug(
+                "MediaMTX → {Method} {BaseAddress}{Url}",
+                method, _http.BaseAddress, url);
 
             var response = await _http.SendAsync(request, token);
             var responseBody = await response.Content.ReadAsStringAsync(token);
@@ -303,6 +422,16 @@ public sealed class MediaMtxClient
 
             return OperationResultWithValue<string?>.Success(responseBody);
         }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex,
+                "MediaMTX {Method} {Url} — connection error to {BaseAddress}. " +
+                "Ensure MediaMTX is running and MediaMtxOptions.BaseUrl is correct " +
+                "(use 127.0.0.1, not 'localhost', to avoid IPv6 resolution on Linux).",
+                method, url, _http.BaseAddress);
+
+            return OperationResultWithValue<string?>.Failure(BuildConnectionErrorMessage(ex));
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "MediaMTX {Method} {Url} threw", method, url);
@@ -310,8 +439,18 @@ public sealed class MediaMtxClient
         }
     }
 
-
-
+    /// <summary>
+    /// Builds a human-readable error message for network failures that names
+    /// the configured base address so operators know immediately where to look.
+    /// </summary>
+    private string BuildConnectionErrorMessage(HttpRequestException ex)
+    {
+        var inner = ex.InnerException?.Message ?? ex.Message;
+        return $"Cannot reach MediaMTX at {_http.BaseAddress}. " +
+               $"Check that MediaMTX is running and that MediaMtxOptions.BaseUrl is correct. " +
+               $"Tip: use 'http://127.0.0.1:9997/' rather than 'http://localhost:9997/' " +
+               $"to avoid IPv6/IPv4 resolution differences on Linux. ({inner})";
+    }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -387,7 +526,6 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
     {
         _logger.LogInformation("Unregistering camera {DeviceId}", deviceId);
 
-        // Pull it from MTX first so FFmpeg is stopped cleanly
         var remove = await RemoveStreamAsync(deviceId, token);
         if (!remove.IsSuccess)
         {
@@ -405,8 +543,6 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
 
         return await _registry.UnregisterAsync(reg.Camera);
     }
-
-
 
     public IReadOnlyList<CameraRegistration> GetRegisteredCameras()
         => _registry.AllRegistrations;
@@ -430,14 +566,15 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
             ? MediaMtxPathConfig.BuildDshowFfmpegCommand(reg.FfmpegOptions, reg.StreamPathName)
             : MediaMtxPathConfig.BuildV4l2FfmpegCommand(reg.FfmpegOptions, reg.StreamPathName);
 
-        // Inject the same FFmpeg command into both RunOnInit and RunOnDemand.
-        // RunOnInit starts the stream immediately when the path is registered.
-        // RunOnDemand acts as the restart hook if the init process dies and
-        // a reader subsequently connects.
+        //var configWithCommand = reg.MtxConfig with
+        //{
+        //    RunOnInit = command,
+        //    RunOnDemand = command
+        //};
         var configWithCommand = reg.MtxConfig with
         {
             RunOnInit = command,
-            RunOnDemand = command
+            RunOnDemand = string.Empty // Keep empty to avoid process crashing
         };
 
         var result = await _mtx.AddPathAsync(reg.StreamPathName, configWithCommand, token);
@@ -451,8 +588,6 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
 
         _activePaths[deviceId] = true;
 
-        // Persist with the resolved commands so UpdateFfmpegOptionsAsync can
-        // patch MTX with a rebuilt command without needing to rebuild from scratch
         await _registry.UpdateAsync(deviceId, null, configWithCommand);
         reg.IsRegisteredWithMtx = true;
 
@@ -463,15 +598,15 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
         return OperationResult.Success();
     }
 
-
-
-
+    // ── Diagnostics ───────────────────────────────────────────────────────────
 
     public async Task<OperationResultWithValue<string>> CheckFfmpegAsync(
         CancellationToken token = default)
     {
         try
         {
+            // On Linux the binary is just "ffmpeg"; on Windows "ffmpeg.exe"
+            // (though Process resolves .exe automatically on Windows too).
             var fileName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
                 ? "ffmpeg.exe"
                 : "ffmpeg";
@@ -483,21 +618,22 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
-                CreateNoWindow = true // Prevents flashing a command window on Windows
+                CreateNoWindow = true   // no-op on Linux, harmless
             };
 
             using var process = Process.Start(psi);
             if (process is null)
-                return OperationResultWithValue<string>.Failure("Failed to start ffmpeg process");
+                return OperationResultWithValue<string>.Failure(
+                    "Failed to start ffmpeg process");
 
-            // FIX: Start reading both streams completely to prevent OS pipe deadlocks
+            // Read both streams concurrently to prevent pipe-buffer deadlocks
+            // on both Windows and Linux (Linux pipes have a smaller default
+            // buffer so this matters more there).
             var outputTask = process.StandardOutput.ReadToEndAsync(token);
             var errorTask = process.StandardError.ReadToEndAsync(token);
 
-            // Wait for the process to finish execution
             await process.WaitForExitAsync(token);
 
-            // Await the reading tasks to ensure we have all the text data
             var fullOutput = await outputTask;
             var fullError = await errorTask;
 
@@ -507,8 +643,7 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
                     $"ffmpeg exited with code {process.ExitCode}: {fullError}");
             }
 
-            // Grab just the first line of the captured output for your success string
-            string firstLine = !string.IsNullOrWhiteSpace(fullOutput)
+            var firstLine = !string.IsNullOrWhiteSpace(fullOutput)
                 ? fullOutput.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)[0]
                 : "ffmpeg OK";
 
@@ -522,7 +657,7 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
     }
 
     public async Task<OperationResultWithValue<string>> GetMediaMtxVersionAsync(
-    CancellationToken token = default)
+        CancellationToken token = default)
     {
         _logger.LogInformation("Checking MediaMTX version");
 
@@ -530,23 +665,18 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
 
         if (!result.IsSuccess)
         {
-            _logger.LogError(
-                "MediaMTX version check failed: {Message}",
-                result.Message);
-
+            _logger.LogError("MediaMTX version check failed: {Message}", result.Message);
             return result;
         }
 
         _logger.LogInformation(
-            "MediaMTX is reachable (version {Version})",
-            result.Value);
+            "MediaMTX is reachable (version {Version})", result.Value);
 
         return result;
     }
 
-
     public async Task<OperationResult> CheckMediaMtxStreamsAsync(
-    CancellationToken token = default)
+        CancellationToken token = default)
     {
         _logger.LogInformation("Checking MediaMTX stream health");
 
@@ -555,9 +685,7 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
         if (!pathsResult.IsSuccess)
         {
             _logger.LogError(
-                "MediaMTX paths check failed: {Message}",
-                pathsResult.Message);
-
+                "MediaMTX paths check failed: {Message}", pathsResult.Message);
             return OperationResult.Failure(pathsResult.Message);
         }
 
@@ -584,29 +712,23 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
             if (path is null)
             {
                 missing.Add(reg.StreamPathName);
-
                 _logger.LogWarning(
                     "Expected stream '{StreamPath}' is missing from MediaMTX",
                     reg.StreamPathName);
-
                 continue;
             }
 
-            //Only validate SourceReady if present (runOnDemand may be idle)
             if (path.SourceReady.HasValue && path.SourceReady == 0)
             {
                 notReady.Add(reg.StreamPathName);
-
                 _logger.LogWarning(
                     "Stream '{StreamPath}' exists but source is NOT ready",
                     reg.StreamPathName);
             }
 
-            //Check if anyone is actually consuming the stream
             if (path.Readers is not null && path.Readers.Count == 0)
             {
                 noReaders.Add(reg.StreamPathName);
-
                 _logger.LogDebug(
                     "Stream '{StreamPath}' has no active readers",
                     reg.StreamPathName);
@@ -614,18 +736,13 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
         }
 
         if (missing.Count > 0)
-        {
             return OperationResult.Failure(
                 $"Missing {missing.Count} streams in MediaMTX: {string.Join(", ", missing)}");
-        }
 
         if (notReady.Count > 0)
-        {
             return OperationResult.Failure(
                 $"Streams not ready: {string.Join(", ", notReady)}");
-        }
 
-        // Readers are informational — don’t fail the check
         if (noReaders.Count > 0)
         {
             _logger.LogDebug(
@@ -657,7 +774,7 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
         {
             _logger.LogDebug(
                 "RemoveStream skipped for {DeviceId}: not currently active", deviceId);
-            return OperationResult.Success();   // nothing to do
+            return OperationResult.Success();
         }
 
         var result = await _mtx.DeletePathAsync(reg.StreamPathName, token);
@@ -683,54 +800,8 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
 
     // ── Config management ─────────────────────────────────────────────────────
 
-    //public async Task<OperationResult> UpdateFfmpegOptionsAsync(
-    //    string deviceId, FfmpegCameraOptions ffmpegOptions, CancellationToken token = default)
-    //{
-    //    _logger.LogInformation(
-    //        "Updating FFmpeg options for camera {DeviceId}", deviceId);
-
-    //    var reg = _registry.GetByDeviceId(deviceId);
-    //    if (reg is null)
-    //        return OperationResult.Failure($"Camera {deviceId} is not registered");
-
-    //    var dbResult = await _registry.UpdateAsync(deviceId, ffmpegOptions, null);
-    //    if (!dbResult.IsSuccess)
-    //    {
-    //        _logger.LogError(
-    //            "Failed to persist FFmpeg options for {DeviceId}: {Message}",
-    //            deviceId, dbResult.Message);
-    //        return dbResult;
-    //    }
-
-    //    // If the stream is live, patch MTX with the rebuilt command so the
-    //    // next runOnDemand invocation uses the updated parameters.
-    //    if (_activePaths.ContainsKey(deviceId))
-    //    {
-    //        var newCommand = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-    //            ? MediaMtxPathConfig.BuildDshowFfmpegCommand(ffmpegOptions, reg.StreamPathName)
-    //            : MediaMtxPathConfig.BuildV4l2FfmpegCommand(ffmpegOptions, reg.StreamPathName);
-
-    //        var patch = await _mtx.PatchPathAsync(
-    //            reg.StreamPathName,
-    //            reg.MtxConfig with { RunOnDemand = newCommand },
-    //            token);
-
-    //        if (!patch.IsSuccess)
-    //        {
-    //            _logger.LogWarning(
-    //                "MTX patch after FFmpeg update failed for '{StreamPath}': {Message}",
-    //                reg.StreamPathName, patch.Message);
-    //            return patch;
-    //        }
-    //    }
-
-    //    _logger.LogInformation(
-    //        "Completed updating FFmpeg options for camera {DeviceId}", deviceId);
-    //    return OperationResult.Success();
-    //}
-
     public async Task<OperationResult> UpdateFfmpegOptionsAsync(
-    string deviceId, FfmpegCameraOptions ffmpegOptions, CancellationToken token = default)
+        string deviceId, FfmpegCameraOptions ffmpegOptions, CancellationToken token = default)
     {
         var reg = _registry.GetByDeviceId(deviceId);
         if (reg is null)
@@ -775,7 +846,6 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
             return dbResult;
         }
 
-        // Patch live path if active
         if (_activePaths.ContainsKey(deviceId))
         {
             var patch = await _mtx.PatchPathAsync(reg.StreamPathName, mtxConfig, token);
@@ -856,8 +926,6 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
         var reg = _registry.GetByDeviceId(camera.DeviceId);
         if (reg is null) return CameraRemapResult.NoOp();
 
-        // Remove the path from MTX so it doesn't try to launch FFmpeg
-        // against a device that no longer exists.
         await RemoveStreamAsync(camera.DeviceId, token);
 
         _logger.LogInformation(
@@ -876,16 +944,18 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
         var reg = _registry.GetByDeviceId(camera.DeviceId);
         if (reg is null) return CameraRemapResult.NoOp();
 
-        // Give Windows a moment to finish device initialisation before
-        // FFmpeg would try to open it on the first runOnDemand trigger.
+        // Give the OS a moment to finish device initialisation before FFmpeg
+        // tries to open it. This matters more on Linux where udev events fire
+        // slightly before the device node is fully ready.
         await Task.Delay(TimeSpan.FromSeconds(3), token);
 
-        // Update the stored device name in case the friendly name shifted on replug.
         var updatedOptions = reg.FfmpegOptions with
         {
             DeviceName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-                ? (string.IsNullOrEmpty(camera.SymbolicLink) ? camera.FriendlyName : camera.SymbolicLink)
-                : camera.DevicePath
+                ? (string.IsNullOrEmpty(camera.SymbolicLink)
+                    ? camera.FriendlyName
+                    : camera.SymbolicLink)
+                : camera.DevicePath   // e.g. /dev/video0 on Linux
         };
 
         await _registry.UpdateAsync(camera.DeviceId, updatedOptions, null);
@@ -906,12 +976,10 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
     private async Task<CameraRemapResult> HandleCameraUpdatedAsync(
         UsbCameraInfo camera, CancellationToken token)
     {
-        // An update means the hardware info changed (e.g. driver rename).
-        // Re-patch MTX with the refreshed device name.
         _logger.LogInformation(
             "Camera updated: refreshing stream for {DeviceId}", camera.DeviceId);
 
-        var removed = await HandleCameraRemovedAsync(camera, token);
+        await HandleCameraRemovedAsync(camera, token);
         var added = await HandleCameraAddedAsync(camera, token);
 
         return added with { Kind = CameraChangeKind.Updated };
@@ -929,7 +997,6 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
     {
         _logger.LogInformation("Stopping camera manager service");
 
-        // Remove all active paths from MTX cleanly
         var removals = _activePaths.Keys
             .Select(id => RemoveStreamAsync(id, cancellationToken));
 
@@ -941,7 +1008,4 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
         _logger.LogInformation(
             "Completed stopping camera manager service: {Success}", true);
     }
-
-
-
 }

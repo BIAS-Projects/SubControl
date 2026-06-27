@@ -7,7 +7,7 @@
              Title="{Binding Title}"
              Shell.NavBarIsVisible="False">
 
-    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto,Auto"
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto"
           RowSpacing="8"
           Padding="12">
 
@@ -155,8 +155,67 @@
             </VerticalStackLayout>
         </Border>
 
-        <!-- ROW 3b – .NET App Deployment -->
+        <!-- ROW 4 – FFmpeg Deployment -->
         <Border Grid.Row="4"
+                Stroke="Gray"
+                StrokeThickness="1"
+                Padding="10">
+            <VerticalStackLayout Spacing="8">
+
+                <Label Text="FFmpeg Deployment"
+                       FontAttributes="Bold"
+                       FontSize="15" />
+
+                <!-- File picker -->
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <Entry Grid.Column="0"
+                           Placeholder="Select ffmpeg-release-arm64-static.tar.gz / .tar.xz"
+                           Text="{Binding FfmpegLocalPath}"
+                           IsReadOnly="True"
+                           FontFamily="Courier New"
+                           FontSize="12" />
+                    <Button Grid.Column="1"
+                            Text="Browse"
+                            Command="{Binding PickFfmpegFileCommand}" />
+                </Grid>
+
+                <!-- Install options -->
+                <Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="8">
+                    <Label Grid.Column="0" Text="Install dir:" VerticalOptions="Center" />
+                    <Entry Grid.Column="1"
+                           Text="{Binding FfmpegInstallDir}"
+                           FontFamily="Courier New"
+                           FontSize="12" />
+                    <Label Grid.Column="2" Text="Run as:" VerticalOptions="Center" />
+                    <Entry Grid.Column="3"
+                           Text="{Binding FfmpegServiceUser}"
+                           FontFamily="Courier New"
+                           FontSize="12" />
+                </Grid>
+
+                <!-- Deploy button + progress -->
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                    <Button Grid.Column="0"
+                            Text="Deploy"
+                            Command="{Binding DeployFfmpegCommand}" />
+
+                    <VerticalStackLayout Grid.Column="1"
+                                         VerticalOptions="Center"
+                                         Spacing="2">
+                        <ProgressBar Progress="{Binding FfmpegDeployProgressConverted}"
+                                     HeightRequest="8" />
+                        <Label Text="{Binding FfmpegDeployStatus}"
+                               FontSize="11"
+                               TextColor="Gray"
+                               IsVisible="{Binding IsFfmpegDeploying}" />
+                    </VerticalStackLayout>
+                </Grid>
+
+            </VerticalStackLayout>
+        </Border>
+
+        <!-- ROW 5 – .NET App Deployment -->
+        <Border Grid.Row="5"
                 Stroke="Gray"
                 StrokeThickness="1"
                 Padding="10">
@@ -200,7 +259,7 @@
                            FontSize="12" />
                 </Grid>
 
-                <!-- Deploy engine execution block + progress metrics tracking tracking -->
+                <!-- Deploy engine execution block + progress metrics tracking -->
                 <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
                     <Button Grid.Column="0"
                             Text="Deploy App"
@@ -221,29 +280,24 @@
             </VerticalStackLayout>
         </Border>
 
-
-
-        <!-- ROW 4 – Terminal output -->
-        <Border Grid.Row="5"
-        Stroke="Gray"
-        StrokeThickness="1"
-        Padding="6">
+        <!-- ROW 6 – Terminal output -->
+        <Border Grid.Row="6"
+                Stroke="Gray"
+                StrokeThickness="1"
+                Padding="6">
             <CollectionView x:Name="TerminalView"
                     ItemsSource="{Binding TerminalLines}"
                     SelectionMode="None">
 
                 <CollectionView.ItemTemplate>
                     <DataTemplate x:DataType="vm:TerminalLine">
-                        <!-- FIX: Changed Label to Editor, set IsReadOnly and transparent backgrounds -->
                         <Editor Text="{Binding Text}"
-                        FontFamily="Courier New"
-                        FontSize="12"
-                        IsReadOnly="True"
-                        AutoSize="TextChanges"
-                        BackgroundColor="Transparent"
-                        Margin="0"
-                       
-                        >
+                                FontFamily="Courier New"
+                                FontSize="12"
+                                IsReadOnly="True"
+                                AutoSize="TextChanges"
+                                BackgroundColor="Transparent"
+                                Margin="0">
                             <Editor.Triggers>
                                 <DataTrigger TargetType="Editor" Binding="{Binding Kind}" Value="Command">
                                     <Setter Property="TextColor" Value="Orange" />
@@ -268,17 +322,16 @@
 
                 <CollectionView.EmptyView>
                     <Label Text="No output yet. Connect and run a command."
-                   HorizontalOptions="Center"
-                   VerticalOptions="Center"
-                   Margin="0,40"
-                   TextColor="Gray" />
+                           HorizontalOptions="Center"
+                           VerticalOptions="Center"
+                           Margin="0,40"
+                           TextColor="Gray" />
                 </CollectionView.EmptyView>
             </CollectionView>
         </Border>
 
-
-        <!-- ROW 5 – Command input -->
-        <Grid Grid.Row="6"
+        <!-- ROW 7 – Command input -->
+        <Grid Grid.Row="7"
               ColumnDefinitions="Auto,*,Auto,Auto,Auto"
               ColumnSpacing="6">
 
@@ -314,8 +367,8 @@
                     IsEnabled="{Binding IsConnected}" />
         </Grid>
 
-        <!-- ROW 6 – Toolbar -->
-        <ScrollView Grid.Row="7"
+        <!-- ROW 8 – Toolbar -->
+        <ScrollView Grid.Row="8"
                     Orientation="Horizontal">
             <HorizontalStackLayout Spacing="8">
 

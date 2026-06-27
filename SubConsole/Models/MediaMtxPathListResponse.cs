@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Text.Json.Serialization;
 
 namespace SubConsole.Models
 {
@@ -20,5 +21,13 @@ namespace SubConsole.Models
 
        // public int? Readers { get; set; }
         public List<object> Readers { get; set; } = new();
+
+
+        [JsonPropertyName("ready")]
+        public bool Ready { get; set; }
+
+
+        [JsonPropertyName("available")]
+        public bool Available { get; set; }
     }
 }

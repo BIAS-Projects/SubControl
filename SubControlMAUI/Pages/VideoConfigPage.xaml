@@ -76,7 +76,7 @@
                         <Label Text="{Binding DeviceId}"
                VerticalOptions="Center"
                FontAttributes="Bold"
-               LineBreakMode="TailTruncation" />
+  />
                         <Picker Grid.Column="1"
                 Title="Select Stream"
                 ItemsSource="{Binding AvailableProfiles}"
