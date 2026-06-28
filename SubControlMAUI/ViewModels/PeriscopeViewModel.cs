@@ -355,9 +355,10 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
         try
         {
             StatusText = $"Attempting to set FLIR to {paletteName}...";
+            var result = await _dispatcher.SendAndWaitAsync(
+                "TOM FLIR", "WRITE TEXT", lutCommand, _timeout);
 
-            bool ok = await _dispatcher.SendAndWaitAsync(
-                "TOM FLIR", "WRITE TEXT", lutCommand, _timeout) is null;
+            bool ok = IsSuccessResponse(result);
 
             StatusText = ok
                 ? $"FLIR set to {paletteName}"
@@ -366,6 +367,21 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
         finally
         {
             IsBusy = false;
+        }
+    }
+
+    private static bool IsSuccessResponse(string? response)
+    {
+        if (response is null) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(response);
+            return doc.RootElement.TryGetProperty("ok", out var prop)
+                   && prop.GetBoolean();
+        }
+        catch
+        {
+            return false;
         }
     }
 

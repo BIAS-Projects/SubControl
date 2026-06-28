@@ -20,9 +20,13 @@ public class FlirSerialWorker : ISerialWorker
 
     public bool IsOpen { get; private set; }
 
-    public ChannelReader<SerialMessage> ReceivedMessages => throw new NotImplementedException();
+    private readonly Channel<SerialMessage> _received =
+        Channel.CreateBounded<SerialMessage>(new BoundedChannelOptions(256)
+        { FullMode = BoundedChannelFullMode.DropOldest });
 
-    public Task Started => throw new NotImplementedException();
+    public ChannelReader<SerialMessage> ReceivedMessages => _received.Reader;
+    public Task Started => Task.CompletedTask;
+
 
     private readonly ILogger _logger;
     private readonly IDeviceRegistry _registry;

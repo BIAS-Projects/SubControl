@@ -220,7 +220,7 @@ public sealed record MediaMtxPathConfig
         sb.Append($" -g {opts.Framerate}");
         sb.Append($" -b:v {opts.Bitrate}");
         sb.Append($" -f rtsp -rtsp_transport tcp");
-        sb.Append($" rtsp://localhost:8554/{mtxPathName}");
+        sb.Append($" rtsp://127.0.0.1:8554/{mtxPathName}");
 
         return sb.ToString();
     }

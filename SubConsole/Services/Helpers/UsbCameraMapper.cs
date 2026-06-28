@@ -202,51 +202,90 @@ public static class UsbCameraMapper
                 return results;
             }
 
-            foreach (var videoPath in Directory.GetDirectories(videoRoot))
+            var allDirs = Directory.GetDirectories(videoRoot);
+
+            if (allDirs.Length == 0)
             {
-                token.ThrowIfCancellationRequested();
-
-                var videoName = Path.GetFileName(videoPath); // e.g. video0
-
-                var realPath = ResolveSysfsPath(videoPath);
-                if (realPath == null)
-                {
-                    _logger?.LogDebug("Could not resolve sysfs path for {Device}", videoName);
-                    continue;
-                }
-
-                // Only keep capture-capable nodes (skip metadata / output nodes)
-                if (!IsVideoCaptureNode(realPath))
-                    continue;
-
-                var usbDevicePath = FindUsbDeviceNode(realPath);
-                if (usbDevicePath == null)
-                {
-                    _logger?.LogDebug("No USB device node found for {Device}", videoName);
-                    continue;
-                }
-
-                var info = new UsbCameraInfo
-                {
-                    DevicePath = $"/dev/{videoName}",
-                    VendorId = ReadSysfsFile(usbDevicePath, "idVendor"),
-                    ProductId = ReadSysfsFile(usbDevicePath, "idProduct"),
-                    SerialNumber = ReadSysfsFile(usbDevicePath, "serial"),
-                    FriendlyName = ReadSysfsFile(usbDevicePath, "product"),
-                    DeviceId = usbDevicePath
-                };
-
-                results.Add(info);
-
-                _logger?.LogInformation(
-                    "Discovered USB camera {DevicePath} VID={VendorId} PID={ProductId} SN={SerialNumber} Desc={FriendlyName}",
-                    info.DevicePath,
-                    info.VendorId,
-                    info.ProductId,
-                    info.SerialNumber,
-                    info.FriendlyName);
+                _logger?.LogWarning("No video devices found under {VideoRoot}", videoRoot);
+                return results;
             }
-        }
+
+            _logger?.LogDebug("Found {Count} entries under {VideoRoot}", allDirs.Length, videoRoot);
+
+            var videoDirs = allDirs
+                .OrderBy(p =>
+                {
+                    var name = Path.GetFileName(p);
+                    return int.TryParse(name.Replace("video", ""), out int n)
+                        ? n
+                        : int.MaxValue;
+                });
+
+
+                foreach (var videoPath in videoDirs)
+                {
+                    token.ThrowIfCancellationRequested();
+
+                    var videoName = Path.GetFileName(videoPath);
+
+                    // Resolve the videoX sysfs path — name file lives here
+                    var videoRealPath = ResolveSysfsVideoPath(videoPath);
+                    if (videoRealPath == null)
+                    {
+                        _logger?.LogDebug(
+                            "Could not resolve sysfs path for {Device} — skipping", videoName);
+                        continue;
+                    }
+
+                    // Check name file at the videoX level
+                    if (!IsVideoCaptureNode(videoRealPath))
+                    {
+                        _logger?.LogDebug(
+                            "Skipping {Device} — no name file at {Path}", videoName, videoRealPath);
+                        continue;
+                    }
+
+                    var deviceName = ReadSysfsFile(videoRealPath, "name");
+                    _logger?.LogDebug("{Device} name: '{Name}'", videoName, deviceName);
+
+                    // Resolve the device symlink — walk up from here to find idVendor
+                    var deviceRealPath = ResolveDevicePath(videoRealPath);
+                    if (deviceRealPath == null)
+                    {
+                        _logger?.LogDebug(
+                            "Could not resolve device path for {Device} — skipping", videoName);
+                        continue;
+                    }
+
+                    var usbDevicePath = FindUsbDeviceNode(deviceRealPath);
+                    if (usbDevicePath == null)
+                    {
+                        _logger?.LogDebug(
+                            "No USB device node found for {Device} at {Path} — skipping",
+                            videoName, deviceRealPath);
+                        continue;
+                    }
+
+                    var info = new UsbCameraInfo
+                    {
+                        DevicePath = $"/dev/{videoName}",
+                        VendorId = ReadSysfsFile(usbDevicePath, "idVendor"),
+                        ProductId = ReadSysfsFile(usbDevicePath, "idProduct"),
+                        SerialNumber = ReadSysfsFile(usbDevicePath, "serial"),
+                        FriendlyName = ReadSysfsFile(usbDevicePath, "product"),
+                        DeviceId = usbDevicePath
+                    };
+
+                    results.Add(info);
+
+                    _logger?.LogInformation(
+                        "Discovered USB camera {DevicePath} VID={VendorId} PID={ProductId} " +
+                        "SN={SerialNumber} Desc={FriendlyName}",
+                        info.DevicePath, info.VendorId, info.ProductId,
+                        info.SerialNumber, info.FriendlyName);
+                }
+            
+            }
         catch (OperationCanceledException)
         {
             throw;
@@ -256,8 +295,21 @@ public static class UsbCameraMapper
             _logger?.LogError(ex, "Linux USB camera enumeration failed");
         }
 
-        // Filter out duplicate video nodes mapping to the same physical device ID
-        return results.DistinctBy(c => c.DeviceId).ToList();
+        var distinct = results.DistinctBy(c => c.DeviceId).ToList();
+
+        _logger?.LogInformation(
+            "Linux USB camera scan complete: {Total} nodes found, " +
+            "{Distinct} unique physical devices after deduplication",
+            results.Count, distinct.Count);
+
+        foreach (var cam in distinct)
+        {
+            _logger?.LogInformation(
+                "Final camera: {DevicePath} ({FriendlyName}) DeviceId={DeviceId}",
+                cam.DevicePath, cam.FriendlyName, cam.DeviceId);
+        }
+
+        return distinct;
     }
 
     /// <summary>
@@ -273,30 +325,67 @@ public static class UsbCameraMapper
     //    return File.Exists(namePath); // crude but effective for most drivers
     //}
 
+    //private static bool IsVideoCaptureNode(string videoPath)
+    //{
+    //    try
+    //    {
+    //        // Check V4L2 capabilities via the capabilities sysfs file
+    //        // Bit 0x00000001 = V4L2_CAP_VIDEO_CAPTURE
+    //        var capsPath = Path.Combine(videoPath, "capabilities");
+    //        if (File.Exists(capsPath))
+    //        {
+    //            var capsHex = File.ReadAllText(capsPath).Trim();
+    //            if (uint.TryParse(capsHex,
+    //                System.Globalization.NumberStyles.HexNumber,
+    //                null, out uint caps))
+    //            {
+    //                const uint V4L2_CAP_VIDEO_CAPTURE = 0x00000001;
+    //                const uint V4L2_CAP_VIDEO_CAPTURE_MPLANE = 0x00001000;
+    //                const uint V4L2_CAP_META_CAPTURE = 0x00800000;
+    //                const uint V4L2_CAP_VIDEO_OUTPUT = 0x00000002;
+
+    //                bool isCapture = (caps & V4L2_CAP_VIDEO_CAPTURE) != 0 ||
+    //                                 (caps & V4L2_CAP_VIDEO_CAPTURE_MPLANE) != 0;
+    //                bool isMeta = (caps & V4L2_CAP_META_CAPTURE) != 0;
+    //                bool isOutput = (caps & V4L2_CAP_VIDEO_OUTPUT) != 0;
+
+    //                // Must be a capture node and not purely metadata or output
+    //                return isCapture && !isMeta && !isOutput;
+    //            }
+    //        }
+
+    //        // Fallback: filter by name file if capabilities not available
+    //        var namePath = Path.Combine(videoPath, "name");
+    //        if (File.Exists(namePath))
+    //        {
+    //            var name = File.ReadAllText(namePath);
+    //            return !name.Contains("metadata", StringComparison.OrdinalIgnoreCase) &&
+    //                   !name.Contains("telemetry", StringComparison.OrdinalIgnoreCase) &&
+    //                   !name.Contains("output", StringComparison.OrdinalIgnoreCase);
+    //        }
+
+    //        return false;
+    //    }
+    //    catch
+    //    {
+    //        return false;
+    //    }
+    //}
     private static bool IsVideoCaptureNode(string videoPath)
     {
         try
         {
-            string namePath = Path.Combine(videoPath, "name");
-            if (File.Exists(namePath))
-            {
-                string name = File.ReadAllText(namePath);
-
-                // Case-insensitive checks without altering the original string
-                if (name.Contains("metadata", StringComparison.OrdinalIgnoreCase) ||
-                    name.Contains("telemetry", StringComparison.OrdinalIgnoreCase))
-                {
-                    return false;
-                }
-            }
-            return true;
+            // Confirm it's a real V4L2 device node by checking the name file exists.
+            // On this kernel, capture and metadata nodes share the same name so we
+            // cannot filter by content — sorting + DistinctBy handles selection instead.
+            var namePath = Path.Combine(videoPath, "name");
+            return File.Exists(namePath);
         }
         catch
         {
             return false;
         }
     }
-
 
 
     private static string? ResolveSysfsPath(string path)
@@ -337,6 +426,86 @@ public static class UsbCameraMapper
         }
     }
 
+
+
+    /// <summary>
+    /// Resolves the real path of the video4linux/videoX sysfs entry.
+    /// Returns the videoX level path where 'name' lives.
+    /// </summary>
+    private static string? ResolveSysfsVideoPath(string path)
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "readlink",
+                Arguments = $"-f \"{path}\"",
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(startInfo);
+            if (process != null)
+            {
+                string output = process.StandardOutput.ReadToEnd().Trim();
+                process.WaitForExit();
+                if (Directory.Exists(output))
+                {
+                    _logger?.LogDebug(
+                        "ResolveSysfsVideoPath: {Path} → {Resolved}", path, output);
+                    return output;
+                }
+            }
+
+            var resolved = new DirectoryInfo(path)
+                .ResolveLinkTarget(returnFinalTarget: true);
+            return resolved?.FullName;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Resolves the real path of the video4linux/videoX/device symlink.
+    /// This is the starting point for walking up to find idVendor.
+    /// </summary>
+    private static string? ResolveDevicePath(string videoSysfsPath)
+    {
+        try
+        {
+            var deviceLink = Path.Combine(videoSysfsPath, "device");
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "readlink",
+                Arguments = $"-f \"{deviceLink}\"",
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(startInfo);
+            if (process != null)
+            {
+                string output = process.StandardOutput.ReadToEnd().Trim();
+                process.WaitForExit();
+                if (Directory.Exists(output))
+                {
+                    _logger?.LogDebug(
+                        "ResolveDevicePath: {Path} → {Resolved}", deviceLink, output);
+                    return output;
+                }
+            }
+
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     private static string? FindUsbDeviceNode(string startPath)
     {

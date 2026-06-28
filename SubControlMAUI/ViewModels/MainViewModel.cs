@@ -731,25 +731,30 @@ public partial class MainViewModel : BaseViewModel
         try
         {
             StatusText = "Checking video streams...";
-            if (await _dispatcher.SendAndWaitAsync(CameraFeature, "CHECK MTX STREAMS", "", _timeout) is null)
+            var result = await _dispatcher.SendAndWaitAsync(CameraFeature, "CHECK MTX STREAMS", "", _timeout);
+
+            if (!IsSuccessResponse(result))
             {
                 StatusText = "Streams not ready — attempting to start...";
                 var discoverJson = JsonSerializer.Serialize(new CameraDiscoverRequest { AutoAdd = true });
 
-                if (await _dispatcher.SendAndWaitAsync(CameraFeature, "DISCOVER", discoverJson, _timeout) is null)
+                var discoverResult = await _dispatcher.SendAndWaitAsync(CameraFeature, "DISCOVER", discoverJson, _timeout);
+                if (discoverResult is null)
                 {
                     StatusText = "Failed to start video streams";
                     return;
                 }
 
                 StatusText = "Verifying streams...";
-                if (await _dispatcher.SendAndWaitAsync(CameraFeature, "CHECK MTX STREAMS", "", _timeout) is null)
+                var verifyResult = await _dispatcher.SendAndWaitAsync(CameraFeature, "CHECK MTX STREAMS", "", _timeout);
+                if (!IsSuccessResponse(verifyResult))
                 {
                     StatusText = "Video streams failed to start";
                     return;
                 }
             }
 
+            StatusText = "Video streams ready";
             StatusText = "Opening FLIR control port...";
             if (await _dispatcher.SendAndWaitAsync(SerialFeature, "OPEN", "TOM FLIR", _timeout) is null)
             {
@@ -763,6 +768,22 @@ public partial class MainViewModel : BaseViewModel
         finally
         {
             IsBusy = false;
+        }
+    }
+
+
+    private static bool IsSuccessResponse(string? response)
+    {
+        if (response is null) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(response);
+            return doc.RootElement.TryGetProperty("ok", out var prop)
+                   && prop.GetBoolean();
+        }
+        catch
+        {
+            return false;
         }
     }
 

@@ -200,6 +200,41 @@ public sealed class MediaMtxClient
             "MediaMtxClient initialised. API base: {BaseAddress}", _http.BaseAddress);
     }
 
+    /// <summary>
+    /// GET /v3/paths/list — returns all paths as-is, regardless of ready state.
+    /// Used for state hydration and reconciliation, not health checking.
+    /// </summary>
+    public async Task<OperationResultWithValue<IReadOnlyList<MediaMtxPathItem>>> GetAllPathsRawAsync(
+        CancellationToken token = default)
+    {
+        _logger.LogDebug("Fetching all MediaMTX paths (raw)");
+
+        var result = await SendAsyncWithResponse(HttpMethod.Get, "v3/paths/list", null, token);
+
+        _logger.LogDebug($"{result}");
+
+
+        if (!result.IsSuccess)
+            return OperationResultWithValue<IReadOnlyList<MediaMtxPathItem>>
+                .Failure(result.Message);
+
+        try
+        {
+            var response = JsonSerializer.Deserialize<MediaMtxPathListResponse>(
+                result.Value!, _jsonOpts);
+            var items = response?.Items ?? new List<MediaMtxPathItem>();
+
+            _logger.LogDebug("MediaMTX returned {Count} paths", items.Count);
+            return OperationResultWithValue<IReadOnlyList<MediaMtxPathItem>>.Success(items);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to parse MediaMTX paths response");
+            return OperationResultWithValue<IReadOnlyList<MediaMtxPathItem>>
+                .Failure("Invalid paths response");
+        }
+    }
+
     /// <summary>POST /v3/config/paths/add/{name}</summary>
     public async Task<OperationResult> AddPathAsync(
         string pathName, MediaMtxPathConfig config, CancellationToken token)
@@ -493,6 +528,31 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
         else
         {
             _logger.LogInformation("Completed loading camera registry");
+
+            var existingPaths = await _mtx.GetAllPathsRawAsync(stoppingToken);
+            if (existingPaths.IsSuccess)
+            {
+                foreach (var reg in _registry.AllRegistrations)
+                {
+                    if (existingPaths.Value!.Any(p =>
+                        string.Equals(p.Name, reg.StreamPathName,
+                            StringComparison.OrdinalIgnoreCase)))
+                    {
+                        _activePaths[reg.Camera.DeviceId] = true;
+                        reg.IsRegisteredWithMtx = true;
+                        _logger.LogInformation(
+                            "Restored active path '{StreamPath}' for camera {DeviceId}",
+                            reg.StreamPathName, reg.Camera.DeviceId);
+                    }
+                }
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Could not fetch existing MediaMTX paths on startup: {Message}. " +
+                    "_activePaths will start empty.",
+                    existingPaths.Message);
+            }
         }
 
         try { await Task.Delay(Timeout.Infinite, stoppingToken); }
@@ -550,7 +610,7 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
     // ── Stream lifecycle ──────────────────────────────────────────────────────
 
     public async Task<OperationResult> AddStreamAsync(
-        string deviceId, CancellationToken token = default)
+       string deviceId, CancellationToken token = default)
     {
         _logger.LogInformation("Adding stream for camera {DeviceId}", deviceId);
 
@@ -566,15 +626,17 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
             ? MediaMtxPathConfig.BuildDshowFfmpegCommand(reg.FfmpegOptions, reg.StreamPathName)
             : MediaMtxPathConfig.BuildV4l2FfmpegCommand(reg.FfmpegOptions, reg.StreamPathName);
 
-        //var configWithCommand = reg.MtxConfig with
-        //{
-        //    RunOnInit = command,
-        //    RunOnDemand = command
-        //};
+        _logger.LogInformation(
+            "AddStream: building FFmpeg command for '{StreamPath}' " +
+            "using device '{DeviceName}': {Command}",
+            reg.StreamPathName, reg.FfmpegOptions.DeviceName, command);
+
         var configWithCommand = reg.MtxConfig with
         {
-            RunOnInit = command,
-            RunOnDemand = string.Empty // Keep empty to avoid process crashing
+            RunOnInit = string.Empty,  // Do not run on startup
+            RunOnDemand = command,     // Trigger only when watched
+            RunOnDemandCloseAfter = "10s",
+            RunOnDemandRestart = true
         };
 
         var result = await _mtx.AddPathAsync(reg.StreamPathName, configWithCommand, token);
@@ -587,13 +649,14 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
         }
 
         _activePaths[deviceId] = true;
+        reg.IsRegisteredWithMtx = true;  // ← set BEFORE UpdateAsync so it persists correctly
 
         await _registry.UpdateAsync(deviceId, null, configWithCommand);
-        reg.IsRegisteredWithMtx = true;
 
         _logger.LogInformation(
-            "Completed adding stream '{StreamPath}' for camera {DeviceId}",
-            reg.StreamPathName, deviceId);
+            "Completed adding stream '{StreamPath}' for camera {DeviceId} " +
+            "— IsRegisteredWithMtx={IsRegistered}",
+            reg.StreamPathName, deviceId, reg.IsRegisteredWithMtx);
 
         return OperationResult.Success();
     }
@@ -680,8 +743,7 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
     {
         _logger.LogInformation("Checking MediaMTX stream health");
 
-        var pathsResult = await _mtx.GetPathsAsync(token);
-
+        var pathsResult = await _mtx.GetAllPathsRawAsync(token);
         if (!pathsResult.IsSuccess)
         {
             _logger.LogError(
@@ -690,69 +752,50 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
         }
 
         var mtxPaths = pathsResult.Value!;
-        var expected = _registry.AllRegistrations
-            .Where(r => r.IsRegisteredWithMtx)
-            .ToList();
+        var allRegistrations = _registry.AllRegistrations;
 
-        if (expected.Count == 0)
+        if (allRegistrations.Count == 0)
         {
-            _logger.LogDebug("No registered MTX streams to validate");
+            _logger.LogDebug("No cameras in registry to validate");
             return OperationResult.Success();
         }
 
-        var missing = new List<string>();
-        var notReady = new List<string>();
-        var noReaders = new List<string>();
+        _logger.LogInformation(
+            "Checking {Expected} registered cameras against {Actual} MTX paths",
+            allRegistrations.Count, mtxPaths.Count);
 
-        foreach (var reg in expected)
+        var missing = new List<string>();
+
+        foreach (var reg in allRegistrations)
         {
             var path = mtxPaths.FirstOrDefault(p =>
-                string.Equals(p.Name, reg.StreamPathName, StringComparison.OrdinalIgnoreCase));
+                string.Equals(p.Name, reg.StreamPathName,
+                    StringComparison.OrdinalIgnoreCase));
 
             if (path is null)
             {
                 missing.Add(reg.StreamPathName);
                 _logger.LogWarning(
-                    "Expected stream '{StreamPath}' is missing from MediaMTX",
-                    reg.StreamPathName);
-                continue;
+                    "Expected stream '{StreamPath}' (camera {DeviceId}) " +
+                    "is missing from MediaMTX",
+                    reg.StreamPathName, reg.Camera.DeviceId);
             }
-
-            if (path.SourceReady.HasValue && path.SourceReady == 0)
+            else
             {
-                notReady.Add(reg.StreamPathName);
-                _logger.LogWarning(
-                    "Stream '{StreamPath}' exists but source is NOT ready",
-                    reg.StreamPathName);
-            }
-
-            if (path.Readers is not null && path.Readers.Count == 0)
-            {
-                noReaders.Add(reg.StreamPathName);
-                _logger.LogDebug(
-                    "Stream '{StreamPath}' has no active readers",
-                    reg.StreamPathName);
+                _logger.LogInformation(
+                    "Stream '{StreamPath}' is configured in MTX (ready={Ready})",
+                    reg.StreamPathName, path.Ready);
             }
         }
 
         if (missing.Count > 0)
             return OperationResult.Failure(
-                $"Missing {missing.Count} streams in MediaMTX: {string.Join(", ", missing)}");
-
-        if (notReady.Count > 0)
-            return OperationResult.Failure(
-                $"Streams not ready: {string.Join(", ", notReady)}");
-
-        if (noReaders.Count > 0)
-        {
-            _logger.LogDebug(
-                "{Count} streams currently have no readers: {Streams}",
-                noReaders.Count, string.Join(", ", noReaders));
-        }
+                $"Missing {missing.Count} streams in MediaMTX: " +
+                $"{string.Join(", ", missing)}");
 
         _logger.LogInformation(
-            "MediaMTX stream health check passed ({Count} streams verified)",
-            expected.Count);
+            "MediaMTX stream health check passed — {Count} streams configured",
+            allRegistrations.Count);
 
         return OperationResult.Success();
     }
@@ -871,24 +914,103 @@ public sealed class CameraManagerService : BackgroundService, ICameraManagerServ
         _logger.LogInformation(
             "Starting camera auto-discovery (AutoAddToMtx={AutoAdd})", autoAddToMtx);
 
-        var cameras = await UsbCameraMapper.GetUsbCamerasAsync(token);
         int added = 0;
 
-        foreach (var camera in cameras)
+        // Fetch current MTX paths once upfront so we can reconcile accurately
+        IReadOnlyList<MediaMtxPathItem> mtxPaths = Array.Empty<MediaMtxPathItem>();
+        if (autoAddToMtx)
         {
-            var existing = _registry.GetByDeviceId(camera.DeviceId);
-            if (existing is null)
+            var pathsResult = await _mtx.GetAllPathsRawAsync(token);
+            if (pathsResult.IsSuccess)
+                mtxPaths = pathsResult.Value!;
+            else
+                _logger.LogWarning(
+                    "AutoDiscover: could not fetch MTX paths, " +
+                    "will attempt to add all registered cameras: {Message}",
+                    pathsResult.Message);
+        }
+
+        // Also fetch physically connected cameras so we can update DeviceName
+        // before pushing to MTX (device node may have changed since last run)
+        var connectedCameras = await UsbCameraMapper.GetUsbCamerasAsync(token);
+
+        // Iterate registry — these are the cameras that SHOULD be in MTX
+        foreach (var reg in _registry.AllRegistrations)
+        {
+            if (!autoAddToMtx) continue;
+
+            // Check MTX directly rather than trusting _activePaths
+            bool alreadyInMtx = mtxPaths.Any(p =>
+                string.Equals(p.Name, reg.StreamPathName,
+                    StringComparison.OrdinalIgnoreCase));
+
+            if (alreadyInMtx)
             {
+                // Keep _activePaths in sync
+                _activePaths[reg.Camera.DeviceId] = true;
+                reg.IsRegisteredWithMtx = true;
                 _logger.LogDebug(
-                    "Auto-discovery found unregistered camera {DeviceId} ({FriendlyName})",
-                    camera.DeviceId, camera.FriendlyName);
+                    "AutoDiscover: stream '{StreamPath}' already present in MTX, skipping",
+                    reg.StreamPathName);
                 continue;
             }
 
-            if (!autoAddToMtx || _activePaths.ContainsKey(camera.DeviceId)) continue;
+            // Path is missing from MTX — update DeviceName if camera is physically
+            // present (node may have changed e.g. /dev/video0 → /dev/video2)
+            var connected = connectedCameras.FirstOrDefault(c =>
+                string.Equals(c.DeviceId, reg.Camera.DeviceId,
+                    StringComparison.OrdinalIgnoreCase));
 
-            var result = await AddStreamAsync(camera.DeviceId, token);
-            if (result.IsSuccess) added++;
+            if (connected is not null)
+            {
+                var updatedOptions = reg.FfmpegOptions with
+                {
+                    DeviceName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                        ? (string.IsNullOrEmpty(connected.SymbolicLink)
+                            ? connected.FriendlyName
+                            : connected.SymbolicLink)
+                        : connected.DevicePath
+                };
+
+                await _registry.UpdateAsync(reg.Camera.DeviceId, updatedOptions, null);
+
+                _logger.LogDebug(
+                    "AutoDiscover: updated DeviceName to '{DeviceName}' for camera {DeviceId}",
+                    updatedOptions.DeviceName, reg.Camera.DeviceId);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "AutoDiscover: camera {DeviceId} ('{StreamPath}') is in registry " +
+                    "but not physically connected — will attempt to add to MTX anyway " +
+                    "using stored DeviceName '{DeviceName}'",
+                    reg.Camera.DeviceId, reg.StreamPathName, reg.FfmpegOptions.DeviceName);
+            }
+
+            // Clear stale local state and push path to MTX
+            _activePaths.TryRemove(reg.Camera.DeviceId, out _);
+            reg.IsRegisteredWithMtx = false;
+
+            // Just before calling AddStreamAsync in AutoDiscoverAsync:
+            _logger?.LogInformation(
+                "AutoDiscover: attempting to add stream '{StreamPath}' for camera {DeviceId} " +
+                "using device '{DeviceName}'",
+                reg.StreamPathName, reg.Camera.DeviceId, reg.FfmpegOptions.DeviceName);
+
+            var result = await AddStreamAsync(reg.Camera.DeviceId, token);
+            if (result.IsSuccess)
+            {
+                added++;
+                _logger.LogInformation(
+                    "AutoDiscover: added stream '{StreamPath}' for camera {DeviceId}",
+                    reg.StreamPathName, reg.Camera.DeviceId);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "AutoDiscover: failed to add stream '{StreamPath}': {Message}",
+                    reg.StreamPathName, result.Message);
+            }
         }
 
         _logger.LogInformation(
