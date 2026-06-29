@@ -7,11 +7,11 @@
              Title="{Binding Title}"
              Shell.NavBarIsVisible="False">
 
-    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto"
+    <Grid RowDefinitions="Auto,*"
           RowSpacing="8"
           Padding="12">
 
-        <!-- ROW 0 – Title bar -->
+        <!-- ROW 0 – Title bar (fixed) -->
         <Grid Grid.Row="0"
               ColumnDefinitions="Auto,*,Auto">
 
@@ -42,360 +42,375 @@
             </Label>
         </Grid>
 
-        <!-- ROW 1 – Credentials -->
-        <Grid Grid.Row="1"
-              ColumnDefinitions="*,*"
-              ColumnSpacing="8">
-
-            <Entry Grid.Column="0"
-                   Placeholder="Username"
-                   Text="{Binding UserName}">
-                <Entry.Triggers>
-                    <DataTrigger TargetType="Entry" Binding="{Binding IsConnected}" Value="True">
-                        <Setter Property="IsEnabled" Value="False" />
-                    </DataTrigger>
-                    <DataTrigger TargetType="Entry" Binding="{Binding IsConnected}" Value="False">
-                        <Setter Property="IsEnabled" Value="True" />
-                    </DataTrigger>
-                </Entry.Triggers>
-            </Entry>
-
-            <Entry Grid.Column="1"
-                   Placeholder="Password"
-                   Text="{Binding Password}"
-                   IsPassword="True">
-                <Entry.Triggers>
-                    <DataTrigger TargetType="Entry" Binding="{Binding IsConnected}" Value="True">
-                        <Setter Property="IsEnabled" Value="False" />
-                    </DataTrigger>
-                    <DataTrigger TargetType="Entry" Binding="{Binding IsConnected}" Value="False">
-                        <Setter Property="IsEnabled" Value="True" />
-                    </DataTrigger>
-                </Entry.Triggers>
-            </Entry>
-        </Grid>
-
-        <!-- ROW 2 – Connect / Disconnect -->
-        <Grid Grid.Row="2"
-              ColumnDefinitions="*,*,Auto"
-              ColumnSpacing="8">
-
-            <Button Grid.Column="0"
-                    Text="Connect"
-                    Command="{Binding ConnectCommand}" />
-
-            <Button Grid.Column="1"
-                    Text="Disconnect"
-                    Command="{Binding DisconnectCommand}" />
-
-            <ActivityIndicator Grid.Column="2"
-                               IsRunning="{Binding IsBusy}"
-                               IsVisible="{Binding IsBusy}"
-                               WidthRequest="30"
-                               HeightRequest="30"
-                               VerticalOptions="Center" />
-        </Grid>
-
-        <!-- ROW 3 – MediaMTX Deployment -->
-        <Border Grid.Row="3"
-                Stroke="Gray"
-                StrokeThickness="1"
-                Padding="10">
+        <!-- ROW 1 – Scrollable content -->
+        <ScrollView Grid.Row="1">
             <VerticalStackLayout Spacing="8">
 
-                <Label Text="MediaMTX Deployment"
-                       FontAttributes="Bold"
-                       FontSize="15" />
+                <!-- Credentials -->
+                <Grid ColumnDefinitions="*,*"
+                      ColumnSpacing="8">
 
-                <!-- File picker -->
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
                     <Entry Grid.Column="0"
-                           Placeholder="Select mediamtx_vX.X.X_linux_arm64.tar.gz"
-                           Text="{Binding MediaMtxLocalPath}"
-                           IsReadOnly="True"
-                           FontFamily="Courier New"
-                           FontSize="12" />
-                    <Button Grid.Column="1"
-                            Text="Browse"
-                            Command="{Binding PickMediaMtxFileCommand}" />
-                </Grid>
+                           Placeholder="Username"
+                           Text="{Binding UserName}">
+                        <Entry.Triggers>
+                            <DataTrigger TargetType="Entry" Binding="{Binding IsConnected}" Value="True">
+                                <Setter Property="IsEnabled" Value="False" />
+                            </DataTrigger>
+                            <DataTrigger TargetType="Entry" Binding="{Binding IsConnected}" Value="False">
+                                <Setter Property="IsEnabled" Value="True" />
+                            </DataTrigger>
+                        </Entry.Triggers>
+                    </Entry>
 
-                <!-- Install options -->
-                <Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="8">
-                    <Label Grid.Column="0" Text="Install dir:" VerticalOptions="Center" />
                     <Entry Grid.Column="1"
-                           Text="{Binding MediaMtxInstallDir}"
-                           FontFamily="Courier New"
-                           FontSize="12" />
-                    <Label Grid.Column="2" Text="Run as:" VerticalOptions="Center" />
-                    <Entry Grid.Column="3"
-                           Text="{Binding MediaMtxServiceUser}"
-                           FontFamily="Courier New"
-                           FontSize="12" />
+                           Placeholder="Password"
+                           Text="{Binding Password}"
+                           IsPassword="True">
+                        <Entry.Triggers>
+                            <DataTrigger TargetType="Entry" Binding="{Binding IsConnected}" Value="True">
+                                <Setter Property="IsEnabled" Value="False" />
+                            </DataTrigger>
+                            <DataTrigger TargetType="Entry" Binding="{Binding IsConnected}" Value="False">
+                                <Setter Property="IsEnabled" Value="True" />
+                            </DataTrigger>
+                        </Entry.Triggers>
+                    </Entry>
                 </Grid>
 
-                <!-- Deploy button + progress -->
-                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                <!-- Connect / Disconnect -->
+                <Grid ColumnDefinitions="*,*,Auto"
+                      ColumnSpacing="8">
+
                     <Button Grid.Column="0"
-                            Text="Deploy"
-                            Command="{Binding DeployMediaMtxCommand}" />
+                            Text="Connect"
+                            Command="{Binding ConnectCommand}" />
 
-                    <VerticalStackLayout Grid.Column="1"
-                                         VerticalOptions="Center"
-                                         Spacing="2">
-                        <ProgressBar x:Name="DeployProgressBar"
-                                     HeightRequest="8" />
-                        <Label Text="{Binding DeployStatus}"
-                               FontSize="11"
-                               TextColor="Gray"
-                               IsVisible="{Binding IsDeploying}" />
-                    </VerticalStackLayout>
+                    <Button Grid.Column="1"
+                            Text="Disconnect"
+                            Command="{Binding DisconnectCommand}" />
+
+                    <ActivityIndicator Grid.Column="2"
+                                       IsRunning="{Binding IsBusy}"
+                                       IsVisible="{Binding IsBusy}"
+                                       WidthRequest="30"
+                                       HeightRequest="30"
+                                       VerticalOptions="Center" />
                 </Grid>
+
+                <!-- MediaMTX Deployment -->
+                <Border Stroke="Gray"
+                        StrokeThickness="1"
+                        Padding="10">
+                    <VerticalStackLayout Spacing="8">
+
+                        <Label Text="MediaMTX Deployment"
+                               FontAttributes="Bold"
+                               FontSize="15" />
+
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <Entry Grid.Column="0"
+                                   Placeholder="Select mediamtx_vX.X.X_linux_arm64.tar.gz"
+                                   Text="{Binding MediaMtxLocalPath}"
+                                   IsReadOnly="True"
+                                   FontFamily="Courier New"
+                                   FontSize="12" />
+                            <Button Grid.Column="1"
+                                    Text="Browse"
+                                    Command="{Binding PickMediaMtxFileCommand}" />
+                        </Grid>
+
+                        <Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="8">
+                            <Label Grid.Column="0" Text="Install dir:" VerticalOptions="Center" />
+                            <Entry Grid.Column="1"
+                                   Text="{Binding MediaMtxInstallDir}"
+                                   FontFamily="Courier New"
+                                   FontSize="12" />
+                            <Label Grid.Column="2" Text="Run as:" VerticalOptions="Center" />
+                            <Entry Grid.Column="3"
+                                   Text="{Binding MediaMtxServiceUser}"
+                                   FontFamily="Courier New"
+                                   FontSize="12" />
+                        </Grid>
+
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                            <Button Grid.Column="0"
+                                    Text="Deploy"
+                                    Command="{Binding DeployMediaMtxCommand}" />
+
+                            <VerticalStackLayout Grid.Column="1"
+                                                 VerticalOptions="Center"
+                                                 Spacing="2">
+                                <ProgressBar x:Name="DeployProgressBar"
+                                             HeightRequest="8" />
+                                <Label Text="{Binding DeployStatus}"
+                                       FontSize="11"
+                                       TextColor="Gray"
+                                       IsVisible="{Binding IsDeploying}" />
+                            </VerticalStackLayout>
+                        </Grid>
+
+                    </VerticalStackLayout>
+                </Border>
+
+                <!-- FFmpeg Deployment -->
+                <Border Stroke="Gray"
+                        StrokeThickness="1"
+                        Padding="10">
+                    <VerticalStackLayout Spacing="8">
+
+                        <Label Text="FFmpeg Deployment"
+                               FontAttributes="Bold"
+                               FontSize="15" />
+
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <Entry Grid.Column="0"
+                                   Placeholder="Select ffmpeg-release-arm64-static.tar.gz / .tar.xz"
+                                   Text="{Binding FfmpegLocalPath}"
+                                   IsReadOnly="True"
+                                   FontFamily="Courier New"
+                                   FontSize="12" />
+                            <Button Grid.Column="1"
+                                    Text="Browse"
+                                    Command="{Binding PickFfmpegFileCommand}" />
+                        </Grid>
+
+                        <Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="8">
+                            <Label Grid.Column="0" Text="Install dir:" VerticalOptions="Center" />
+                            <Entry Grid.Column="1"
+                                   Text="{Binding FfmpegInstallDir}"
+                                   FontFamily="Courier New"
+                                   FontSize="12" />
+                            <Label Grid.Column="2" Text="Run as:" VerticalOptions="Center" />
+                            <Entry Grid.Column="3"
+                                   Text="{Binding FfmpegServiceUser}"
+                                   FontFamily="Courier New"
+                                   FontSize="12" />
+                        </Grid>
+
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                            <Button Grid.Column="0"
+                                    Text="Deploy"
+                                    Command="{Binding DeployFfmpegCommand}" />
+
+                            <VerticalStackLayout Grid.Column="1"
+                                                 VerticalOptions="Center"
+                                                 Spacing="2">
+                                <ProgressBar Progress="{Binding FfmpegDeployProgressConverted}"
+                                             HeightRequest="8" />
+                                <Label Text="{Binding FfmpegDeployStatus}"
+                                       FontSize="11"
+                                       TextColor="Gray"
+                                       IsVisible="{Binding IsFfmpegDeploying}" />
+                            </VerticalStackLayout>
+                        </Grid>
+
+                    </VerticalStackLayout>
+                </Border>
+
+                <!-- .NET App Deployment -->
+                <Border Stroke="Gray"
+                        StrokeThickness="1"
+                        Padding="10">
+                    <VerticalStackLayout Spacing="8">
+
+                        <Label Text=".NET App Deployment"
+                               FontAttributes="Bold"
+                               FontSize="15" />
+
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <Entry Grid.Column="0"
+                                   Placeholder="Select Local Publish Output Folder"
+                                   Text="{Binding DotNetLocalPath}"
+                                   IsReadOnly="True"
+                                   FontFamily="Courier New"
+                                   FontSize="12" />
+                            <Button Grid.Column="1"
+                                    Text="Browse"
+                                    Command="{Binding PickDotNetFolderCommand}" />
+                        </Grid>
+
+                        <Grid ColumnDefinitions="Auto,*,Auto,*,Auto,*" ColumnSpacing="8">
+                            <Label Grid.Column="0" Text="Install dir:" VerticalOptions="Center" />
+                            <Entry Grid.Column="1"
+                                   Text="{Binding DotNetInstallDir}"
+                                   FontFamily="Courier New"
+                                   FontSize="12" />
+                            <Label Grid.Column="2" Text="Exe Name:" VerticalOptions="Center" />
+                            <Entry Grid.Column="3"
+                                   Text="{Binding DotNetExecutableName}"
+                                   FontFamily="Courier New"
+                                   FontSize="12" />
+                            <Label Grid.Column="4" Text="Service ID:" VerticalOptions="Center" />
+                            <Entry Grid.Column="5"
+                                   Text="{Binding DotNetServiceName}"
+                                   FontFamily="Courier New"
+                                   FontSize="12" />
+                        </Grid>
+
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                            <Button Grid.Column="0"
+                                    Text="Deploy App"
+                                    Command="{Binding DeployDotNetAppCommand}" />
+
+                            <VerticalStackLayout Grid.Column="1"
+                                                 VerticalOptions="Center"
+                                                 Spacing="2">
+                                <ProgressBar Progress="{Binding DotNetDeployProgressConverted}"
+                                             HeightRequest="8" />
+                                <Label Text="{Binding DotNetDeployStatus}"
+                                       FontSize="11"
+                                       TextColor="Gray"
+                                       IsVisible="{Binding IsDotNetDeploying}" />
+                            </VerticalStackLayout>
+                        </Grid>
+
+                    </VerticalStackLayout>
+                </Border>
+
+                <!-- UART / Bluetooth Configuration -->
+                <Border Stroke="Gray"
+                        StrokeThickness="1"
+                        Padding="10">
+                    <VerticalStackLayout Spacing="8">
+
+                        <Label Text="UART Configuration"
+                               FontAttributes="Bold"
+                               FontSize="15" />
+
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                            <Button Grid.Column="0"
+                                    Text="Configure UART &amp; Reboot"
+                                    Command="{Binding ConfigureUartAndRebootCommand}"
+                                    IsEnabled="{Binding IsConnected}" />
+
+                            <Label Grid.Column="1"
+                                   Text="{Binding UartConfigStatus}"
+                                   FontSize="11"
+                                   TextColor="Gray"
+                                   VerticalOptions="Center" />
+                        </Grid>
+
+                    </VerticalStackLayout>
+                </Border>
+
+                <!-- Terminal output -->
+                <Border Stroke="Gray"
+                        StrokeThickness="1"
+                        Padding="6"
+                        HeightRequest="300">
+                    <CollectionView x:Name="TerminalView"
+                                    ItemsSource="{Binding TerminalLines}"
+                                    SelectionMode="None">
+
+                        <CollectionView.ItemTemplate>
+                            <DataTemplate x:DataType="vm:TerminalLine">
+                                <Editor Text="{Binding Text}"
+                                        FontFamily="Courier New"
+                                        FontSize="12"
+                                        IsReadOnly="True"
+                                        AutoSize="TextChanges"
+                                        BackgroundColor="Transparent"
+                                        Margin="0">
+                                    <Editor.Triggers>
+                                        <DataTrigger TargetType="Editor" Binding="{Binding Kind}" Value="Command">
+                                            <Setter Property="TextColor" Value="Orange" />
+                                            <Setter Property="FontAttributes" Value="Bold" />
+                                        </DataTrigger>
+                                        <DataTrigger TargetType="Editor" Binding="{Binding Kind}" Value="Error">
+                                            <Setter Property="TextColor" Value="Red" />
+                                        </DataTrigger>
+                                        <DataTrigger TargetType="Editor" Binding="{Binding Kind}" Value="Info">
+                                            <Setter Property="TextColor" Value="CornflowerBlue" />
+                                        </DataTrigger>
+                                        <DataTrigger TargetType="Editor" Binding="{Binding Kind}" Value="Success">
+                                            <Setter Property="TextColor" Value="LimeGreen" />
+                                        </DataTrigger>
+                                        <DataTrigger TargetType="Editor" Binding="{Binding Kind}" Value="Stream">
+                                            <Setter Property="TextColor" Value="MediumAquamarine" />
+                                        </DataTrigger>
+                                    </Editor.Triggers>
+                                </Editor>
+                            </DataTemplate>
+                        </CollectionView.ItemTemplate>
+
+                        <CollectionView.EmptyView>
+                            <Label Text="No output yet. Connect and run a command."
+                                   HorizontalOptions="Center"
+                                   VerticalOptions="Center"
+                                   Margin="0,40"
+                                   TextColor="Gray" />
+                        </CollectionView.EmptyView>
+                    </CollectionView>
+                </Border>
+
+                <!-- Command input -->
+                <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto"
+                      ColumnSpacing="6">
+
+                    <Label Grid.Column="0"
+                           Text="$"
+                           FontSize="16"
+                           FontAttributes="Bold"
+                           VerticalOptions="Center" />
+
+                    <Entry Grid.Column="1"
+                           Placeholder="Enter command"
+                           Text="{Binding CommandInput}"
+                           ReturnCommand="{Binding RunCommandCommand}"
+                           IsEnabled="{Binding IsConnected}"
+                           FontFamily="Courier New"
+                           FontSize="13" />
+
+                    <Button Grid.Column="2"
+                            Text="Up"
+                            Padding="10,6"
+                            Command="{Binding HistoryUpCommand}"
+                            IsEnabled="{Binding IsConnected}" />
+
+                    <Button Grid.Column="3"
+                            Text="Down"
+                            Padding="10,6"
+                            Command="{Binding HistoryDownCommand}"
+                            IsEnabled="{Binding IsConnected}" />
+
+                    <Button Grid.Column="4"
+                            Text="Run"
+                            Command="{Binding RunCommandCommand}"
+                            IsEnabled="{Binding IsConnected}" />
+                </Grid>
+
+                <!-- Toolbar -->
+                <ScrollView Orientation="Horizontal">
+                    <HorizontalStackLayout Spacing="8">
+
+                        <Button Text="Clear"
+                                Command="{Binding ClearTerminalCommand}" />
+
+                        <Button Text="Sys Info"
+                                Command="{Binding GetSystemInfoCommand}"
+                                IsEnabled="{Binding IsConnected}" />
+
+                        <Label Text="Log:" VerticalOptions="Center" />
+
+                        <Entry Text="{Binding LogFilePath}"
+                               WidthRequest="220"
+                               FontFamily="Courier New"
+                               FontSize="12"
+                               IsEnabled="{Binding IsConnected}" />
+
+                        <Button Text="Tail"
+                                Command="{Binding TailLogCommand}"
+                                IsEnabled="{Binding IsConnected}" />
+
+                        <Button Text="Stop"
+                                Command="{Binding StopStreamCommand}"
+                                IsEnabled="{Binding IsStreaming}" />
+
+                    </HorizontalStackLayout>
+                </ScrollView>
 
             </VerticalStackLayout>
-        </Border>
-
-        <!-- ROW 4 – FFmpeg Deployment -->
-        <Border Grid.Row="4"
-                Stroke="Gray"
-                StrokeThickness="1"
-                Padding="10">
-            <VerticalStackLayout Spacing="8">
-
-                <Label Text="FFmpeg Deployment"
-                       FontAttributes="Bold"
-                       FontSize="15" />
-
-                <!-- File picker -->
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                    <Entry Grid.Column="0"
-                           Placeholder="Select ffmpeg-release-arm64-static.tar.gz / .tar.xz"
-                           Text="{Binding FfmpegLocalPath}"
-                           IsReadOnly="True"
-                           FontFamily="Courier New"
-                           FontSize="12" />
-                    <Button Grid.Column="1"
-                            Text="Browse"
-                            Command="{Binding PickFfmpegFileCommand}" />
-                </Grid>
-
-                <!-- Install options -->
-                <Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="8">
-                    <Label Grid.Column="0" Text="Install dir:" VerticalOptions="Center" />
-                    <Entry Grid.Column="1"
-                           Text="{Binding FfmpegInstallDir}"
-                           FontFamily="Courier New"
-                           FontSize="12" />
-                    <Label Grid.Column="2" Text="Run as:" VerticalOptions="Center" />
-                    <Entry Grid.Column="3"
-                           Text="{Binding FfmpegServiceUser}"
-                           FontFamily="Courier New"
-                           FontSize="12" />
-                </Grid>
-
-                <!-- Deploy button + progress -->
-                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
-                    <Button Grid.Column="0"
-                            Text="Deploy"
-                            Command="{Binding DeployFfmpegCommand}" />
-
-                    <VerticalStackLayout Grid.Column="1"
-                                         VerticalOptions="Center"
-                                         Spacing="2">
-                        <ProgressBar Progress="{Binding FfmpegDeployProgressConverted}"
-                                     HeightRequest="8" />
-                        <Label Text="{Binding FfmpegDeployStatus}"
-                               FontSize="11"
-                               TextColor="Gray"
-                               IsVisible="{Binding IsFfmpegDeploying}" />
-                    </VerticalStackLayout>
-                </Grid>
-
-            </VerticalStackLayout>
-        </Border>
-
-        <!-- ROW 5 – .NET App Deployment -->
-        <Border Grid.Row="5"
-                Stroke="Gray"
-                StrokeThickness="1"
-                Padding="10">
-            <VerticalStackLayout Spacing="8">
-
-                <Label Text=".NET App Deployment"
-                       FontAttributes="Bold"
-                       FontSize="15" />
-
-                <!-- Folder selector path layout -->
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                    <Entry Grid.Column="0"
-                           Placeholder="Select Local Publish Output Folder"
-                           Text="{Binding DotNetLocalPath}"
-                           IsReadOnly="True"
-                           FontFamily="Courier New"
-                           FontSize="12" />
-                    <Button Grid.Column="1"
-                            Text="Browse"
-                            Command="{Binding PickDotNetFolderCommand}" />
-                </Grid>
-
-                <!-- Install options mapping paths and runtime settings -->
-                <Grid ColumnDefinitions="Auto,*,Auto,*,Auto,*" ColumnSpacing="8">
-                    <Label Grid.Column="0" Text="Install dir:" VerticalOptions="Center" />
-                    <Entry Grid.Column="1"
-                           Text="{Binding DotNetInstallDir}"
-                           FontFamily="Courier New"
-                           FontSize="12" />
-
-                    <Label Grid.Column="2" Text="Exe Name:" VerticalOptions="Center" />
-                    <Entry Grid.Column="3"
-                           Text="{Binding DotNetExecutableName}"
-                           FontFamily="Courier New"
-                           FontSize="12" />
-
-                    <Label Grid.Column="4" Text="Service ID:" VerticalOptions="Center" />
-                    <Entry Grid.Column="5"
-                           Text="{Binding DotNetServiceName}"
-                           FontFamily="Courier New"
-                           FontSize="12" />
-                </Grid>
-
-                <!-- Deploy engine execution block + progress metrics tracking -->
-                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
-                    <Button Grid.Column="0"
-                            Text="Deploy App"
-                            Command="{Binding DeployDotNetAppCommand}" />
-
-                    <VerticalStackLayout Grid.Column="1"
-                                         VerticalOptions="Center"
-                                         Spacing="2">
-                        <ProgressBar Progress="{Binding DotNetDeployProgressConverted}"
-                                     HeightRequest="8" />
-                        <Label Text="{Binding DotNetDeployStatus}"
-                               FontSize="11"
-                               TextColor="Gray"
-                               IsVisible="{Binding IsDotNetDeploying}" />
-                    </VerticalStackLayout>
-                </Grid>
-
-            </VerticalStackLayout>
-        </Border>
-
-        <!-- ROW 6 – Terminal output -->
-        <Border Grid.Row="6"
-                Stroke="Gray"
-                StrokeThickness="1"
-                Padding="6">
-            <CollectionView x:Name="TerminalView"
-                    ItemsSource="{Binding TerminalLines}"
-                    SelectionMode="None">
-
-                <CollectionView.ItemTemplate>
-                    <DataTemplate x:DataType="vm:TerminalLine">
-                        <Editor Text="{Binding Text}"
-                                FontFamily="Courier New"
-                                FontSize="12"
-                                IsReadOnly="True"
-                                AutoSize="TextChanges"
-                                BackgroundColor="Transparent"
-                                Margin="0">
-                            <Editor.Triggers>
-                                <DataTrigger TargetType="Editor" Binding="{Binding Kind}" Value="Command">
-                                    <Setter Property="TextColor" Value="Orange" />
-                                    <Setter Property="FontAttributes" Value="Bold" />
-                                </DataTrigger>
-                                <DataTrigger TargetType="Editor" Binding="{Binding Kind}" Value="Error">
-                                    <Setter Property="TextColor" Value="Red" />
-                                </DataTrigger>
-                                <DataTrigger TargetType="Editor" Binding="{Binding Kind}" Value="Info">
-                                    <Setter Property="TextColor" Value="CornflowerBlue" />
-                                </DataTrigger>
-                                <DataTrigger TargetType="Editor" Binding="{Binding Kind}" Value="Success">
-                                    <Setter Property="TextColor" Value="LimeGreen" />
-                                </DataTrigger>
-                                <DataTrigger TargetType="Editor" Binding="{Binding Kind}" Value="Stream">
-                                    <Setter Property="TextColor" Value="MediumAquamarine" />
-                                </DataTrigger>
-                            </Editor.Triggers>
-                        </Editor>
-                    </DataTemplate>
-                </CollectionView.ItemTemplate>
-
-                <CollectionView.EmptyView>
-                    <Label Text="No output yet. Connect and run a command."
-                           HorizontalOptions="Center"
-                           VerticalOptions="Center"
-                           Margin="0,40"
-                           TextColor="Gray" />
-                </CollectionView.EmptyView>
-            </CollectionView>
-        </Border>
-
-        <!-- ROW 7 – Command input -->
-        <Grid Grid.Row="7"
-              ColumnDefinitions="Auto,*,Auto,Auto,Auto"
-              ColumnSpacing="6">
-
-            <Label Grid.Column="0"
-                   Text="$"
-                   FontSize="16"
-                   FontAttributes="Bold"
-                   VerticalOptions="Center" />
-
-            <Entry Grid.Column="1"
-                   Placeholder="Enter command"
-                   Text="{Binding CommandInput}"
-                   ReturnCommand="{Binding RunCommandCommand}"
-                   IsEnabled="{Binding IsConnected}"
-                   FontFamily="Courier New"
-                   FontSize="13" />
-
-            <Button Grid.Column="2"
-                    Text="Up"
-                    Padding="10,6"
-                    Command="{Binding HistoryUpCommand}"
-                    IsEnabled="{Binding IsConnected}" />
-
-            <Button Grid.Column="3"
-                    Text="Down"
-                    Padding="10,6"
-                    Command="{Binding HistoryDownCommand}"
-                    IsEnabled="{Binding IsConnected}" />
-
-            <Button Grid.Column="4"
-                    Text="Run"
-                    Command="{Binding RunCommandCommand}"
-                    IsEnabled="{Binding IsConnected}" />
-        </Grid>
-
-        <!-- ROW 8 – Toolbar -->
-        <ScrollView Grid.Row="8"
-                    Orientation="Horizontal">
-            <HorizontalStackLayout Spacing="8">
-
-                <Button Text="Clear"
-                        Command="{Binding ClearTerminalCommand}" />
-
-                <Button Text="Sys Info"
-                        Command="{Binding GetSystemInfoCommand}"
-                        IsEnabled="{Binding IsConnected}" />
-
-                <Label Text="Log:" VerticalOptions="Center" />
-
-                <Entry Text="{Binding LogFilePath}"
-                       WidthRequest="220"
-                       FontFamily="Courier New"
-                       FontSize="12"
-                       IsEnabled="{Binding IsConnected}" />
-
-                <Button Text="Tail"
-                        Command="{Binding TailLogCommand}"
-                        IsEnabled="{Binding IsConnected}" />
-
-                <Button Text="Stop"
-                        Command="{Binding StopStreamCommand}"
-                        IsEnabled="{Binding IsStreaming}" />
-
-            </HorizontalStackLayout>
         </ScrollView>
 
     </Grid>

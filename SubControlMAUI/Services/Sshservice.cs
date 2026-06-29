@@ -1027,6 +1027,129 @@ namespace SubControlMAUI.Services
 
         // ── Private helpers ──────────────────────────────────────────────────────
 
+        /// <summary>
+        /// Configures the Pi 4B to use the stable PL011 UART0 (ttyAMA0) on GPIO 14/15
+        /// by disabling Bluetooth. Debian 13 (Trixie) always uses /boot/firmware/config.txt.
+        /// Returns true if changes were made and a reboot is required, false if already configured.
+        /// </summary>
+        public async Task<bool> ConfigureStableUartAsync(
+            string password = "1234",
+            CancellationToken cancellationToken = default)
+        {
+            EnsureConnected();
+
+            const string bootConfig = "/boot/firmware/config.txt";
+            var escapedPwd = password.Replace("'", "'\\''");
+
+            _logger.LogInformation("Checking UART/Bluetooth configuration in {Config}", bootConfig);
+
+            // Avoid duplicate entries on re-deploy
+            var existing = await ExecuteCommandAsync(
+                $"grep -c 'dtoverlay=disable-bt' {bootConfig} || true",
+                cancellationToken);
+
+            if (int.TryParse(existing.StdOut.Trim(), out int count) && count > 0)
+            {
+                _logger.LogInformation("UART0 (ttyAMA0) already configured — no changes needed.");
+                return false;
+            }
+
+            _logger.LogInformation("Appending dtoverlay=disable-bt to {Config}", bootConfig);
+
+            await RunStep(
+                $"printf '{escapedPwd}\\n' | sudo -S sh -c " +
+                $"\"echo -e '\\\\n# Disable Bluetooth to free UART0 (ttyAMA0) for GPIO 14/15\\\\ndtoverlay=disable-bt'" +
+                $" >> {bootConfig}\"",
+                cancellationToken);
+
+            _logger.LogInformation("Disabling hciuart service to prevent Bluetooth reclaiming the UART");
+
+            // hciuart may not exist on minimal installs — suppress the error
+            await ExecuteCommandAsync(
+                $"printf '{escapedPwd}\\n' | sudo -S systemctl disable hciuart 2>/dev/null || true",
+                cancellationToken);
+
+            var verify = await ExecuteCommandAsync(
+                $"grep 'dtoverlay=disable-bt' {bootConfig}",
+                cancellationToken);
+
+            if (!verify.Succeeded || string.IsNullOrWhiteSpace(verify.StdOut))
+            {
+                _logger.LogError("UART configuration write could not be verified in {Config}", bootConfig);
+                throw new InvalidOperationException(
+                    $"Failed to verify dtoverlay=disable-bt was written to {bootConfig}.");
+            }
+
+            _logger.LogInformation("UART0 configured successfully. Reboot required to take effect.");
+            return true;
+        }
+
+        /// <summary>
+        /// Issues a sudo reboot and polls until the device comes back online or the timeout elapses.
+        /// The SSH connection drop immediately after the reboot command is issued is expected behaviour.
+        /// </summary>
+        public async Task RebootAndWaitAsync(
+            string password = "1234",
+            int waitSeconds = 30,
+            CancellationToken cancellationToken = default)
+        {
+            EnsureConnected();
+
+            var escapedPwd = password.Replace("'", "'\\''");
+
+            _logger.LogInformation("Issuing reboot command to {Host}", Host);
+
+            // The connection will drop the moment reboot executes — this is expected
+            try
+            {
+                await ExecuteCommandAsync(
+                    $"printf '{escapedPwd}\\n' | sudo -S reboot",
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "SSH connection closed during reboot — this is expected.");
+            }
+
+            // Give the Pi time to actually go down before polling
+            _logger.LogInformation("Waiting 10 seconds for {Host} to go down...", Host);
+            await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+
+            var deadline = DateTime.UtcNow.AddSeconds(waitSeconds);
+
+            _logger.LogInformation("Polling {Host} for up to {Seconds}s...", Host, waitSeconds);
+
+            while (DateTime.UtcNow < deadline)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                try
+                {
+                    // Reconnect the clients fresh — the old connection is dead
+                    await ConnectAsync(Host, Username, password, Port, cancellationToken);
+
+                    // Lightweight echo to confirm the shell is responsive
+                    var ping = await ExecuteCommandAsync("echo online", cancellationToken);
+
+                    if (ping.StdOut.Trim() == "online")
+                    {
+                        _logger.LogInformation("{Host} is back online.", Host);
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "{Host} not yet available — retrying in 3s.", Host);
+                    DisposeClients();
+                }
+
+                await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
+            }
+
+            throw new TimeoutException(
+                $"Device '{Host}' did not come back online within {waitSeconds} seconds after reboot.");
+        }
+
         private void EnsureConnected()
         {
             if (!IsConnected)

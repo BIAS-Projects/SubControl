@@ -185,6 +185,13 @@ namespace SubControlMAUI.ViewModels
         [NotifyCanExecuteChangedFor(nameof(DeployDotNetAppCommand))]
         private bool isDotNetDeploying;
 
+        [ObservableProperty]
+        [NotifyCanExecuteChangedFor(nameof(ConfigureUartAndRebootCommand))]
+        private bool _isConfiguringUart;
+
+        [ObservableProperty]
+        private string _uartConfigStatus = string.Empty;
+
         // ── Connection commands ───────────────────────────────────────────────
 
         [RelayCommand(CanExecute = nameof(CanConnect))]
@@ -457,6 +464,61 @@ namespace SubControlMAUI.ViewModels
             !IsDeploying &&
             !string.IsNullOrWhiteSpace(MediaMtxLocalPath) &&
             File.Exists(MediaMtxLocalPath);
+
+
+        [RelayCommand(CanExecute = nameof(CanConfigureUart))]
+        private async Task ConfigureUartAndReboot()
+        {
+            IsConfiguringUart = true;
+
+            try
+            {
+                AddLine("▶ Checking UART/Bluetooth configuration on target device...", TerminalLineKind.Info);
+
+                bool uartConfigured = await _sshService.ConfigureStableUartAsync(password: Password);
+
+                if (!uartConfigured)
+                {
+                    AddLine("· UART0 (ttyAMA0) already configured, no changes needed.", TerminalLineKind.Info);
+                    return;
+                }
+
+                AddLine("✓ UART0 (ttyAMA0) configured — Bluetooth disabled successfully.", TerminalLineKind.Success);
+                AddLine("▶ Rebooting device to apply UART configuration...", TerminalLineKind.Info);
+
+                MainThread.BeginInvokeOnMainThread(() =>
+                    UartConfigStatus = "Rebooting device, please wait...");
+
+                await StopStreamIfActive();
+
+                await _sshService.RebootAndWaitAsync(
+                    password: Password,
+                    waitSeconds: 30);
+
+                AddLine("✓ Device is back online. UART0 is now active on GPIO 14/15.", TerminalLineKind.Success);
+
+                MainThread.BeginInvokeOnMainThread(() =>
+                    UartConfigStatus = "UART configured successfully.");
+            }
+            catch (TimeoutException tex)
+            {
+                _logger.LogError(tex, "Device did not come back online after reboot.");
+                AddLine($"✗ Device did not respond after reboot: {tex.Message}", TerminalLineKind.Error);
+                UartConfigStatus = "Reboot timed out — check device manually.";
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "UART configuration failed.");
+                AddLine($"✗ UART configuration failed: {ex.Message}", TerminalLineKind.Error);
+                UartConfigStatus = "Configuration aborted due to errors.";
+            }
+            finally
+            {
+                IsConfiguringUart = false;
+            }
+        }
+
+        private bool CanConfigureUart() => !IsConfiguringUart && !string.IsNullOrWhiteSpace(Password);
 
         [RelayCommand]
         private async Task PickMediaMtxFile()
