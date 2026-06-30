@@ -75,11 +75,12 @@
                 </Grid>
 
                 <!-- THEME CONTROLS -->
-                <Image Grid.Column="2"
+                <ImageButton Grid.Column="2"
                    WidthRequest="30"
                    HeightRequest="30"
                    Source="{AppThemeBinding Light=light_sun.png, Dark=dark_sun.png}"
-                   BackgroundColor="Transparent"/>
+                   BackgroundColor="Transparent"
+                   Command="{Binding SendToGPIOCommand}"   />
 
                 <Switch Grid.Column="3"
                     HorizontalOptions="Center"

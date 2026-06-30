@@ -240,7 +240,11 @@ namespace SubConsole.Services.SQL
                 foreach (var entity in entities)
                 {
                     var identifier = JsonSerializer.Deserialize<UsbSerialPortInfo>(entity.IdentifierJson)
-                 ?? throw new Exception("Failed to deserialize Identifier");
+                        ?? throw new Exception("Failed to deserialize Identifier");
+
+                    SerialPortSettings? portSettings = string.IsNullOrWhiteSpace(entity.PortSettingsJson)
+                        ? null
+                        : JsonSerializer.Deserialize<SerialPortSettings>(entity.PortSettingsJson);
 
                     var model = new DeviceRegistration(
                         identifier,
@@ -249,7 +253,8 @@ namespace SubConsole.Services.SQL
                         (SerialWorkerType)entity.SerialWorkerType
                     )
                     {
-                        CurrentPortPath = entity.CurrentPortPath
+                        CurrentPortPath = entity.CurrentPortPath,
+                        PortSettings = portSettings
                     };
 
                     result.Add(model);
@@ -287,7 +292,10 @@ namespace SubConsole.Services.SQL
                     BaudRate = model.BaudRate,
                     SerialWorkerType = (int)model.SerialWorkerType,
                     IdentifierJson = JsonSerializer.Serialize(model.Identifier),
-                    CurrentPortPath = model.CurrentPortPath
+                    CurrentPortPath = model.CurrentPortPath,
+                    PortSettingsJson = model.PortSettings is null
+                        ? null
+                        : JsonSerializer.Serialize(model.PortSettings)
                 };
 
                 var rows = await Database.InsertOrReplaceAsync(entity);

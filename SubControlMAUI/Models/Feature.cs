@@ -23,6 +23,7 @@ namespace SubControlMAUI.Models
         public static string TOMGNSS = "TOM GNSS";
         public static string TOMFLIR = "TOM FLIR";
         public static string PushNotification = "PUSH";
+        public const string GpioUart0 = "GPIO_UART0"; // must match GpioUartOptions.FunctionName server-side
 
         [ObservableProperty]
         private string name = string.Empty;

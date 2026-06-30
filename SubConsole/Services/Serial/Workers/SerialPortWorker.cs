@@ -67,31 +67,27 @@ public sealed class SerialPortWorker : ISerialWorker
     {
         try
         {
-            StopBits _stopBits = StopBits.One;
+            _functionName = _registry.GetFunctionName(PortPath) ?? PortPath;
 
+            var registration = _registry.GetRegistration(_functionName);
+            var settings = registration?.PortSettings;
 
+            StopBits stopBits = settings?.StopBits
+                ?? (_functionName.Contains("TOM") ? StopBits.Two : StopBits.One);
 
-            _functionName = _registry.GetFunctionName(PortPath) ?? PortPath; // ← add this
-
-            if (_functionName.Contains("TOM"))
+            _port = new SerialPort(PortPath, BaudRate)
             {
-                _stopBits = StopBits.Two;
-            }
-
-            _port = new SerialPort(PortPath, BaudRate) {
                 WriteTimeout = 2_000,
                 ReadTimeout = 2_000,
-                //Encoding = Encoding.UTF8,
                 Encoding = Encoding.ASCII,
-                Handshake = Handshake.None,
-                StopBits = _stopBits
+                Handshake = settings?.Handshake ?? Handshake.None,
+                Parity = settings?.Parity ?? Parity.None,
+                DataBits = settings?.DataBits ?? 8,
+                StopBits = stopBits
             };
             _port.Open();
-            _logger.LogInformation(
-                "Starting serial worker for {Function} on {Port} @ {Baud}",
-                _functionName,
-                PortPath,
-                BaudRate);
+            _logger.LogInformation("GPIO_UART0 opening at {Baud} baud, {DataBits}{Parity}{StopBits}",
+                BaudRate, settings?.DataBits, settings?.Parity, settings?.StopBits);
 
             var linked = CancellationTokenSource
                 .CreateLinkedTokenSource(appToken, _cts.Token).Token;

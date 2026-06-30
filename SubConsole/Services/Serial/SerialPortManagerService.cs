@@ -29,6 +29,11 @@ public interface ISerialPortManagerService
     // ── Registry ──────────────────────────────────────────────────────────────
     void RegisterDevice(UsbSerialPortInfo identifier, string functionName, int baudRate, SerialWorkerType type);
 
+    Task<OperationResult> RegisterStaticDeviceAsync(
+    string deviceId, string portPath, string functionName, int baudRate,
+    SerialWorkerType type, SerialPortSettings? portSettings = null,
+    CancellationToken token = default);
+
     Task<OperationResult> UnregisterDeviceAsync(string deviceKey, CancellationToken token = default);
     IReadOnlyList<DeviceRegistration> GetRegisteredDevices();
 
@@ -133,6 +138,26 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
     public void RegisterDevice(
         UsbSerialPortInfo identifier, string functionName, int baudRate, SerialWorkerType type)
         => _registry.Register(identifier, functionName, baudRate, type);
+
+
+    public async Task<OperationResult> RegisterStaticDeviceAsync(
+    string deviceId, string portPath, string functionName, int baudRate,
+    SerialWorkerType type, SerialPortSettings? portSettings = null,
+    CancellationToken token = default)
+    {
+        _logger.LogInformation(
+            "Registering static device {DeviceId} ({Function}) on {Port}",
+            deviceId, functionName, portPath);
+
+        var identifier = UsbSerialPortInfo.CreateStatic(deviceId, portPath);
+
+        var result = await _registry.Register(identifier, functionName, baudRate, type, portSettings);
+        if (!result.IsSuccess) return result;
+
+        _registry.SetPortPath(identifier.Key, portPath);
+        return OperationResult.Success();
+    }
+
 
     public async Task<OperationResult> UnregisterDeviceAsync(
         string function, CancellationToken token = default)
@@ -319,10 +344,8 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
     private async Task<PortRemapResult> HandlePortRemovedAsync(
         UsbSerialPortInfo port, CancellationToken token)
     {
-        var reg = _registry.AllRegistrations
-            .FirstOrDefault(r => r.Identifier.Key == port.Key);
-
-        if (reg is null) return PortRemapResult.NoOp();
+        var reg = _registry.AllRegistrations.FirstOrDefault(r => r.Identifier.Key == port.Key);
+        if (reg is null || reg.Identifier.IsStatic) return PortRemapResult.NoOp();
 
         string oldPort = reg.CurrentPortPath ?? port.PortName;
 
@@ -359,10 +382,8 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
     private async Task<PortRemapResult> HandlePortAddedAsync(
         UsbSerialPortInfo port, CancellationToken token)
     {
-        var reg = _registry.AllRegistrations
-            .FirstOrDefault(r => r.Identifier.Key == port.Key);
-
-        if (reg is null) return PortRemapResult.NoOp();
+        var reg = _registry.AllRegistrations.FirstOrDefault(r => r.Identifier.Key == port.Key);
+        if (reg is null || reg.Identifier.IsStatic) return PortRemapResult.NoOp();
 
         string oldPort = reg.CurrentPortPath ?? "(none)";
 
@@ -556,6 +577,25 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
             if (result.IsSuccess) opened++;
         }
 
+        // Static (non-USB) devices are never returned by UsbSerialPortMapper,
+        // so they need to be picked up separately. Their port path is already
+        // fixed at registration time (RegisterStaticDeviceAsync), so there's
+        // nothing to refresh — just open them if they're not already running.
+        if (autoOpen)
+        {
+            foreach (var staticReg in _registry.AllRegistrations
+                .Where(r => r.Identifier.IsStatic && !_workers.ContainsKey(r.FunctionName)))
+            {
+                _logger.LogDebug(
+                    "Auto-discovery opening static device {Function} on {Port}",
+                    staticReg.FunctionName, staticReg.Identifier.PortName);
+
+                var staticResult = await OpenPortAsync(staticReg.FunctionName, token);
+
+                if (staticResult.IsSuccess) opened++;
+            }
+        }
+
         _logger.LogInformation(
             "Completed auto-discovery: {OpenedCount} ports opened", opened);
 
@@ -716,6 +756,33 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
                 return;
             }
 
+            if (reg.Identifier.IsStatic)
+            {
+                if (!File.Exists(reg.Identifier.PortName))
+                {
+                    _logger.LogDebug(
+                        "Reconnect poll {Function}: static node not present yet", function);
+                    continue;
+                }
+
+                _wasOpenBeforeDisconnect.TryRemove(function, out _);
+                var staticOpen = await OpenPortAsync(function, token);
+
+                if (staticOpen.IsSuccess)
+                {
+                    await PublishStatusMessageAsync(
+                        function, SerialMessageKind.Reconnected,
+                        $"Static device reopened on {reg.Identifier.PortName}", token);
+                    return;
+                }
+
+                _wasOpenBeforeDisconnect.TryAdd(function, true);
+                continue;
+            }
+
+            // ...existing USB scan/match logic follows for non-static devices
+
+
             _logger.LogDebug(
                 "Reconnect poll {Function}: scanning for device key {Key}",
                 function, reg.Key);
@@ -840,6 +907,19 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
                 "Refresh port path {Function}: {Success}. Reason: Not registered",
                 function, false);
             return false;
+        }
+
+        if (reg.Identifier.IsStatic)
+        {
+            if (!File.Exists(reg.Identifier.PortName))
+            {
+                _logger.LogWarning(
+                    "Static device {Function} node {Port} not present",
+                    function, reg.Identifier.PortName);
+                return false;
+            }
+            _registry.SetPortPath(reg.Key, reg.Identifier.PortName);
+            return true;
         }
 
         var devices = await UsbSerialPortMapper.GetUsbSerialPortsAsync(token);

@@ -29,6 +29,8 @@ namespace SubControlMAUI.Services
             new Feature {Name = Feature.TOMAHRS, IsFitted= false, IsCommPortOpen = false, IsEnabled = false },
             new Feature {Name = Feature.TOMGNSS, IsFitted= false, IsCommPortOpen = false, IsEnabled = false },
             new Feature {Name = Feature.TOMFLIR, IsFitted= false, IsCommPortOpen = false, IsEnabled = false },
+            new Feature {Name = Feature.GpioUart0, IsFitted= false, IsCommPortOpen = false, IsEnabled = false },
+
 
     };
 

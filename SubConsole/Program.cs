@@ -59,7 +59,7 @@ try
 
             // NOTE: REMOVED services.AddSystemd() from here as it belongs on the host builder chain above.
 
-            services.AddSerialPortManager();
+            services.AddSerialPortManager(context.Configuration);
             services.AddCameraManager();
             services.AddSingleton(levelSwitch);
             services.Configure<TcpSettings>(

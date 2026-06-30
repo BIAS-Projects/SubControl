@@ -1089,5 +1089,39 @@ public partial class MainViewModel : BaseViewModel
         public List<CameraRegisteredEntry>? Data { get; init; }
     }
 
+    [RelayCommand]
+    public async Task SendToGPIO()
+    {
+        await WriteGpioUartAsync("test");
+    }
+
+    private async Task<bool> WriteGpioUartAsync(string text)
+    {
+        StatusText = $"Sending to {Feature.GpioUart0}...";
+
+        bool ok = await _dispatcher.SendAndWaitAsync(
+            Feature.GpioUart0, "WRITE TEXT", text, _timeout) is not null;
+
+        StatusText = ok
+            ? $"{Feature.GpioUart0} write sent"
+            : $"{Feature.GpioUart0} write failed";
+
+        return ok;
+    }
+
+    private async Task<bool> WriteGpioUartAndWaitAsync(string text, Func<string, bool> matchPredicate)
+    {
+        bool ok = await _dispatcher.SendAndWaitForPushAsync(
+            Feature.GpioUart0, "WRITE TEXT", text,
+            Feature.GpioUart0, matchPredicate,
+            _timeout) is not null;
+
+        if (!ok)
+            StatusText = $"{Feature.GpioUart0} did not respond as expected";
+
+        return ok;
+    }
+
+
 
 }

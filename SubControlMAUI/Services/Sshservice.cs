@@ -1032,6 +1032,15 @@ namespace SubControlMAUI.Services
         /// by disabling Bluetooth. Debian 13 (Trixie) always uses /boot/firmware/config.txt.
         /// Returns true if changes were made and a reboot is required, false if already configured.
         /// </summary>
+        /// <summary>
+        /// Configures the Pi to use the stable PL011 UART0 (ttyAMA0) on GPIO 14/15 by:
+        ///   - disabling Bluetooth (dtoverlay=disable-bt)
+        ///   - disabling the hciuart service
+        ///   - disabling and masking serial-getty@ttyAMA0.service
+        ///
+        /// Returns true if changes were made and a reboot is required,
+        /// false if the system was already fully configured.
+        /// </summary>
         public async Task<bool> ConfigureStableUartAsync(
             string password = "1234",
             CancellationToken cancellationToken = default)
@@ -1043,44 +1052,135 @@ namespace SubControlMAUI.Services
 
             _logger.LogInformation("Checking UART/Bluetooth configuration in {Config}", bootConfig);
 
-            // Avoid duplicate entries on re-deploy
-            var existing = await ExecuteCommandAsync(
-                $"grep -c 'dtoverlay=disable-bt' {bootConfig} || true",
+            bool changesMade = false;
+
+            // ------------------------------------------------------------
+            // Check whether Bluetooth has already been disabled
+            // ------------------------------------------------------------
+            var overlayCheck = await ExecuteCommandAsync(
+                $"grep -c '^dtoverlay=disable-bt' {bootConfig} || true",
                 cancellationToken);
 
-            if (int.TryParse(existing.StdOut.Trim(), out int count) && count > 0)
+            bool overlayPresent =
+                int.TryParse(overlayCheck.StdOut.Trim(), out int count) && count > 0;
+
+            if (!overlayPresent)
             {
-                _logger.LogInformation("UART0 (ttyAMA0) already configured — no changes needed.");
-                return false;
+                _logger.LogInformation("Appending dtoverlay=disable-bt to {Config}", bootConfig);
+
+                await RunStep(
+                    $"printf '{escapedPwd}\\n' | sudo -S sh -c " +
+                    $"\"echo -e '\\\\n# Disable Bluetooth to free UART0 (ttyAMA0) for GPIO 14/15\\\\ndtoverlay=disable-bt' >> {bootConfig}\"",
+                    cancellationToken);
+
+                changesMade = true;
+            }
+            else
+            {
+                _logger.LogInformation("Bluetooth overlay already configured.");
             }
 
-            _logger.LogInformation("Appending dtoverlay=disable-bt to {Config}", bootConfig);
+            // ------------------------------------------------------------
+            // Disable hciuart (safe even if it doesn't exist)
+            // ------------------------------------------------------------
+            _logger.LogInformation("Disabling hciuart service");
 
-            await RunStep(
-                $"printf '{escapedPwd}\\n' | sudo -S sh -c " +
-                $"\"echo -e '\\\\n# Disable Bluetooth to free UART0 (ttyAMA0) for GPIO 14/15\\\\ndtoverlay=disable-bt'" +
-                $" >> {bootConfig}\"",
-                cancellationToken);
-
-            _logger.LogInformation("Disabling hciuart service to prevent Bluetooth reclaiming the UART");
-
-            // hciuart may not exist on minimal installs — suppress the error
             await ExecuteCommandAsync(
                 $"printf '{escapedPwd}\\n' | sudo -S systemctl disable hciuart 2>/dev/null || true",
                 cancellationToken);
 
+            await ExecuteCommandAsync(
+                $"printf '{escapedPwd}\\n' | sudo -S systemctl stop hciuart 2>/dev/null || true",
+                cancellationToken);
+
+            // ------------------------------------------------------------
+            // Check serial-getty state
+            // ------------------------------------------------------------
+            var gettyState = await ExecuteCommandAsync(
+                "systemctl is-enabled serial-getty@ttyAMA0.service 2>/dev/null || echo disabled",
+                cancellationToken);
+
+            var enabledState = gettyState.StdOut.Trim();
+
+            if (enabledState != "masked" && enabledState != "disabled")
+            {
+                _logger.LogInformation("Disabling serial-getty@ttyAMA0.service");
+
+                await ExecuteCommandAsync(
+                    $"printf '{escapedPwd}\\n' | sudo -S systemctl stop serial-getty@ttyAMA0.service 2>/dev/null || true",
+                    cancellationToken);
+
+                await ExecuteCommandAsync(
+                    $"printf '{escapedPwd}\\n' | sudo -S systemctl disable serial-getty@ttyAMA0.service 2>/dev/null || true",
+                    cancellationToken);
+
+                await ExecuteCommandAsync(
+                    $"printf '{escapedPwd}\\n' | sudo -S systemctl mask serial-getty@ttyAMA0.service 2>/dev/null || true",
+                    cancellationToken);
+
+
+                changesMade = true;
+            }
+            else
+            {
+                _logger.LogInformation("serial-getty@ttyAMA0.service already {State}.", enabledState);
+            }
+
+            gettyState = await ExecuteCommandAsync(
+                "systemctl is-enabled serial-getty@serial0.service 2>/dev/null || echo disabled",
+                cancellationToken);
+
+            enabledState = gettyState.StdOut.Trim();
+
+            if (enabledState != "masked" && enabledState != "disabled")
+            {
+                _logger.LogInformation("Disabling serial Getty on serial0");
+
+                // Stop it immediately
+                await ExecuteCommandAsync(
+                    $"printf '{escapedPwd}\\n' | sudo -S systemctl stop serial-getty@serial0.service 2>/dev/null || true",
+                    cancellationToken);
+
+                // Disable it on boot
+                await ExecuteCommandAsync(
+                    $"printf '{escapedPwd}\\n' | sudo -S systemctl disable serial-getty@serial0.service 2>/dev/null || true",
+                    cancellationToken);
+
+                // Mask it so it can't be started automatically
+                await ExecuteCommandAsync(
+                    $"printf '{escapedPwd}\\n' | sudo -S systemctl mask serial-getty@serial0.service 2>/dev/null || true",
+                    cancellationToken);
+
+
+                changesMade = true;
+            }
+            else
+            {
+                _logger.LogInformation("serial-getty@serial0..service already {State}.", enabledState);
+            }
+
+            // ------------------------------------------------------------
+            // Verify overlay exists
+            // ------------------------------------------------------------
             var verify = await ExecuteCommandAsync(
-                $"grep 'dtoverlay=disable-bt' {bootConfig}",
+                $"grep '^dtoverlay=disable-bt' {bootConfig}",
                 cancellationToken);
 
             if (!verify.Succeeded || string.IsNullOrWhiteSpace(verify.StdOut))
             {
                 _logger.LogError("UART configuration write could not be verified in {Config}", bootConfig);
+
                 throw new InvalidOperationException(
                     $"Failed to verify dtoverlay=disable-bt was written to {bootConfig}.");
             }
 
-            _logger.LogInformation("UART0 configured successfully. Reboot required to take effect.");
+            if (!changesMade)
+            {
+                _logger.LogInformation("UART0 (ttyAMA0) already fully configured.");
+                return false;
+            }
+
+            _logger.LogInformation("UART0 configured successfully. Reboot required.");
             return true;
         }
 

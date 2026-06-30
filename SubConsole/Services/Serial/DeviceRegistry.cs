@@ -14,13 +14,17 @@ namespace SubConsole.Services.Serial;
 public interface IDeviceRegistry
 {
     // ── Registration ─────────────────────────────────────────────────────────
+    Task<OperationResult> Register(
+   UsbSerialPortInfo identifier, string functionName, int baudRate,
+   SerialWorkerType serialWorker, SerialPortSettings? portSettings = null);
 
+    DeviceRegistration? GetRegistration(string functionName);
     /// <summary>
     /// Register a device and associate it with a function name.
     /// Call this at startup or when a USB hotplug event is detected.
     /// </summary>
   //  void Register(DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType serialWorker);
-    Task<OperationResult> Register(UsbSerialPortInfo identifier, string functionName, int baudRate, SerialWorkerType serialWorker);
+
     /// <summary>Remove a device registration (e.g. on USB unplug).</summary>
   //  void Unregister(DeviceIdentifier identifier);
     Task<OperationResult> Unregister(UsbSerialPortInfo identifier);
@@ -64,6 +68,8 @@ public interface IDeviceRegistry
 
     /// <summary>All currently registered devices.</summary>
     IReadOnlyList<DeviceRegistration> AllRegistrations { get; }
+
+   
 }
 
 public sealed class DeviceRegistry : IDeviceRegistry
@@ -102,9 +108,9 @@ public sealed class DeviceRegistry : IDeviceRegistry
             return OperationResult.Failure(result.Message);
         }
 
-        foreach(var device in result.Value)
+        foreach (var device in result.Value)
         {
-            Register(device.Identifier, device.FunctionName, device.BaudRate, device.SerialWorkerType);
+            await Register(device.Identifier, device.FunctionName, device.BaudRate, device.SerialWorkerType, device.PortSettings);
         }
         _logger.LogInformation(
             "Completed loading device registry: {Success}. Devices loaded: {Count}",
@@ -114,45 +120,45 @@ public sealed class DeviceRegistry : IDeviceRegistry
     }
     // ── Registration ──────────────────────────────────────────────────────────
 
-//    public void Register(DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType serialWorker)
-    public async Task<OperationResult> Register(UsbSerialPortInfo identifier, string functionName, int baudRate, SerialWorkerType serialWorker)
+    //    public void Register(DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType serialWorker)
+    public async Task<OperationResult> Register(
+        UsbSerialPortInfo identifier, string functionName, int baudRate,
+        SerialWorkerType serialWorker, SerialPortSettings? portSettings = null)
     {
         _logger.LogInformation(
             "Registering device {Key} as function {Function} @ {Baud}",
-            identifier.Key,
-            functionName,
-            baudRate);
-        // var fns = functionNames.ToList();
-        var reg = new DeviceRegistration(identifier, functionName, baudRate, serialWorker);
+            identifier.Key, functionName, baudRate);
+
+        var reg = new DeviceRegistration(identifier, functionName, baudRate, serialWorker)
+        {
+            PortSettings = portSettings
+        };
 
         _byKey[identifier.Key] = reg;
-
         _byFunction[functionName] = identifier.Key;
 
         OperationResult result = await _database.UpsertDeviceRegistrationAsync(reg);
-        if(!result.IsSuccess)
+        if (!result.IsSuccess)
         {
             _logger.LogError(
                 "Error saving to database register device {Key} ({Function}): {Success}. Reason: {Message}",
-                identifier.Key,
-                functionName,
-                false,
-                result.Message);
-
+                identifier.Key, functionName, false, result.Message);
             return OperationResult.Failure(result.Message);
         }
 
         _logger.LogInformation(
             "Completed register device {Key} ({Function}): {Success}",
-            identifier.Key,
-            functionName,
-            true);
-
+            identifier.Key, functionName, true);
         return OperationResult.Success();
-
     }
 
- //   public void Unregister(DeviceIdentifier identifier)
+    public DeviceRegistration? GetRegistration(string functionName)
+    {
+        if (!_byFunction.TryGetValue(functionName, out var key)) return null;
+        return _byKey.TryGetValue(key, out var reg) ? reg : null;
+    }
+
+    //   public void Unregister(DeviceIdentifier identifier)
     public async Task<OperationResult> Unregister(UsbSerialPortInfo identifier)
     {
         _logger.LogInformation(
