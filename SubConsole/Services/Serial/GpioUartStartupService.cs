@@ -25,16 +25,24 @@ public sealed class GpioUartStartupService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+
+        //***********************************
+     //   return;
+        //**********************************
+
         if (!_options.Enabled) return;
 
         // Let SerialPortManagerService finish loading the DB-backed registry first
         await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
 
         var settings = new SerialPortSettings(
-            DataBits: _options.DataBits,
-            Parity: Enum.Parse<Parity>(_options.Parity, ignoreCase: true),
-            StopBits: Enum.Parse<StopBits>(_options.StopBits, ignoreCase: true),
-            Handshake: Enum.Parse<Handshake>(_options.Handshake, ignoreCase: true));
+        DataBits: _options.DataBits,
+        Parity: Enum.Parse<Parity>(_options.Parity, ignoreCase: true),
+        StopBits: Enum.Parse<StopBits>(_options.StopBits, ignoreCase: true),
+        Handshake: Enum.Parse<Handshake>(_options.Handshake, ignoreCase: true),
+        KeepAliveEnabled: _options.KeepAliveEnabled,
+        KeepAlivePayload: _options.KeepAlivePayload,
+        KeepAliveIntervalMs: _options.KeepAliveIntervalMs);
 
         var registerResult = await _manager.RegisterStaticDeviceAsync(
             deviceId: "GPIO-UART0",

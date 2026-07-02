@@ -13,4 +13,9 @@ public sealed class GpioUartOptions
     public string StopBits { get; set; } = "One";
     public string Handshake { get; set; } = "None";
     public bool AutoOpen { get; set; } = true;
+
+    // ── Keep-alive ────────────────────────────────────────────────────────────
+    public bool KeepAliveEnabled { get; set; } = true;
+    public string KeepAlivePayload { get; set; } = ";";
+    public int KeepAliveIntervalMs { get; set; } = 1_000;
 }

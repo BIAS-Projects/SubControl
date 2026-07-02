@@ -1,4 +1,3 @@
-
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using SubConsole.Models;
@@ -30,9 +29,9 @@ public interface ISerialPortManagerService
     void RegisterDevice(UsbSerialPortInfo identifier, string functionName, int baudRate, SerialWorkerType type);
 
     Task<OperationResult> RegisterStaticDeviceAsync(
-    string deviceId, string portPath, string functionName, int baudRate,
-    SerialWorkerType type, SerialPortSettings? portSettings = null,
-    CancellationToken token = default);
+        string deviceId, string portPath, string functionName, int baudRate,
+        SerialWorkerType type, SerialPortSettings? portSettings = null,
+        CancellationToken token = default);
 
     Task<OperationResult> UnregisterDeviceAsync(string deviceKey, CancellationToken token = default);
     IReadOnlyList<DeviceRegistration> GetRegisteredDevices();
@@ -51,6 +50,11 @@ public interface ISerialPortManagerService
     Task<OperationResultWithValue<int>> AutoDiscoverAsync(
         bool autoOpen, int defaultBaudRate, SerialWorkerType defaultType, CancellationToken token = default);
 
+    // ── Keep-alive ────────────────────────────────────────────────────────────
+    OperationResult StartKeepAlive(string functionName);
+    OperationResult StopKeepAlive(string functionName);
+    bool IsKeepAliveRunning(string functionName);
+
     // ── Command dispatcher ────────────────────────────────────────────────────
     Task<OperationResult> ExecuteAsync(ISerialCommand command, CancellationToken token = default);
 
@@ -63,7 +67,7 @@ public interface ISerialPortManagerService
 
 public sealed class SerialPortManagerService : BackgroundService, ISerialPortManagerService
 {
-    // ── Reserved function name used for status messages on the broadcast channel
+    // Reserved function name used for status messages on the broadcast channel
     private const string SystemFunction = "SYSTEM";
 
     // How often to scan for the device when polling for reconnect
@@ -115,8 +119,7 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
         {
             _logger.LogError(
                 "Error loading device registry: {Success}. Reason: {Message}",
-                false,
-                result.Message);
+                false, result.Message);
         }
 
         _logger.LogInformation(
@@ -139,11 +142,10 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
         UsbSerialPortInfo identifier, string functionName, int baudRate, SerialWorkerType type)
         => _registry.Register(identifier, functionName, baudRate, type);
 
-
     public async Task<OperationResult> RegisterStaticDeviceAsync(
-    string deviceId, string portPath, string functionName, int baudRate,
-    SerialWorkerType type, SerialPortSettings? portSettings = null,
-    CancellationToken token = default)
+        string deviceId, string portPath, string functionName, int baudRate,
+        SerialWorkerType type, SerialPortSettings? portSettings = null,
+        CancellationToken token = default)
     {
         _logger.LogInformation(
             "Registering static device {DeviceId} ({Function}) on {Port}",
@@ -154,10 +156,11 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
         var result = await _registry.Register(identifier, functionName, baudRate, type, portSettings);
         if (!result.IsSuccess) return result;
 
+        // Static devices are never seen by USB enumeration — set the port
+        // path explicitly so ResolvePortPath/GetFunctionName work immediately.
         _registry.SetPortPath(identifier.Key, portPath);
         return OperationResult.Success();
     }
-
 
     public async Task<OperationResult> UnregisterDeviceAsync(
         string function, CancellationToken token = default)
@@ -277,6 +280,9 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
     {
         _logger.LogInformation("Closing port for function {Function}", function);
 
+        // TryRemove happens BEFORE StopAsync — SubscribeWorkerToBroadcast checks
+        // _workers.ContainsKey(function) when the channel completes to distinguish
+        // a deliberate close (key already gone) from an unexpected disconnect.
         if (!_workers.TryRemove(function, out var worker))
         {
             _logger.LogWarning(
@@ -344,12 +350,14 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
     private async Task<PortRemapResult> HandlePortRemovedAsync(
         UsbSerialPortInfo port, CancellationToken token)
     {
-        var reg = _registry.AllRegistrations.FirstOrDefault(r => r.Identifier.Key == port.Key);
+        var reg = _registry.AllRegistrations
+            .FirstOrDefault(r => r.Identifier.Key == port.Key);
+
+        // Static devices are never hot-plug removed — skip
         if (reg is null || reg.Identifier.IsStatic) return PortRemapResult.NoOp();
 
         string oldPort = reg.CurrentPortPath ?? port.PortName;
 
-        // Only close and mark if not already handled by the polling path.
         bool wasOpen = _workers.ContainsKey(reg.FunctionName);
         if (wasOpen)
         {
@@ -382,15 +390,16 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
     private async Task<PortRemapResult> HandlePortAddedAsync(
         UsbSerialPortInfo port, CancellationToken token)
     {
-        var reg = _registry.AllRegistrations.FirstOrDefault(r => r.Identifier.Key == port.Key);
+        var reg = _registry.AllRegistrations
+            .FirstOrDefault(r => r.Identifier.Key == port.Key);
+
+        // Static devices are never hot-plug added — skip
         if (reg is null || reg.Identifier.IsStatic) return PortRemapResult.NoOp();
 
         string oldPort = reg.CurrentPortPath ?? "(none)";
 
         _registry.SetPortPath(port.Key, port.PortName);
 
-        // If polling is already running for this function, let it handle
-        // the reopen — it will find the device on its next scan.
         if (_wasOpenBeforeDisconnect.ContainsKey(reg.FunctionName))
         {
             _logger.LogInformation(
@@ -405,7 +414,6 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
                 Error: null);
         }
 
-        // Port was not open before — just notify, don't auto-open.
         await PublishStatusMessageAsync(
             reg.FunctionName,
             SerialMessageKind.Reconnected,
@@ -482,7 +490,7 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
 
     /// <summary>
     /// Checks whether a function's port is registered and not currently
-    /// disconnected.  Returns a failure <see cref="OperationResult"/> if
+    /// disconnected. Returns a failure <see cref="OperationResult"/> if
     /// unavailable, or <c>null</c> if it is fine to proceed.
     /// </summary>
     private OperationResult? CheckPortAvailable(string functionName)
@@ -500,10 +508,47 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
         return null;
     }
 
+    // ── Keep-alive ────────────────────────────────────────────────────────────
+
+    public OperationResult StartKeepAlive(string functionName)
+    {
+        if (!_workers.TryGetValue(functionName, out var worker))
+            return OperationResult.Failure(
+                $"No open port for function '{functionName}'");
+
+        if (worker is not IKeepAliveWorker keepAlive)
+            return OperationResult.Failure(
+                $"Worker for '{functionName}' does not support keep-alive");
+
+        keepAlive.StartKeepAlive();
+        return OperationResult.Success();
+    }
+
+    public OperationResult StopKeepAlive(string functionName)
+    {
+        if (!_workers.TryGetValue(functionName, out var worker))
+            return OperationResult.Failure(
+                $"No open port for function '{functionName}'");
+
+        if (worker is not IKeepAliveWorker keepAlive)
+            return OperationResult.Failure(
+                $"Worker for '{functionName}' does not support keep-alive");
+
+        keepAlive.StopKeepAlive();
+        return OperationResult.Success();
+    }
+
+    public bool IsKeepAliveRunning(string functionName)
+        => _workers.TryGetValue(functionName, out var worker)
+           && worker is IKeepAliveWorker keepAlive
+           && keepAlive.IsKeepAliveRunning;
+
+    // ── Message reader ────────────────────────────────────────────────────────
+
     /// <summary>
     /// Returns a <see cref="ChannelReader{T}"/> that yields only messages
     /// whose <see cref="SerialMessage.FunctionName"/> is in
-    /// <paramref name="functionNames"/>.  Pass an empty enumerable to receive
+    /// <paramref name="functionNames"/>. Pass an empty enumerable to receive
     /// all messages including SYSTEM status messages.
     /// Each call creates a dedicated filtered channel — the caller owns it.
     /// </summary>
@@ -572,8 +617,8 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
             _registry.SetPortPath(identifier.Key, identifier.PortName);
 
             if (!autoOpen || _workers.ContainsKey(existing.FunctionName)) continue;
-            var result = await OpenPortAsync(existing.FunctionName, token);
 
+            var result = await OpenPortAsync(existing.FunctionName, token);
             if (result.IsSuccess) opened++;
         }
 
@@ -591,7 +636,6 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
                     staticReg.FunctionName, staticReg.Identifier.PortName);
 
                 var staticResult = await OpenPortAsync(staticReg.FunctionName, token);
-
                 if (staticResult.IsSuccess) opened++;
             }
         }
@@ -671,12 +715,28 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
 
             _logger.LogDebug("Unsubscribed worker {Function} from broadcast", function);
 
-            // If the app is shutting down, the channel completing is expected — ignore.
+            // App shutting down — channel completing is expected.
             if (token.IsCancellationRequested) return;
 
-            // Worker channel completed while the app is still running — the physical
-            // device was unplugged.  Use TryAdd so only one poll loop starts per
-            // function even if the fan-in task and HandlePortRemovedAsync both fire.
+            // ── Deliberate close guard ────────────────────────────────────────
+            // ClosePortAsync calls _workers.TryRemove() BEFORE StopAsync(), so
+            // if the key is already gone by the time the channel completes, this
+            // was an intentional close — not a device disconnect. Skip the
+            // reconnect poll entirely.
+            if (!_workers.ContainsKey(function))
+            {
+                _logger.LogDebug(
+                    "Worker {Function} channel completed after deliberate close — " +
+                    "skipping reconnect poll",
+                    function);
+                return;
+            }
+            // ─────────────────────────────────────────────────────────────────
+
+            // Worker channel completed while the app is still running — the
+            // physical device was unplugged. Use TryAdd so only one poll loop
+            // starts per function even if the fan-in task and
+            // HandlePortRemovedAsync both fire.
             if (!_wasOpenBeforeDisconnect.TryAdd(function, true))
             {
                 _logger.LogDebug(
@@ -739,10 +799,7 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
 
         while (!token.IsCancellationRequested)
         {
-            try
-            {
-                await Task.Delay(ReconnectPollInterval, token);
-            }
+            try { await Task.Delay(ReconnectPollInterval, token); }
             catch (OperationCanceledException) { break; }
 
             // Stop polling if something else (e.g. HandlePortAddedAsync) already
@@ -756,6 +813,7 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
                 return;
             }
 
+            // ── Static device path ────────────────────────────────────────────
             if (reg.Identifier.IsStatic)
             {
                 if (!File.Exists(reg.Identifier.PortName))
@@ -771,18 +829,19 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
                 if (staticOpen.IsSuccess)
                 {
                     await PublishStatusMessageAsync(
-                        function, SerialMessageKind.Reconnected,
-                        $"Static device reopened on {reg.Identifier.PortName}", token);
+                        function,
+                        SerialMessageKind.Reconnected,
+                        $"Static device reopened on {reg.Identifier.PortName}",
+                        token);
                     return;
                 }
 
+                // Reopen failed — put the flag back and keep polling.
                 _wasOpenBeforeDisconnect.TryAdd(function, true);
                 continue;
             }
 
-            // ...existing USB scan/match logic follows for non-static devices
-
-
+            // ── USB device path ───────────────────────────────────────────────
             _logger.LogDebug(
                 "Reconnect poll {Function}: scanning for device key {Key}",
                 function, reg.Key);
@@ -804,7 +863,7 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
                     "Reconnect poll {Function}: device found on {Port} — reopening",
                     function, match.PortName);
 
-                // Update port path in case Windows assigned a different COM number.
+                // Update port path in case the OS assigned a different number.
                 _registry.SetPortPath(match.Key, match.PortName);
 
                 // Clear the flag before opening so CheckPortAvailable passes.
@@ -838,15 +897,12 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
             catch (Exception ex)
             {
                 _logger.LogError(
-                    ex,
-                    "Reconnect poll {Function}: error during device scan",
-                    function);
+                    ex, "Reconnect poll {Function}: error during device scan", function);
             }
         }
 
         _logger.LogInformation(
-            "Reconnect poll {Function}: stopped (cancellation requested)",
-            function);
+            "Reconnect poll {Function}: stopped (cancellation requested)", function);
     }
 
     /// <summary>
@@ -909,6 +965,7 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
             return false;
         }
 
+        // Static devices have a fixed, known path — just verify the node exists
         if (reg.Identifier.IsStatic)
         {
             if (!File.Exists(reg.Identifier.PortName))
@@ -948,7 +1005,7 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
 
 /// <summary>
 /// Discriminates in-band status messages from normal serial data on the
-/// broadcast channel.  Normal data uses <see cref="Data"/>.
+/// broadcast channel. Normal data uses <see cref="Data"/>.
 /// </summary>
 public enum SerialMessageKind
 {
@@ -957,7 +1014,3 @@ public enum SerialMessageKind
     Reconnected,
     Error
 }
-
-
-
-

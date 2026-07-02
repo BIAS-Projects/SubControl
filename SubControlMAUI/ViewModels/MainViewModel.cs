@@ -1102,6 +1102,7 @@ public partial class MainViewModel : BaseViewModel
         bool ok = await _dispatcher.SendAndWaitAsync(
             Feature.GpioUart0, "WRITE TEXT", text, _timeout) is not null;
 
+
         StatusText = ok
             ? $"{Feature.GpioUart0} write sent"
             : $"{Feature.GpioUart0} write failed";
