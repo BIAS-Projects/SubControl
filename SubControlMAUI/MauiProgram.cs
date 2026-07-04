@@ -93,6 +93,12 @@ namespace SubControlMAUI
             builder.Services.AddSingleton<PiPage>();
             builder.Services.AddSingleton<PiViewModel>();
 
+            builder.Services.AddSingleton<ConsolePage>();
+            builder.Services.AddSingleton<ConsoleViewModel>();
+
+            builder.Services.AddSingleton<LogsPage>();
+            builder.Services.AddSingleton<LogsViewModel>();
+
 
             builder.Services.AddSingleton<SQLiteService>();
 

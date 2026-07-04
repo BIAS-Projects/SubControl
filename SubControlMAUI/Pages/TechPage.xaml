@@ -7,39 +7,40 @@
              Title="{Binding Title}"
              Shell.NavBarIsVisible="False">
 
-
+    <Grid>
         <Grid RowDefinitions="*,8*" Padding="10">
-        
-        
-        
-        
-        <!-- CUSTOM TITLE BAR -->
-        <Grid Grid.Row="0"
+
+
+
+
+
+            <!-- CUSTOM TITLE BAR -->
+            <Grid Grid.Row="0"
                   ColumnDefinitions="*,Auto,*"
               
                   Margin="0,0,0,10">
 
-            <Button Grid.Column="1"
+                <Button Grid.Column="1"
                         Text="⬅ Back"
                         FontSize="18"
                         HorizontalOptions="Start"
                         VerticalOptions="Center"
                         Command="{Binding GoBackCommand}" />
 
-            <Label Grid.Column="0"
+                <Label Grid.Column="0"
                        Text="{Binding Title}"
                        FontSize="22"
                        FontAttributes="Bold"
                        HorizontalOptions="Start"
                        VerticalOptions="Center" />
 
-            <!-- Empty right column to keep title centred -->
-            <Label Grid.Column="2" />
+                <!-- Empty right column to keep title centred -->
+                <Label Grid.Column="2" />
 
-        </Grid>
+            </Grid>
 
 
-        <!-- Main Buttons -->
+            <!-- Main Buttons -->
             <Grid Grid.Row="1"
                   ColumnDefinitions="*,*,*,*,*"
                   ColumnSpacing="60"
@@ -60,21 +61,69 @@
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
                         Command="{Binding PiCommand}"
+                        MaximumHeightRequest="90"
                         />
-
 
                     <Label Text="Controller Management"
                            HorizontalOptions="Center"/>
                 </VerticalStackLayout>
 
-                </Grid>
+         
 
 
 
+            <!-- Console -->
+            <VerticalStackLayout Grid.Column="1"
+                                     Spacing="8"
+                                     HorizontalOptions="Center">
+
+                <ImageButton
+                        Source="{AppThemeBinding Light=light_prompt.png, Dark=dark_prompt.png}"
+                        WidthRequest="{Binding ButtonSize}"
+                        HeightRequest="{Binding ButtonSize}"
+                        BackgroundColor="Transparent"
+                        Command="{Binding ConsoleCommand}"
+                    MaximumHeightRequest="90"
+                        />
+
+                <Label Text="SSH Console"
+                           HorizontalOptions="Center"/>
+            </VerticalStackLayout>
+
+            <!-- Logs -->
+            <VerticalStackLayout Grid.Column="2"
+                                     Spacing="8"
+                                     HorizontalOptions="Center">
+
+                <ImageButton
+                        Source="{AppThemeBinding Light=light_logs.png, Dark=dark_logs.png}"
+                        WidthRequest="{Binding ButtonSize}"
+                        HeightRequest="{Binding ButtonSize}"
+                        BackgroundColor="Transparent"
+                        Command="{Binding LogsCommand}"
+                    MaximumWidthRequest="90"
+                        />
+
+                <Label Text="Log Management"
+                           HorizontalOptions="Center"/>
+            </VerticalStackLayout>
 
 
+            </Grid>
+    </Grid>
 
 
+        <!-- BUSY OVERLAY -->
+        <Grid IsVisible="{Binding IsBusy}"
+              BackgroundColor="#80000000"
+              ZIndex="1">
+
+            <ActivityIndicator IsRunning="{Binding IsBusy}"
+                               VerticalOptions="Center"
+                               HorizontalOptions="Center"
+                               WidthRequest="60"
+                               HeightRequest="60" />
+        </Grid>
 
     </Grid>
 </ContentPage>

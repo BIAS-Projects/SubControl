@@ -33,6 +33,18 @@ namespace SubControlMAUI.ViewModels
             await _navigation.GoToAsync(nameof(PiPage));
         }
 
+        [RelayCommand]
+        private async Task Console()
+        {
+            await _navigation.GoToAsync(nameof(ConsolePage));
+        }
+
+        [RelayCommand]
+        private async Task Logs()
+        {
+            await _navigation.GoToAsync(nameof(LogsPage));
+        }
+
 
 
         [RelayCommand]

@@ -57,6 +57,7 @@
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
                         Command="{Binding EthernetCommand}"
+                        MaximumHeightRequest="90"
                         />
 
 
@@ -75,7 +76,8 @@
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
                         Command="{Binding USBConfigCommand}"
-                        IsEnabled="{Binding _AppState.IsConnected}" />
+                        IsEnabled="{Binding _AppState.IsConnected}" 
+                        MaximumHeightRequest="90"/>
 
 
                     <Label Text="USB Features"
@@ -92,7 +94,8 @@
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
                         Command="{Binding VideoCommand}"
-                        IsEnabled="{Binding _AppState.IsConnected}" />
+                        IsEnabled="{Binding _AppState.IsConnected}" 
+                        MaximumHeightRequest="90"/>
 
 
                     <Label Text="Video"
@@ -109,6 +112,7 @@
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
                         Command="{Binding RotatorCommand}"
+                        MaximumHeightRequest="90"
                          />
 
 
@@ -127,6 +131,7 @@
                         HeightRequest="{Binding ButtonSize}"
                         BackgroundColor="Transparent"
                         Command="{Binding TechCommand}"
+                        MaximumHeightRequest="90"
                          />
 
 

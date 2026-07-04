@@ -30,6 +30,8 @@ namespace SubControlMAUI
             Routing.RegisterRoute(nameof(USBConfigMenuPage), typeof(USBConfigMenuPage));
             Routing.RegisterRoute(nameof(VideoOptionsPage), typeof(VideoOptionsPage));
             Routing.RegisterRoute(nameof(PiPage), typeof(PiPage));
+            Routing.RegisterRoute(nameof(ConsolePage), typeof(ConsolePage));
+            Routing.RegisterRoute(nameof(LogsPage), typeof(LogsPage));
 
         }
 
