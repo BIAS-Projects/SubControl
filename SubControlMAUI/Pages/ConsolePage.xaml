@@ -6,107 +6,172 @@
              x:DataType="viewModel:ConsoleViewModel"
              Title="{Binding Title}"
              Shell.NavBarIsVisible="False">
+
     <Grid Padding="10"
-          RowDefinitions="Auto, Auto,Auto,Auto,*,Auto"
-          ColumnDefinitions="*,*">
+          RowDefinitions="Auto,Auto,Auto,*,Auto,Auto"
+          RowSpacing="8">
 
         <!-- CUSTOM TITLE BAR -->
         <Grid Grid.Row="0"
-              Grid.ColumnSpan="2"
-                  ColumnDefinitions="*,Auto,*"
-                  Margin="0,0,0,10">
+              ColumnDefinitions="Auto,*,Auto">
 
-            <Button Grid.Column="1"
-                        Text="⬅ Back"
-                        FontSize="18"
-                        HorizontalOptions="Start"
-                        VerticalOptions="Center"
-                        Command="{Binding GoBackCommand}" />
+            <Button Grid.Column="0"
+                    Text="⬅ Back"
+                    FontSize="18"
+                    Command="{Binding GoBackCommand}" />
 
-            <Label Grid.Column="0"
-                       Text="{Binding Title}"
-                       FontSize="22"
-                       FontAttributes="Bold"
-                       HorizontalOptions="Start"
-                       VerticalOptions="Center" />
+            <Label Grid.Column="1"
+                   Text="{Binding Title}"
+                   FontSize="22"
+                   FontAttributes="Bold"
+                   HorizontalOptions="Center"
+                   VerticalOptions="Center" />
 
-            <!-- Empty right column to keep title centred -->
-            <Label Grid.Column="2" />
-
+            <Label Grid.Column="2"
+                   FontAttributes="Bold"
+                   VerticalOptions="Center">
+                <Label.Triggers>
+                    <DataTrigger TargetType="Label" Binding="{Binding IsConnected}" Value="True">
+                        <Setter Property="Text" Value="Connected" />
+                        <Setter Property="TextColor" Value="Green" />
+                    </DataTrigger>
+                    <DataTrigger TargetType="Label" Binding="{Binding IsConnected}" Value="False">
+                        <Setter Property="Text" Value="Disconnected" />
+                        <Setter Property="TextColor" Value="Red" />
+                    </DataTrigger>
+                </Label.Triggers>
+            </Label>
         </Grid>
 
+        <!-- CONNECTION SETTINGS -->
+        <Border Grid.Row="1"
+                Stroke="Gray"
+                StrokeThickness="1"
+                Padding="10">
+            <Grid RowDefinitions="Auto,Auto"
+                  ColumnDefinitions="Auto,*,Auto,*,Auto"
+                  ColumnSpacing="8"
+                  RowSpacing="8">
 
+                <Label Grid.Row="0" Grid.Column="0"
+                       Text="Host:"
+                       VerticalOptions="Center" />
+                <Label Grid.Row="0" Grid.Column="1"
+                       Text="{Binding Host}"
+                       FontFamily="Courier New"
+                       VerticalOptions="Center" />
 
-        <Label Grid.Row="1"
-                   Margin="0,15,0,15"
-                   FontSize="16">
+                <Label Grid.Row="1" Grid.Column="0"
+                       Text="User:"
+                       VerticalOptions="Center" />
+                <Entry Grid.Row="1" Grid.Column="1"
+                       Text="{Binding UserName}"
+                       IsEnabled="{Binding IsNotConnected}" />
+
+                <Label Grid.Row="1" Grid.Column="2"
+                       Text="Password:"
+                       VerticalOptions="Center" />
+                <Entry Grid.Row="1" Grid.Column="3"
+                       Text="{Binding Password}"
+                       IsPassword="True"
+                       IsEnabled="{Binding IsNotConnected}" />
+
+                <HorizontalStackLayout Grid.Row="1" Grid.Column="4"
+                                       Spacing="6">
+                    <Button Text="Connect"
+                            Command="{Binding ConnectCommand}" />
+                    <Button Text="Disconnect"
+                            Command="{Binding DisconnectCommand}" />
+                </HorizontalStackLayout>
+            </Grid>
+        </Border>
+
+        <!-- STATUS -->
+        <Label Grid.Row="2"
+               FontSize="14">
             <Label.FormattedText>
                 <FormattedString>
-                    <Span Text="Status: " FontAttributes="Bold"/>
+                    <Span Text="Status: " FontAttributes="Bold" />
                     <Span Text="{Binding StatusText}" />
                 </FormattedString>
             </Label.FormattedText>
         </Label>
 
-        <Label Text="IP Address:"
-               Grid.Column="0"
-               Grid.Row="2"
-               HorizontalOptions="Start"
-               VerticalOptions="Center"
-               Margin="3"/>
-        <Entry x:Name="ipAddress"
-               IsEnabled="{Binding IsNotConnected}"
-                Grid.Column="1"
-                Grid.Row="2"
-                HeightRequest="40"
-                Placeholder="IP Address"
-               Text="{Binding InputIPAddress}"
-               Margin="3"/>
+        <!-- TERMINAL OUTPUT: one read-only, multi-line Editor rather than a
+             per-line CollectionView, so the user can drag-select and copy
+             across several lines at once, with no per-row padding. The Editor
+             grows to fit all of its text (AutoSize) and the outer ScrollView
+             does the scrolling, so we can reliably scroll to the bottom in
+             code-behind (see ConsolePage.xaml.cs). -->
+        <Border Grid.Row="3"
+                Stroke="Gray"
+                StrokeThickness="1"
+                Padding="6">
+            <ScrollView x:Name="TerminalScrollView">
+                <Editor x:Name="TerminalOutputEditor"
+                        Text="{Binding TerminalOutput, Mode=OneWay}"
+                        FontFamily="Courier New"
+                        FontSize="12"
+                        IsReadOnly="True"
+                        AutoSize="TextChanges"
+                        BackgroundColor="Transparent"
+                        Placeholder="No output yet. Connect and run a command."
+                        HorizontalOptions="Fill" />
+            </ScrollView>
+        </Border>
 
-        <Label Text="Port:"
-               Grid.Column="0"
-               Grid.Row="3"
-               HorizontalOptions="Start"
-               VerticalOptions="Center"
-               Margin="3"/>
-        <Entry x:Name="port"
-                IsEnabled="{Binding IsNotConnected}"
-                Grid.Column="1"
-                Grid.Row="3"
-                HeightRequest="40"
-                Placeholder="Port"
-               Text="{Binding Port}"
-                Margin="3"/>
+        <!-- COMMAND INPUT -->
+        <Grid Grid.Row="4"
+              ColumnDefinitions="Auto,*,Auto,Auto,Auto"
+              ColumnSpacing="6">
 
+            <Label Grid.Column="0"
+                   Text="$"
+                   FontSize="16"
+                   FontAttributes="Bold"
+                   VerticalOptions="Center" />
 
+            <Entry Grid.Column="1"
+                   Placeholder="Enter command"
+                   Text="{Binding CommandInput}"
+                   ReturnCommand="{Binding RunCommandCommand}"
+                   IsEnabled="{Binding IsConnected}"
+                   FontFamily="Courier New"
+                   FontSize="13" />
 
-        <ImageButton
-                    Source="{AppThemeBinding Light=light_save.png, Dark=dark_save.png}"
-                    WidthRequest="30"
-                    HeightRequest="30"
-                    BackgroundColor="Transparent"
-            Grid.Row="5"
-            Grid.ColumnSpan="2"
-                Command="{Binding SaveCommand}"
-            IsEnabled="{Binding IsNotBusy}"
-                Margin="0,10,0,0" />
+            <Button Grid.Column="2"
+                    Text="Up"
+                    Padding="10,6"
+                    Command="{Binding HistoryUpCommand}" />
 
+            <Button Grid.Column="3"
+                    Text="Down"
+                    Padding="10,6"
+                    Command="{Binding HistoryDownCommand}" />
 
+            <Button Grid.Column="4"
+                    Text="Run"
+                    Command="{Binding RunCommandCommand}" />
+        </Grid>
 
+        <!-- TOOLBAR -->
+        <HorizontalStackLayout Grid.Row="5"
+                               Spacing="8">
+            <Button Text="Clear"
+                    Command="{Binding ClearTerminalCommand}" />
+        </HorizontalStackLayout>
 
-
-        <!-- BUSY OVERLAY (on top) -->
-        <!-- Busy overlay -->
-        <Grid IsVisible="{Binding IsBusy}"
-      BackgroundColor="#80000000"
-      Grid.RowSpan="6"
-      ZIndex="1">
+        <!-- BUSY OVERLAY -->
+        <Grid Grid.RowSpan="6"
+              IsVisible="{Binding IsBusy}"
+              BackgroundColor="#80000000"
+              ZIndex="1">
             <ActivityIndicator IsRunning="{Binding IsBusy}"
-                       IsVisible="{Binding IsBusy}"
-                       VerticalOptions="Center"
-                       HorizontalOptions="Center"
-                       WidthRequest="60"
-                       HeightRequest="60" />
+                               IsVisible="{Binding IsBusy}"
+                               VerticalOptions="Center"
+                               HorizontalOptions="Center"
+                               WidthRequest="60"
+                               HeightRequest="60" />
         </Grid>
 
     </Grid>

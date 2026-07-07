@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -55,10 +56,297 @@ namespace SubControlMAUI.Services
     }
 
     /// <summary>
+    /// A persistent, stateful SSH shell session backed by a single <see cref="ShellStream"/>.
+    ///
+    /// Unlike <see cref="SshService.ExecuteCommandAsync"/> — which opens a brand-new exec
+    /// channel per call and therefore starts from a clean shell every time — every command
+    /// run through this session shares the same underlying bash process. A `cd`, an
+    /// exported variable, an activated venv, a shell function: all of it persists to the
+    /// next command, exactly as it would in a real terminal.
+    ///
+    /// How command boundaries are detected ("parsing prompt output"):
+    ///   Rather than trying to pattern-match a real PS1 prompt (which varies with cwd,
+    ///   colours, hostname, etc.), the session flattens the prompt to empty on startup,
+    ///   disables bracketed-paste mode (so bash's readline doesn't emit ESC[?2004h/l
+    ///   around every line it reads), and instead injects a unique, unambiguous marker
+    ///   line after every command (`__SUBCONTROL_CMD_DONE_&lt;guid&gt;:&lt;exit code&gt;`).
+    ///   The reader loop watches the incoming buffer for that exact marker; everything
+    ///   received before it is that command's output. Any residual escape/control
+    ///   sequences (colour codes, cursor moves, DEC private-mode toggles) are stripped
+    ///   from every chunk as a second line of defence before this matching happens.
+    ///
+    /// Buffering:
+    ///   A background loop polls <see cref="ShellStream.DataAvailable"/> (matching the
+    ///   pattern already used elsewhere in this service for streaming reads) and appends
+    ///   decoded, ANSI-stripped text to a single rolling <see cref="StringBuilder"/> under
+    ///   a lock, so partial reads/writes never race with a command being matched out.
+    ///
+    /// Async echoes:
+    ///   Output that arrives while no command is awaiter (background job completion
+    ///   notices, MOTD, unsolicited daemon chatter) has nowhere to be "returned" to, so it
+    ///   is instead raised via <see cref="AsyncOutputReceived"/> for the caller to surface
+    ///   separately (e.g. as an "info" line in a terminal UI) rather than silently dropped
+    ///   or wrongly attributed to the next command.
+    ///
+    /// Known limitation: because commands share one real shell, anything that itself
+    /// prompts for interactive input on the tty (e.g. bare `sudo`, `passwd`, `ssh` without
+    /// a key) will block waiting for the completion marker until the 5-minute safety
+    /// timeout cancels it. Password-requiring commands should keep piping credentials in,
+    /// the way the deployment methods on <see cref="SshService"/> already do.
+    /// </summary>
+    public sealed class SshInteractiveSession : IAsyncDisposable
+    {
+        private const string MarkerPrefix = "__SUBCONTROL_CMD_DONE_";
+
+        // Strips ANSI escape / control sequences (colour codes, cursor moves, OSC
+        // titles, and DEC private-mode toggles like bracketed-paste ESC[?2004h/l)
+        // that some commands — and bash's own readline — emit even without a
+        // real visible prompt.
+        private static readonly Regex AnsiEscapeRegex =
+            new(@"\x1B\[\??[0-9;]*[a-zA-Z]|\x1B\][^\x07]*\x07", RegexOptions.Compiled);
+
+        private readonly ShellStream _shell;
+        private readonly ILogger _logger;
+
+        // Reading stderr back doesn't need shell state, so it's done via the
+        // service's ordinary stateless exec channel rather than this session.
+        private readonly Func<string, CancellationToken, Task<SshCommandResult>> _readSideChannel;
+
+        private readonly StreamReader _reader;
+        private readonly CancellationTokenSource _readerCts = new();
+        private readonly Task _readerTask;
+
+        private readonly object _bufferLock = new();
+        private readonly StringBuilder _buffer = new();
+        private readonly SemaphoreSlim _commandLock = new(1, 1); // one command in flight at a time
+
+        // How far into _buffer we've already confirmed there's no marker match.
+        // Re-scanning from here (rather than from index 0) on every chunk keeps
+        // matching cheap even when a command produces a very large amount of
+        // output before its completion marker arrives.
+        private int _searchStartIndex;
+
+        // Small safety margin subtracted from the "confirmed clean" point so a
+        // marker split across two incoming chunks is never missed.
+        private const int MarkerSplitMargin = 256;
+
+        private TaskCompletionSource<(string Output, int ExitCode)>? _pendingCompletion;
+        private Regex? _pendingMarkerRegex;
+
+        /// <summary>
+        /// Raised for output that arrives when no command is currently awaiting
+        /// completion — e.g. background job notices ("[1]+ Done ..."), MOTD, or
+        /// any other asynchronous echo the shell prints unprompted.
+        /// </summary>
+        public event Action<string>? AsyncOutputReceived;
+
+        internal SshInteractiveSession(
+            ShellStream shell,
+            ILogger logger,
+            Func<string, CancellationToken, Task<SshCommandResult>> readSideChannel)
+        {
+            _shell = shell;
+            _logger = logger;
+            _readSideChannel = readSideChannel;
+            _reader = new StreamReader(shell, Encoding.UTF8, false, 4096, leaveOpen: true);
+            _readerTask = Task.Run(ReadLoopAsync);
+        }
+
+        /// <summary>
+        /// Disables local echo and flattens the prompt so command boundaries can be
+        /// detected purely from injected markers. Must be called once before the
+        /// first <see cref="ExecuteAsync"/>.
+        /// </summary>
+        public async Task InitializeAsync(CancellationToken cancellationToken = default)
+        {
+            _logger.LogInformation("Initialising interactive shell session (disabling echo, flattening prompt).");
+
+            _shell.WriteLine("stty -echo 2>/dev/null; export PS1=''; unset PROMPT_COMMAND; bind 'set enable-bracketed-paste off' 2>/dev/null");
+
+            // Give the shell a moment to process the setup line; its own output
+            // isn't of interest, so just discard whatever lands in that window.
+            await Task.Delay(400, cancellationToken);
+            lock (_bufferLock) _buffer.Clear();
+        }
+
+        private async Task ReadLoopAsync()
+        {
+            var charBuf = new char[8192];
+            try
+            {
+                while (!_readerCts.IsCancellationRequested)
+                {
+                    if (_shell.DataAvailable)
+                    {
+                        int read = await _reader.ReadAsync(charBuf, 0, charBuf.Length);
+                        if (read <= 0)
+                        {
+                            continue;
+                        }
+
+                        var text = AnsiEscapeRegex.Replace(new string(charBuf, 0, read), string.Empty);
+                        OnTextReceived(text);
+                    }
+                    else
+                    {
+                        await Task.Delay(30, _readerCts.Token);
+                    }
+                }
+            }
+            catch (OperationCanceledException) { /* expected on dispose */ }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Interactive shell reader loop faulted.");
+            }
+        }
+
+        private void OnTextReceived(string text)
+        {
+            lock (_bufferLock)
+            {
+                _buffer.Append(text);
+
+                if (_pendingMarkerRegex is null)
+                {
+                    // Nobody is waiting on a command right now, so this is an
+                    // asynchronous echo rather than a command's output.
+                    var unsolicited = _buffer.ToString();
+                    _buffer.Clear();
+                    if (!string.IsNullOrWhiteSpace(unsolicited))
+                        AsyncOutputReceived?.Invoke(unsolicited);
+                    return;
+                }
+
+                var match = _pendingMarkerRegex.Match(_buffer.ToString(), _searchStartIndex);
+                if (!match.Success)
+                {
+                    _searchStartIndex = Math.Max(0, _buffer.Length - MarkerSplitMargin);
+                    return; // marker hasn't fully arrived yet - keep buffering
+                }
+
+                var full = _buffer.ToString();
+                var output = full[..match.Index];
+                var remainder = full[(match.Index + match.Length)..];
+
+                _buffer.Clear();
+                _buffer.Append(remainder);
+                _searchStartIndex = 0;
+
+                var exitCode = int.TryParse(match.Groups[1].Value, out var rc) ? rc : -1;
+
+                var tcs = _pendingCompletion;
+                _pendingCompletion = null;
+                _pendingMarkerRegex = null;
+
+                tcs?.TrySetResult((output, exitCode));
+            }
+        }
+
+        /// <summary>
+        /// Runs a command in this persistent shell and returns its stdout, stderr
+        /// (read back separately, see class remarks) and exit code. Commands are
+        /// serialised — a shell can only run one thing at a time.
+        /// </summary>
+        public async Task<SshCommandResult> ExecuteAsync(string command, CancellationToken cancellationToken = default)
+        {
+            await _commandLock.WaitAsync(cancellationToken);
+            try
+            {
+                var marker = Guid.NewGuid().ToString("N");
+                var stderrFile = $"/tmp/.subcontrol_{marker}.stderr";
+                var tcs = new TaskCompletionSource<(string Output, int ExitCode)>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+
+                lock (_bufferLock)
+                {
+                    _pendingCompletion = tcs;
+                    _pendingMarkerRegex = new Regex($@"{MarkerPrefix}{marker}:(-?\d+)\r?\n");
+                    _searchStartIndex = 0;
+                }
+
+                var started = DateTime.UtcNow;
+                _logger.LogDebug("Executing interactive command: {Command}", command);
+
+                // stdout and stderr share one pty stream, so stderr is redirected to
+                // a side file on the remote host and read back separately afterwards
+                // rather than being interleaved into the marker-delimited output.
+                _shell.WriteLine($"{{ {command} ; }} 2>\"{stderrFile}\"");
+                _shell.WriteLine($"__rc=$?; echo \"{MarkerPrefix}{marker}:$__rc\"");
+
+                (string Output, int ExitCode) result;
+
+                using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+                using var registration = linkedCts.Token.Register(() => tcs.TrySetCanceled(linkedCts.Token));
+
+                try
+                {
+                    result = await tcs.Task;
+                }
+                catch (OperationCanceledException)
+                {
+                    lock (_bufferLock) { _pendingCompletion = null; _pendingMarkerRegex = null; }
+                    _logger.LogWarning("Interactive command cancelled or timed out: {Command}", command);
+                    throw;
+                }
+
+                var duration = DateTime.UtcNow - started;
+
+                // Cheap file read/delete over the stateless channel; doesn't need
+                // to preserve shell state, so it doesn't need to run in-session.
+                var stderrRead = await _readSideChannel(
+                    $"cat \"{stderrFile}\" 2>/dev/null; rm -f \"{stderrFile}\"",
+                    cancellationToken);
+
+                var stdout = result.Output.Trim('\r', '\n');
+                var stderr = stderrRead.StdOut.TrimEnd('\r', '\n');
+
+                if (result.ExitCode == 0)
+                {
+                    _logger.LogInformation(
+                        "Interactive command succeeded in {Duration:N0}ms: {Command}",
+                        duration.TotalMilliseconds, command);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "Interactive command exited {ExitCode} in {Duration:N0}ms: {Command} | stderr: {StdErr}",
+                        result.ExitCode, duration.TotalMilliseconds, command, stderr);
+                }
+
+                return new SshCommandResult(command, stdout, stderr, result.ExitCode, duration);
+            }
+            finally
+            {
+                _commandLock.Release();
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            _readerCts.Cancel();
+            try { await _readerTask.WaitAsync(TimeSpan.FromSeconds(3)); } catch { /* best-effort */ }
+
+            lock (_bufferLock)
+            {
+                _pendingCompletion?.TrySetCanceled();
+                _pendingCompletion = null;
+                _pendingMarkerRegex = null;
+            }
+
+            _reader.Dispose();
+            _shell.Dispose();
+            _readerCts.Dispose();
+            _commandLock.Dispose();
+        }
+    }
+
+    /// <summary>
     /// Manages an SSH connection to a Raspberry Pi (or any Linux host).
     /// Supports:
     ///   - Password and private-key authentication
-    ///   - One-shot command execution with stdout/stderr capture
+    ///   - One-shot, stateless command execution with stdout/stderr capture
+    ///   - A persistent, stateful interactive shell session (see <see cref="SshInteractiveSession"/>)
     ///   - Streaming shell sessions for log tailing / long-running processes
     ///   - SFTP file upload / download (for future .NET app deployment)
     /// </summary>
@@ -71,6 +359,9 @@ namespace SubControlMAUI.Services
         private SshClient? _sshClient;
         private SftpClient? _sftpClient;
         private readonly SemaphoreSlim _connectionLock = new(1, 1);
+
+        // ── Interactive (stateful) shell ────────────────────────────────────────
+        private SshInteractiveSession? _interactiveSession;
 
         // ── Configuration ───────────────────────────────────────────────────────
         public string Host { get; private set; } = string.Empty;
@@ -197,6 +488,10 @@ namespace SubControlMAUI.Services
         /// <summary>Gracefully disconnect both SSH and SFTP clients.</summary>
         public async Task DisconnectAsync()
         {
+            // Tear down the interactive shell first — it depends on the SSH
+            // client underneath it and must not outlive it.
+            await CloseInteractiveSessionAsync();
+
             await _connectionLock.WaitAsync();
             try
             {
@@ -219,6 +514,9 @@ namespace SubControlMAUI.Services
 
         /// <summary>
         /// Run a command and return its stdout, stderr, and exit code.
+        /// Opens a brand-new exec channel every call, so nothing about the shell
+        /// (working directory, exported variables, etc.) persists between calls.
+        /// For stateful, terminal-like interaction use <see cref="ExecuteInteractiveCommandAsync"/>.
         /// Throws if not connected.
         /// </summary>
         public async Task<SshCommandResult> ExecuteCommandAsync(
@@ -290,6 +588,91 @@ namespace SubControlMAUI.Services
                 }
             }
             return results;
+        }
+
+        // ── Interactive (stateful) shell ─────────────────────────────────────────
+
+        /// <summary>
+        /// Raised for output the interactive shell produces when no command is
+        /// currently awaiting completion (background job notices, MOTD, etc.).
+        /// See <see cref="SshInteractiveSession"/> for details.
+        /// </summary>
+        public event Action<string>? InteractiveAsyncOutputReceived;
+
+        /// <summary>
+        /// Returns the persistent interactive shell session, opening one the
+        /// first time it's needed. Safe to call repeatedly; the same session is
+        /// reused until <see cref="CloseInteractiveSessionAsync"/> or <see cref="DisconnectAsync"/>.
+        /// </summary>
+        public async Task<SshInteractiveSession> GetOrCreateInteractiveSessionAsync(CancellationToken cancellationToken = default)
+        {
+            EnsureConnected();
+
+            if (_interactiveSession is not null)
+                return _interactiveSession;
+
+            await _connectionLock.WaitAsync(cancellationToken);
+            try
+            {
+                // Re-check now that we hold the lock, in case another caller
+                // already created it while we were waiting.
+                if (_interactiveSession is not null)
+                    return _interactiveSession;
+
+                _logger.LogInformation("Opening persistent interactive shell session on {Host}", Host);
+
+                // The buffer size below is ShellStream's own internal incoming-data
+                // buffer, separate from the SSH channel/window. 4096 bytes is too
+                // small for commands that emit a lot of output quickly (e.g. `ls`
+                // over a large directory) — once it fills faster than the reader
+                // loop drains it, later data (including our completion marker) can
+                // stall indefinitely with no exception raised. 1 MiB gives enough
+                // headroom for large one-shot command output.
+                const int shellStreamBufferSize = 1024 * 1024;
+                var shell = _sshClient!.CreateShellStream("xterm", 200, 50, 800, 600, shellStreamBufferSize);
+                var session = new SshInteractiveSession(shell, _logger, ExecuteCommandAsync);
+                session.AsyncOutputReceived += text => InteractiveAsyncOutputReceived?.Invoke(text);
+
+                await session.InitializeAsync(cancellationToken);
+
+                _interactiveSession = session;
+                return session;
+            }
+            finally
+            {
+                _connectionLock.Release();
+            }
+        }
+
+        /// <summary>
+        /// Executes a command against the persistent interactive shell, preserving
+        /// state between calls — working directory, environment variables, shell
+        /// functions/aliases, activated virtual environments, and so on — unlike
+        /// <see cref="ExecuteCommandAsync"/>, which opens a brand-new, stateless
+        /// exec channel every time and therefore forgets everything (e.g. a
+        /// preceding `cd`) between calls.
+        /// </summary>
+        public async Task<SshCommandResult> ExecuteInteractiveCommandAsync(
+            string command,
+            CancellationToken cancellationToken = default)
+        {
+            var session = await GetOrCreateInteractiveSessionAsync(cancellationToken);
+            return await session.ExecuteAsync(command, cancellationToken);
+        }
+
+        /// <summary>
+        /// Closes the persistent interactive shell, if one is open. The next call
+        /// to <see cref="ExecuteInteractiveCommandAsync"/> will open a fresh one
+        /// (starting again from a clean shell state).
+        /// </summary>
+        public async Task CloseInteractiveSessionAsync()
+        {
+            if (_interactiveSession is null)
+                return;
+
+            _logger.LogInformation("Closing persistent interactive shell session.");
+            await _interactiveSession.DisposeAsync();
+            _interactiveSession = null;
         }
 
         // ── Streaming Shell ──────────────────────────────────────────────────────

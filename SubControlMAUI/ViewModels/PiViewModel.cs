@@ -15,28 +15,28 @@ namespace SubControlMAUI.ViewModels
     /// <summary>
     /// A single line in the output terminal, tagged with its source type for colour-coding.
     /// </summary>
-    public partial class TerminalLine : ObservableObject
-    {
-        public string Text { get; }
-        public TerminalLineKind Kind { get; }
-        public DateTime Timestamp { get; } = DateTime.Now;
+    //public partial class TerminalLine : ObservableObject
+    //{
+    //    public string Text { get; }
+    //    public TerminalLineKind Kind { get; }
+    //    public DateTime Timestamp { get; } = DateTime.Now;
 
-        public TerminalLine(string text, TerminalLineKind kind = TerminalLineKind.Output)
-        {
-            Text = text;
-            Kind = kind;
-        }
-    }
+    //    public TerminalLine(string text, TerminalLineKind kind = TerminalLineKind.Output)
+    //    {
+    //        Text = text;
+    //        Kind = kind;
+    //    }
+    //}
 
-    public enum TerminalLineKind
-    {
-        Info,       // status / connection messages  → blue/grey
-        Command,    // echoed user input             → yellow
-        Output,     // stdout from commands          → white
-        Error,      // stderr / failures             → red
-        Stream,     // live tail / streaming output  → green
-        Success,    // exit-code 0 confirmation      → green-muted
-    }
+    //public enum TerminalLineKind
+    //{
+    //    Info,       // status / connection messages  → blue/grey
+    //    Command,    // echoed user input             → yellow
+    //    Output,     // stdout from commands          → white
+    //    Error,      // stderr / failures             → red
+    //    Stream,     // live tail / streaming output  → green
+    //    Success,    // exit-code 0 confirmation      → green-muted
+    //}
 
     public partial class PiViewModel : BaseViewModel
     {
