@@ -119,6 +119,11 @@ namespace SubControlMAUI.ViewModels
                 // Surface output the interactive shell produces on its own —
                 // background job notices, MOTD, etc. — rather than dropping it.
                 _sshService.InteractiveAsyncOutputReceived += OnAsyncOutputReceived;
+
+                // If the connection drops unexpectedly (network loss, remote
+                // reboot, killed session, etc.), reset the UI so a reconnect is
+                // immediately possible rather than leaving stale "connected" state.
+                _sshService.ConnectionLost += OnConnectionLost;
             }
             catch (Exception ex)
             {
@@ -146,6 +151,7 @@ namespace SubControlMAUI.ViewModels
             // A command may still be running; cancel it before tearing down the connection.
             _commandCts?.Cancel();
             _sshService.InteractiveAsyncOutputReceived -= OnAsyncOutputReceived;
+            _sshService.ConnectionLost -= OnConnectionLost;
 
             try
             {
@@ -191,7 +197,7 @@ namespace SubControlMAUI.ViewModels
 
             try
             {
-                var result = await _sshService.ExecuteInteractiveCommandAsync(cmd, _commandCts.Token);
+                var result = await _sshService.ExecuteInteractiveCommandAsync(cmd, Password, _commandCts.Token);
 
                 if (!string.IsNullOrWhiteSpace(result.StdOut))
                 {
@@ -278,6 +284,35 @@ namespace SubControlMAUI.ViewModels
         }
 
         // ── Private helpers ───────────────────────────────────────────────────
+
+        /// <summary>
+        /// Fires when the SSH connection drops unexpectedly (not via the user
+        /// pressing Disconnect). By the time this runs, SshService has already
+        /// torn down its clients and interactive session, so this only needs to
+        /// bring the UI back to a clean, reconnect-ready state.
+        /// </summary>
+        private void OnConnectionLost(Exception ex)
+        {
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                _logger.LogWarning(ex, "SSH connection to {Host} was lost unexpectedly.", Host);
+
+                // Unblock anything still awaiting a command result and reset the
+                // busy state — the underlying task will already be failing with
+                // this same exception, but don't leave the UI stuck either way.
+                _commandCts?.Cancel();
+                IsBusy = false;
+                IsConnected = false;
+                StatusText = "Connection lost";
+                AddLine($"Connection lost: {ex.Message}", TerminalLineKind.Error);
+
+                // Connect() will re-subscribe fresh on the next successful
+                // connection; unsubscribe now so a later reconnect doesn't end
+                // up with this handler registered twice.
+                _sshService.InteractiveAsyncOutputReceived -= OnAsyncOutputReceived;
+                _sshService.ConnectionLost -= OnConnectionLost;
+            });
+        }
 
         /// <summary>
         /// Renders output the interactive shell produced on its own — with no

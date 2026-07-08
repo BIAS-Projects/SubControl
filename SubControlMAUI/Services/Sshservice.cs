@@ -133,6 +133,15 @@ namespace SubControlMAUI.Services
         private TaskCompletionSource<(string Output, int ExitCode)>? _pendingCompletion;
         private Regex? _pendingMarkerRegex;
 
+        // Detects a shell that's stalled waiting on interactive input it will
+        // never receive (password/passphrase prompts, SSH host-key confirmation,
+        // etc.), so we can fail fast instead of waiting out the full timeout.
+        private static readonly Regex InteractivePromptRegex = new(
+            @"(\[sudo\]\s+)?password(\s+for\s+[^:]+)?:\s*$|passphrase.*:\s*$|are you sure you want to continue connecting.*\?\s*$",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        private DateTime _lastDataReceivedUtc = DateTime.UtcNow;
+
         /// <summary>
         /// Raised for output that arrives when no command is currently awaiting
         /// completion — e.g. background job notices ("[1]+ Done ..."), MOTD, or
@@ -150,6 +159,77 @@ namespace SubControlMAUI.Services
             _readSideChannel = readSideChannel;
             _reader = new StreamReader(shell, Encoding.UTF8, false, 4096, leaveOpen: true);
             _readerTask = Task.Run(ReadLoopAsync);
+        }
+
+
+        /// <summary>
+        /// Rewrites a bare "sudo ..." command to pipe the given password in via
+        /// `sudo -S`, the same technique the deployment methods already use,
+        /// so it never blocks on sudo's own tty password prompt. Commands that
+        /// already supply their own stdin (a pipe, or an explicit -S) are left
+        /// untouched. The password is only ever used to build the text sent to
+        /// the shell — it is never logged.
+        /// </summary>
+        private static string ApplySudoPasswordIfNeeded(string command, string? password)
+        {
+            if (string.IsNullOrEmpty(password))
+                return command;
+
+            var trimmed = command.TrimStart();
+            bool isBareSudo =
+                trimmed.Equals("sudo", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("sudo ", StringComparison.OrdinalIgnoreCase);
+
+            if (!isBareSudo || command.Contains('|') || command.Contains("-S"))
+                return command;
+
+            var rest = trimmed.Length > 4 ? trimmed[4..].TrimStart() : string.Empty;
+            var escapedPwd = password.Replace("'", "'\\''");
+
+            return string.IsNullOrEmpty(rest)
+                ? $"printf '{escapedPwd}\\n' | sudo -S"
+                : $"printf '{escapedPwd}\\n' | sudo -S {rest}";
+        }
+
+        /// <summary>
+        /// Runs alongside a pending command. If the shell goes quiet for a couple
+        /// of seconds and its last line looks like an interactive prompt we can't
+        /// answer, fails the command immediately with a clear message instead of
+        /// leaving the caller waiting out the full timeout.
+        /// </summary>
+        private async Task WatchForStalledPromptAsync(
+            TaskCompletionSource<(string Output, int ExitCode)> tcs,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                while (!cancellationToken.IsCancellationRequested && !tcs.Task.IsCompleted)
+                {
+                    await Task.Delay(500, cancellationToken);
+
+                    lock (_bufferLock)
+                    {
+                        if (tcs.Task.IsCompleted)
+                            return;
+
+                        if (DateTime.UtcNow - _lastDataReceivedUtc < TimeSpan.FromSeconds(2))
+                            continue;
+
+                        var bufferText = _buffer.ToString();
+                        var lastLine = bufferText[(bufferText.LastIndexOf('\n') + 1)..];
+
+                        if (InteractivePromptRegex.IsMatch(lastLine))
+                        {
+                            _logger.LogWarning("Interactive command appears to be blocked waiting for input: {Prompt}", lastLine.Trim());
+                            tcs.TrySetException(new InvalidOperationException(
+                                $"Command appears to be waiting for interactive input ('{lastLine.Trim()}'). " +
+                                "Interactive prompts aren't supported over this channel."));
+                            return;
+                        }
+                    }
+                }
+            }
+            catch (OperationCanceledException) { /* command completed or was cancelled - nothing to do */ }
         }
 
         /// <summary>
@@ -205,6 +285,7 @@ namespace SubControlMAUI.Services
             lock (_bufferLock)
             {
                 _buffer.Append(text);
+                _lastDataReceivedUtc = DateTime.UtcNow;
 
                 if (_pendingMarkerRegex is null)
                 {
@@ -247,7 +328,10 @@ namespace SubControlMAUI.Services
         /// (read back separately, see class remarks) and exit code. Commands are
         /// serialised — a shell can only run one thing at a time.
         /// </summary>
-        public async Task<SshCommandResult> ExecuteAsync(string command, CancellationToken cancellationToken = default)
+        public async Task<SshCommandResult> ExecuteAsync(
+            string command,
+            string? password = null,
+            CancellationToken cancellationToken = default)
         {
             await _commandLock.WaitAsync(cancellationToken);
             try
@@ -262,15 +346,15 @@ namespace SubControlMAUI.Services
                     _pendingCompletion = tcs;
                     _pendingMarkerRegex = new Regex($@"{MarkerPrefix}{marker}:(-?\d+)\r?\n");
                     _searchStartIndex = 0;
+                    _lastDataReceivedUtc = DateTime.UtcNow;
                 }
 
                 var started = DateTime.UtcNow;
-                _logger.LogDebug("Executing interactive command: {Command}", command);
+                _logger.LogDebug("Executing interactive command: {Command}", command); // never log executionCommand - it may contain the password
 
-                // stdout and stderr share one pty stream, so stderr is redirected to
-                // a side file on the remote host and read back separately afterwards
-                // rather than being interleaved into the marker-delimited output.
-                _shell.WriteLine($"{{ {command} ; }} 2>\"{stderrFile}\"");
+                var executionCommand = ApplySudoPasswordIfNeeded(command, password);
+
+                _shell.WriteLine($"{{ {executionCommand} ; }} 2>\"{stderrFile}\"");
                 _shell.WriteLine($"__rc=$?; echo \"{MarkerPrefix}{marker}:$__rc\"");
 
                 (string Output, int ExitCode) result;
@@ -278,6 +362,8 @@ namespace SubControlMAUI.Services
                 using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
                 using var registration = linkedCts.Token.Register(() => tcs.TrySetCanceled(linkedCts.Token));
+                using var watchdogCts = CancellationTokenSource.CreateLinkedTokenSource(linkedCts.Token);
+                var watchdogTask = WatchForStalledPromptAsync(tcs, watchdogCts.Token);
 
                 try
                 {
@@ -289,11 +375,19 @@ namespace SubControlMAUI.Services
                     _logger.LogWarning("Interactive command cancelled or timed out: {Command}", command);
                     throw;
                 }
+                catch (InvalidOperationException ex)
+                {
+                    lock (_bufferLock) { _pendingCompletion = null; _pendingMarkerRegex = null; }
+                    _logger.LogWarning(ex, "Interactive command blocked on an unsupported prompt: {Command}", command);
+                    throw;
+                }
+                finally
+                {
+                    watchdogCts.Cancel();
+                }
 
                 var duration = DateTime.UtcNow - started;
 
-                // Cheap file read/delete over the stateless channel; doesn't need
-                // to preserve shell state, so it doesn't need to run in-session.
                 var stderrRead = await _readSideChannel(
                     $"cat \"{stderrFile}\" 2>/dev/null; rm -f \"{stderrFile}\"",
                     cancellationToken);
@@ -302,17 +396,9 @@ namespace SubControlMAUI.Services
                 var stderr = stderrRead.StdOut.TrimEnd('\r', '\n');
 
                 if (result.ExitCode == 0)
-                {
-                    _logger.LogInformation(
-                        "Interactive command succeeded in {Duration:N0}ms: {Command}",
-                        duration.TotalMilliseconds, command);
-                }
+                    _logger.LogInformation("Interactive command succeeded in {Duration:N0}ms: {Command}", duration.TotalMilliseconds, command);
                 else
-                {
-                    _logger.LogWarning(
-                        "Interactive command exited {ExitCode} in {Duration:N0}ms: {Command} | stderr: {StdErr}",
-                        result.ExitCode, duration.TotalMilliseconds, command, stderr);
-                }
+                    _logger.LogWarning("Interactive command exited {ExitCode} in {Duration:N0}ms: {Command} | stderr: {StdErr}", result.ExitCode, duration.TotalMilliseconds, command, stderr);
 
                 return new SshCommandResult(command, stdout, stderr, result.ExitCode, duration);
             }
@@ -340,6 +426,10 @@ namespace SubControlMAUI.Services
             _commandLock.Dispose();
         }
     }
+
+
+
+
 
     /// <summary>
     /// Manages an SSH connection to a Raspberry Pi (or any Linux host).
@@ -558,6 +648,15 @@ namespace SubControlMAUI.Services
                 _logger.LogWarning("Command cancelled: {Command}", command);
                 throw;
             }
+            catch (SshConnectionException ex)
+            {
+                _logger.LogWarning(ex, "SSH connection lost while executing {Command}", command);
+
+                DisposeClients(); 
+
+                throw;
+            }
+
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Command threw an exception: {Command}", command);
@@ -654,10 +753,11 @@ namespace SubControlMAUI.Services
         /// </summary>
         public async Task<SshCommandResult> ExecuteInteractiveCommandAsync(
             string command,
+            string? password = null,
             CancellationToken cancellationToken = default)
         {
             var session = await GetOrCreateInteractiveSessionAsync(cancellationToken);
-            return await session.ExecuteAsync(command, cancellationToken);
+            return await session.ExecuteAsync(command, password, cancellationToken);
         }
 
         /// <summary>
