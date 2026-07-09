@@ -3,7 +3,9 @@ using Renci.SshNet;
 using Renci.SshNet.Common;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -24,6 +26,16 @@ namespace SubControlMAUI.Services
     {
         public bool Succeeded => ExitCode == 0;
     }
+
+    /// <summary>
+    /// A single file found by <see cref="SshService.ListLogFilesAsync"/>.
+    /// </summary>
+    public record RemoteLogFile(
+        string FileName,
+        string FullPath,
+        long SizeBytes,
+        DateTime ModifiedUtc
+    );
 
     /// <summary>
     /// Represents a live streaming session (e.g. tailing logs or running a long process).
@@ -112,7 +124,12 @@ namespace SubControlMAUI.Services
         // service's ordinary stateless exec channel rather than this session.
         private readonly Func<string, CancellationToken, Task<SshCommandResult>> _readSideChannel;
 
-        private readonly StreamReader _reader;
+        // Invoked when the underlying connection dies unexpectedly (not on a
+        // normal, user-initiated disconnect) so the owning SshService can tear
+        // down its clients and notify the UI that a reconnect is needed.
+        private readonly Func<Exception, Task> _onConnectionLost;
+
+        private readonly Decoder _utf8Decoder = Encoding.UTF8.GetDecoder();
         private readonly CancellationTokenSource _readerCts = new();
         private readonly Task _readerTask;
 
@@ -152,23 +169,156 @@ namespace SubControlMAUI.Services
         internal SshInteractiveSession(
             ShellStream shell,
             ILogger logger,
-            Func<string, CancellationToken, Task<SshCommandResult>> readSideChannel)
+            Func<string, CancellationToken, Task<SshCommandResult>> readSideChannel,
+            Func<Exception, Task> onConnectionLost)
         {
             _shell = shell;
             _logger = logger;
             _readSideChannel = readSideChannel;
-            _reader = new StreamReader(shell, Encoding.UTF8, false, 4096, leaveOpen: true);
+            _onConnectionLost = onConnectionLost;
             _readerTask = Task.Run(ReadLoopAsync);
         }
 
+        /// <summary>
+        /// Disables local echo and flattens the prompt so command boundaries can be
+        /// detected purely from injected markers. Must be called once before the
+        /// first <see cref="ExecuteAsync"/>.
+        /// </summary>
+        public async Task InitializeAsync(CancellationToken cancellationToken = default)
+        {
+            _logger.LogInformation("Initialising interactive shell session (disabling echo, flattening prompt).");
+
+            _shell.WriteLine("stty -echo 2>/dev/null; export PS1=''; unset PROMPT_COMMAND; bind 'set enable-bracketed-paste off' 2>/dev/null");
+
+            // Give the shell a moment to process the setup line; its own output
+            // isn't of interest, so just discard whatever lands in that window.
+            await Task.Delay(400, cancellationToken);
+            lock (_bufferLock) _buffer.Clear();
+        }
+
+        private async Task ReadLoopAsync()
+        {
+            // Read raw bytes directly off the ShellStream rather than wrapping it in
+            // a StreamReader. StreamReader does its own internal buffering: a single
+            // ReadAsync call can silently pull more bytes off the underlying stream
+            // than we asked for and decode them into its private buffer, handing us
+            // back only part of it. On the next loop iteration, _shell.DataAvailable
+            // correctly reports nothing new on the wire (it already got consumed) —
+            // but leftover decoded text, potentially including the completion marker
+            // for the command in flight, sits trapped in the StreamReader forever,
+            // and the loop goes to sleep waiting for data that already arrived. Large
+            // bursts of output (e.g. an `ls` over many files) hit this every time.
+            var byteBuf = new byte[4096];
+            var charBuf = new char[8192];
+
+            try
+            {
+                while (!_readerCts.IsCancellationRequested)
+                {
+                    if (_shell.DataAvailable)
+                    {
+                        int bytesRead = await _shell.ReadAsync(byteBuf, 0, byteBuf.Length, _readerCts.Token);
+                        if (bytesRead <= 0)
+                        {
+                            await Task.Delay(30, _readerCts.Token);
+                            continue;
+                        }
+
+                        int charsDecoded = _utf8Decoder.GetChars(byteBuf, 0, bytesRead, charBuf, 0, flush: false);
+                        if (charsDecoded == 0)
+                            continue;
+
+                        var text = AnsiEscapeRegex.Replace(new string(charBuf, 0, charsDecoded), string.Empty);
+                        OnTextReceived(text);
+                    }
+                    else
+                    {
+                        await Task.Delay(30, _readerCts.Token);
+                    }
+                }
+            }
+            catch (OperationCanceledException) { /* expected on dispose */ }
+            catch (SshConnectionException ex)
+            {
+                _logger.LogWarning(ex, "Interactive shell lost its connection.");
+                FailPendingCommand(ex);
+                await _onConnectionLost(ex);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Interactive shell reader loop faulted.");
+                // Not a recognised connection-loss error, but the reader is dead
+                // either way — don't leave a caller waiting on it forever.
+                FailPendingCommand(ex);
+            }
+        }
+
+        /// <summary>
+        /// Fails whatever command is currently awaiting completion, if any. Used
+        /// whenever the reader loop or a write to the shell dies unexpectedly, so
+        /// the caller gets an immediate, specific exception instead of waiting out
+        /// the full command timeout.
+        /// </summary>
+        private void FailPendingCommand(Exception ex)
+        {
+            lock (_bufferLock)
+            {
+                _pendingCompletion?.TrySetException(ex);
+                _pendingCompletion = null;
+                _pendingMarkerRegex = null;
+            }
+        }
+
+        private void OnTextReceived(string text)
+        {
+            lock (_bufferLock)
+            {
+                _buffer.Append(text);
+                _lastDataReceivedUtc = DateTime.UtcNow;
+
+                if (_pendingMarkerRegex is null)
+                {
+                    // Nobody is waiting on a command right now, so this is an
+                    // asynchronous echo rather than a command's output.
+                    var unsolicited = _buffer.ToString();
+                    _buffer.Clear();
+                    if (!string.IsNullOrWhiteSpace(unsolicited))
+                        AsyncOutputReceived?.Invoke(unsolicited);
+                    return;
+                }
+
+                var match = _pendingMarkerRegex.Match(_buffer.ToString(), _searchStartIndex);
+                if (!match.Success)
+                {
+                    _searchStartIndex = Math.Max(0, _buffer.Length - MarkerSplitMargin);
+                    return; // marker hasn't fully arrived yet - keep buffering
+                }
+
+                var full = _buffer.ToString();
+                var output = full[..match.Index];
+                var remainder = full[(match.Index + match.Length)..];
+
+                _buffer.Clear();
+                _buffer.Append(remainder);
+                _searchStartIndex = 0;
+
+                var exitCode = int.TryParse(match.Groups[1].Value, out var rc) ? rc : -1;
+
+                var tcs = _pendingCompletion;
+                _pendingCompletion = null;
+                _pendingMarkerRegex = null;
+
+                tcs?.TrySetResult((output, exitCode));
+            }
+        }
 
         /// <summary>
         /// Rewrites a bare "sudo ..." command to pipe the given password in via
-        /// `sudo -S`, the same technique the deployment methods already use,
-        /// so it never blocks on sudo's own tty password prompt. Commands that
-        /// already supply their own stdin (a pipe, or an explicit -S) are left
-        /// untouched. The password is only ever used to build the text sent to
-        /// the shell — it is never logged.
+        /// `sudo -S`, the same technique the deployment methods elsewhere in this
+        /// service already use, so it never blocks on sudo's own tty password
+        /// prompt. Commands that already supply their own stdin (a pipe, or an
+        /// explicit -S) are left untouched. The password only ever exists in the
+        /// text sent to the shell — it is never logged or returned.
         /// </summary>
         private static string ApplySudoPasswordIfNeeded(string command, string? password)
         {
@@ -233,101 +383,15 @@ namespace SubControlMAUI.Services
         }
 
         /// <summary>
-        /// Disables local echo and flattens the prompt so command boundaries can be
-        /// detected purely from injected markers. Must be called once before the
-        /// first <see cref="ExecuteAsync"/>.
-        /// </summary>
-        public async Task InitializeAsync(CancellationToken cancellationToken = default)
-        {
-            _logger.LogInformation("Initialising interactive shell session (disabling echo, flattening prompt).");
-
-            _shell.WriteLine("stty -echo 2>/dev/null; export PS1=''; unset PROMPT_COMMAND; bind 'set enable-bracketed-paste off' 2>/dev/null");
-
-            // Give the shell a moment to process the setup line; its own output
-            // isn't of interest, so just discard whatever lands in that window.
-            await Task.Delay(400, cancellationToken);
-            lock (_bufferLock) _buffer.Clear();
-        }
-
-        private async Task ReadLoopAsync()
-        {
-            var charBuf = new char[8192];
-            try
-            {
-                while (!_readerCts.IsCancellationRequested)
-                {
-                    if (_shell.DataAvailable)
-                    {
-                        int read = await _reader.ReadAsync(charBuf, 0, charBuf.Length);
-                        if (read <= 0)
-                        {
-                            continue;
-                        }
-
-                        var text = AnsiEscapeRegex.Replace(new string(charBuf, 0, read), string.Empty);
-                        OnTextReceived(text);
-                    }
-                    else
-                    {
-                        await Task.Delay(30, _readerCts.Token);
-                    }
-                }
-            }
-            catch (OperationCanceledException) { /* expected on dispose */ }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Interactive shell reader loop faulted.");
-            }
-        }
-
-        private void OnTextReceived(string text)
-        {
-            lock (_bufferLock)
-            {
-                _buffer.Append(text);
-                _lastDataReceivedUtc = DateTime.UtcNow;
-
-                if (_pendingMarkerRegex is null)
-                {
-                    // Nobody is waiting on a command right now, so this is an
-                    // asynchronous echo rather than a command's output.
-                    var unsolicited = _buffer.ToString();
-                    _buffer.Clear();
-                    if (!string.IsNullOrWhiteSpace(unsolicited))
-                        AsyncOutputReceived?.Invoke(unsolicited);
-                    return;
-                }
-
-                var match = _pendingMarkerRegex.Match(_buffer.ToString(), _searchStartIndex);
-                if (!match.Success)
-                {
-                    _searchStartIndex = Math.Max(0, _buffer.Length - MarkerSplitMargin);
-                    return; // marker hasn't fully arrived yet - keep buffering
-                }
-
-                var full = _buffer.ToString();
-                var output = full[..match.Index];
-                var remainder = full[(match.Index + match.Length)..];
-
-                _buffer.Clear();
-                _buffer.Append(remainder);
-                _searchStartIndex = 0;
-
-                var exitCode = int.TryParse(match.Groups[1].Value, out var rc) ? rc : -1;
-
-                var tcs = _pendingCompletion;
-                _pendingCompletion = null;
-                _pendingMarkerRegex = null;
-
-                tcs?.TrySetResult((output, exitCode));
-            }
-        }
-
-        /// <summary>
         /// Runs a command in this persistent shell and returns its stdout, stderr
         /// (read back separately, see class remarks) and exit code. Commands are
         /// serialised — a shell can only run one thing at a time.
         /// </summary>
+        /// <param name="password">
+        /// If supplied and <paramref name="command"/> is a bare `sudo ...` call,
+        /// it is piped into `sudo -S` so the command never blocks on a tty
+        /// password prompt. Pass the session's own SSH password for this.
+        /// </param>
         public async Task<SshCommandResult> ExecuteAsync(
             string command,
             string? password = null,
@@ -350,12 +414,25 @@ namespace SubControlMAUI.Services
                 }
 
                 var started = DateTime.UtcNow;
-                _logger.LogDebug("Executing interactive command: {Command}", command); // never log executionCommand - it may contain the password
+                _logger.LogDebug("Executing interactive command: {Command}", command); // never log the password-bearing rewritten form
 
                 var executionCommand = ApplySudoPasswordIfNeeded(command, password);
 
-                _shell.WriteLine($"{{ {executionCommand} ; }} 2>\"{stderrFile}\"");
-                _shell.WriteLine($"__rc=$?; echo \"{MarkerPrefix}{marker}:$__rc\"");
+                // stdout and stderr share one pty stream, so stderr is redirected to
+                // a side file on the remote host and read back separately afterwards
+                // rather than being interleaved into the marker-delimited output.
+                try
+                {
+                    _shell.WriteLine($"{{ {executionCommand} ; }} 2>\"{stderrFile}\"");
+                    _shell.WriteLine($"__rc=$?; echo \"{MarkerPrefix}{marker}:$__rc\"");
+                }
+                catch (SshConnectionException ex)
+                {
+                    lock (_bufferLock) { _pendingCompletion = null; _pendingMarkerRegex = null; }
+                    _logger.LogWarning(ex, "SSH connection lost while sending command: {Command}", command);
+                    await _onConnectionLost(ex);
+                    throw;
+                }
 
                 (string Output, int ExitCode) result;
 
@@ -368,6 +445,12 @@ namespace SubControlMAUI.Services
                 try
                 {
                     result = await tcs.Task;
+                }
+                catch (SshConnectionException ex)
+                {
+                    lock (_bufferLock) { _pendingCompletion = null; _pendingMarkerRegex = null; }
+                    _logger.LogWarning(ex, "Interactive command aborted - SSH connection lost: {Command}", command);
+                    throw;
                 }
                 catch (OperationCanceledException)
                 {
@@ -388,6 +471,8 @@ namespace SubControlMAUI.Services
 
                 var duration = DateTime.UtcNow - started;
 
+                // Cheap file read/delete over the stateless channel; doesn't need
+                // to preserve shell state, so it doesn't need to run in-session.
                 var stderrRead = await _readSideChannel(
                     $"cat \"{stderrFile}\" 2>/dev/null; rm -f \"{stderrFile}\"",
                     cancellationToken);
@@ -396,9 +481,17 @@ namespace SubControlMAUI.Services
                 var stderr = stderrRead.StdOut.TrimEnd('\r', '\n');
 
                 if (result.ExitCode == 0)
-                    _logger.LogInformation("Interactive command succeeded in {Duration:N0}ms: {Command}", duration.TotalMilliseconds, command);
+                {
+                    _logger.LogInformation(
+                        "Interactive command succeeded in {Duration:N0}ms: {Command}",
+                        duration.TotalMilliseconds, command);
+                }
                 else
-                    _logger.LogWarning("Interactive command exited {ExitCode} in {Duration:N0}ms: {Command} | stderr: {StdErr}", result.ExitCode, duration.TotalMilliseconds, command, stderr);
+                {
+                    _logger.LogWarning(
+                        "Interactive command exited {ExitCode} in {Duration:N0}ms: {Command} | stderr: {StdErr}",
+                        result.ExitCode, duration.TotalMilliseconds, command, stderr);
+                }
 
                 return new SshCommandResult(command, stdout, stderr, result.ExitCode, duration);
             }
@@ -420,16 +513,11 @@ namespace SubControlMAUI.Services
                 _pendingMarkerRegex = null;
             }
 
-            _reader.Dispose();
             _shell.Dispose();
             _readerCts.Dispose();
             _commandLock.Dispose();
         }
     }
-
-
-
-
 
     /// <summary>
     /// Manages an SSH connection to a Raspberry Pi (or any Linux host).
@@ -452,6 +540,23 @@ namespace SubControlMAUI.Services
 
         // ── Interactive (stateful) shell ────────────────────────────────────────
         private SshInteractiveSession? _interactiveSession;
+
+        // ── Unexpected connection loss ──────────────────────────────────────────
+        // 0 = healthy/not-yet-handled, 1 = already cleaned up for the current
+        // connection. Guards against firing cleanup/the event twice when both a
+        // command's exec channel and the interactive session's reader notice the
+        // same drop at roughly the same time.
+        private int _connectionLostHandled;
+
+        /// <summary>
+        /// Raised when the SSH connection is lost unexpectedly (as opposed to via
+        /// a deliberate call to <see cref="DisconnectAsync"/>) — e.g. the network
+        /// drops, the remote host reboots, or the session is otherwise killed
+        /// server-side. By the time this fires, clients and the interactive shell
+        /// have already been torn down; <see cref="IsConnected"/> is false and
+        /// <see cref="ConnectAsync"/> can be called again immediately.
+        /// </summary>
+        public event Action<Exception>? ConnectionLost;
 
         // ── Configuration ───────────────────────────────────────────────────────
         public string Host { get; private set; } = string.Empty;
@@ -488,6 +593,7 @@ namespace SubControlMAUI.Services
                 Host = host;
                 Username = username;
                 Port = port;
+                Interlocked.Exchange(ref _connectionLostHandled, 0);
 
                 _logger.LogInformation("Connecting to {Username}@{Host}:{Port} (password auth)…", username, host, port);
 
@@ -541,6 +647,7 @@ namespace SubControlMAUI.Services
                 Host = host;
                 Username = username;
                 Port = port;
+                Interlocked.Exchange(ref _connectionLostHandled, 0);
 
                 _logger.LogInformation("Connecting to {Username}@{Host}:{Port} (key auth: {KeyPath})…",
                     username, host, port, privateKeyPath);
@@ -578,6 +685,11 @@ namespace SubControlMAUI.Services
         /// <summary>Gracefully disconnect both SSH and SFTP clients.</summary>
         public async Task DisconnectAsync()
         {
+            // This is a deliberate disconnect, not an unexpected drop - mark it
+            // handled up front so nothing racing in from the old connection can
+            // fire ConnectionLost for it.
+            Interlocked.Exchange(ref _connectionLostHandled, 1);
+
             // Tear down the interactive shell first — it depends on the SSH
             // client underneath it and must not outlive it.
             await CloseInteractiveSessionAsync();
@@ -597,6 +709,42 @@ namespace SubControlMAUI.Services
             finally
             {
                 _connectionLock.Release();
+            }
+        }
+
+        /// <summary>
+        /// Shared cleanup for an unexpected connection loss, called from wherever
+        /// it's first detected (a stateless command's exec channel, or the
+        /// interactive session's reader/writer). Safe to call more than once —
+        /// only the first caller actually does anything and raises
+        /// <see cref="ConnectionLost"/>. Never throws.
+        /// </summary>
+        private async Task HandleConnectionLostAsync(Exception ex)
+        {
+            if (Interlocked.Exchange(ref _connectionLostHandled, 1) == 1)
+                return; // another caller already handled this drop
+
+            _logger.LogWarning(ex, "SSH connection to {Host} was lost unexpectedly.", Host);
+
+            try
+            {
+                await CloseInteractiveSessionAsync();
+            }
+            catch (Exception cleanupEx)
+            {
+                _logger.LogDebug(cleanupEx, "Error while closing interactive session during connection-loss cleanup.");
+            }
+
+            DisposeClients();
+
+            try
+            {
+                ConnectionLost?.Invoke(ex);
+            }
+            catch (Exception handlerEx)
+            {
+                // A subscriber's handler misbehaving shouldn't affect our own state.
+                _logger.LogError(handlerEx, "A ConnectionLost handler threw.");
             }
         }
 
@@ -650,13 +798,10 @@ namespace SubControlMAUI.Services
             }
             catch (SshConnectionException ex)
             {
-                _logger.LogWarning(ex, "SSH connection lost while executing {Command}", command);
-
-                DisposeClients(); 
-
+                _logger.LogWarning(ex, "SSH connection lost while executing command: {Command}", command);
+                await HandleConnectionLostAsync(ex);
                 throw;
             }
-
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Command threw an exception: {Command}", command);
@@ -729,7 +874,7 @@ namespace SubControlMAUI.Services
                 // headroom for large one-shot command output.
                 const int shellStreamBufferSize = 1024 * 1024;
                 var shell = _sshClient!.CreateShellStream("xterm", 200, 50, 800, 600, shellStreamBufferSize);
-                var session = new SshInteractiveSession(shell, _logger, ExecuteCommandAsync);
+                var session = new SshInteractiveSession(shell, _logger, ExecuteCommandAsync, HandleConnectionLostAsync);
                 session.AsyncOutputReceived += text => InteractiveAsyncOutputReceived?.Invoke(text);
 
                 await session.InitializeAsync(cancellationToken);
@@ -751,6 +896,11 @@ namespace SubControlMAUI.Services
         /// exec channel every time and therefore forgets everything (e.g. a
         /// preceding `cd`) between calls.
         /// </summary>
+        /// <param name="password">
+        /// If supplied and <paramref name="command"/> is a bare `sudo ...` call,
+        /// it's piped into `sudo -S` so the command never blocks waiting on a tty
+        /// password prompt that this channel can't answer.
+        /// </param>
         public async Task<SshCommandResult> ExecuteInteractiveCommandAsync(
             string command,
             string? password = null,
@@ -1506,6 +1656,68 @@ namespace SubControlMAUI.Services
                                "echo '=== Memory ===' && free -h && " +
                                "echo '=== Disk ===' && df -h /";
             return await ExecuteCommandAsync(cmd, cancellationToken);
+        }
+
+        /// <summary>
+        /// Lists the regular files directly inside <paramref name="folderPath"/> on the
+        /// remote host (non-recursive), newest first by modification time.
+        /// </summary>
+        /// <exception cref="DirectoryNotFoundException">The folder doesn't exist on the remote host.</exception>
+        public async Task<IReadOnlyList<RemoteLogFile>> ListLogFilesAsync(
+            string folderPath,
+            CancellationToken cancellationToken = default)
+        {
+            EnsureConnected();
+
+            if (string.IsNullOrWhiteSpace(folderPath))
+                throw new ArgumentException("Folder path must not be empty.", nameof(folderPath));
+
+            var trimmed = folderPath.TrimEnd('/');
+            if (trimmed.Length == 0)
+                trimmed = "/";
+
+            _logger.LogInformation("Listing log files in {Folder}", trimmed);
+
+            var dirCheck = await ExecuteCommandAsync($"test -d \"{trimmed}\" && echo yes || echo no", cancellationToken);
+            if (dirCheck.StdOut.Trim() != "yes")
+            {
+                _logger.LogWarning("Log folder does not exist on {Host}: {Folder}", Host, trimmed);
+                throw new DirectoryNotFoundException($"Folder not found on {Host}: {trimmed}");
+            }
+
+            // -printf is a GNU find extension; present on Raspberry Pi OS / Debian.
+            // epoch-seconds|size-in-bytes|filename, one per line, newest first.
+            var result = await ExecuteCommandAsync(
+                $"find \"{trimmed}\" -maxdepth 1 -type f -printf '%T@|%s|%f\\n' 2>/dev/null | sort -rn",
+                cancellationToken);
+
+            var files = new List<RemoteLogFile>();
+            foreach (var line in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var parts = line.Split('|', 3);
+                if (parts.Length != 3)
+                    continue;
+
+                if (!double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var epochSeconds))
+                    continue;
+
+                if (!long.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var sizeBytes))
+                    continue;
+
+                var fileName = parts[2];
+
+                files.Add(new RemoteLogFile(
+                    fileName,
+                    $"{trimmed}/{fileName}",
+                    sizeBytes,
+                    DateTimeOffset.FromUnixTimeSeconds((long)epochSeconds).UtcDateTime));
+            }
+
+            _logger.LogInformation("Found {Count} file(s) in {Folder}", files.Count, trimmed);
+
+            // Already newest-first courtesy of `sort -rn`, but don't rely on the
+            // remote shell's sort semantics matching ours — re-sort locally too.
+            return files.OrderByDescending(f => f.ModifiedUtc).ToList();
         }
 
         // ── Private helpers ──────────────────────────────────────────────────────

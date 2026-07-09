@@ -1,215 +1,590 @@
-﻿using CommunityToolkit.Mvvm.ComponentModel;
+﻿using CommunityToolkit.Maui.Storage;
+using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.Logging;
-using SubControlMAUI.Messages;
-using SubControlMAUI.Model;
 using SubControlMAUI.Services;
 using System;
 using System.Collections.Generic;
-using System.Globalization;
-using System.Net;
-using System.Text;
+using System.Collections.ObjectModel;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace SubControlMAUI.ViewModels
 {
-    public partial class LogsViewModel : BaseViewModel
+    /// <summary>
+    /// Display-friendly wrapper around a <see cref="RemoteLogFile"/> for binding
+    /// in the file picker — keeps formatting concerns (human file size, local
+    /// time) out of the service layer's plain data record.
+    /// </summary>
+    public sealed class LogFileEntry
     {
-        SQLiteService _sqliteService;
-        IAlertService _alertService;
-        TcpSocketService _tCPService;
-        IMessenger _messenger;
-        ILogger<LogsViewModel> _logger;
+        public RemoteLogFile Source { get; }
+        public string FileName => Source.FileName;
+        public string FullPath => Source.FullPath;
+        public string DisplayName { get; }
+
+        public LogFileEntry(RemoteLogFile source)
+        {
+            Source = source;
+            DisplayName = $"{source.FileName}   ·   {FormatSize(source.SizeBytes)}   ·   {source.ModifiedUtc.ToLocalTime():g}";
+        }
+
+        private static string FormatSize(long bytes)
+        {
+            string[] units = { "B", "KB", "MB", "GB", "TB" };
+            double size = bytes;
+            int unit = 0;
+
+            while (size >= 1024 && unit < units.Length - 1)
+            {
+                size /= 1024;
+                unit++;
+            }
+
+            return unit == 0 ? $"{size:0} {units[unit]}" : $"{size:0.#} {units[unit]}";
+        }
+    }
+
+    /// <summary>
+    /// Browse, download, and tail log files on the Raspberry Pi.
+    ///
+    /// This page owns its own connect/disconnect controls — it doesn't assume
+    /// the Console page has already connected, though it will happily reflect
+    /// and reuse an existing connection via the shared <see cref="SshService"/>
+    /// singleton if one is already up when the page appears.
+    ///
+    /// Carries forward the lessons learned building the Console page:
+    ///   - Leaving the page (Back button, OS swipe-back, Shell popping it for
+    ///     any other reason) disconnects and tears down resources exactly the
+    ///     same way the Console page does: an active tail is stopped and any
+    ///     in-flight download cancelled *before* the shared connection is torn
+    ///     down (both depend on it being alive), then event subscriptions on
+    ///     the longer-lived SshService are removed deterministically — never
+    ///     left dangling on a dead view model.
+    ///   - Every disposable/cancellable field is null-checked before use and
+    ///     nulled out immediately after being torn down, so cleanup is safe to
+    ///     call more than once and never touches an already-disposed object.
+    ///   - The tail output uses the same single, read-only, auto-growing Editor
+    ///     pattern as the Console page (multi-line select/copy, no per-row
+    ///     CollectionView overhead) and is cleared on the way out so a large
+    ///     accumulated buffer doesn't cost layout time on the next visit.
+    /// </summary>
+    public partial class LogsViewModel : BaseViewModel, IDisposable
+    {
+        private const int MaxTailLines = 2000;
+
+        // Reasonable Raspberry Pi OS defaults for the quick-fill buttons. These
+        // just pre-fill an editable Entry, so getting them exactly right isn't
+        // critical — the user can always type or edit the path directly.
+        private const string DotNetAppDefaultFolder = "/opt/subconsole/logs";
+        private const string MediaMtxDefaultFolder = "/opt/mediamtx";
+        private const string FfmpegDefaultFolder = "/tmp"; // ffmpeg has no dedicated log directory by default
+        private const string SystemDefaultFolder = "/var/log";
+
+        private readonly SQLiteService _sqliteService;
+        private readonly SshService _sshService;
+        private readonly IAlertService _alertService;
+        private readonly ILogger<LogsViewModel> _logger;
+
+        private readonly Queue<string> _tailLines = new();
+        private SshStreamSession? _tailSession;
+        private CancellationTokenSource? _downloadCts;
+
+        private bool _disposed;
+
+        public LogsViewModel(
+            SQLiteService sqliteService,
+            SshService sshService,
+            IAlertService alertService,
+            ILogger<LogsViewModel> logger)
+        {
+            Title = "Logs";
+
+            _sqliteService = sqliteService;
+            _sshService = sshService;
+            _alertService = alertService;
+            _logger = logger;
+
+            LogFiles = new ObservableCollection<LogFileEntry>();
+
+            Host = _sqliteService.config?.IPAddress ?? string.Empty;
+        }
+
+        // ── Connection properties ───────────────────────────────────────────────
 
         [ObservableProperty]
         [NotifyPropertyChangedFor(nameof(IsNotConnected))]
-        bool isConnected = false;
+        [NotifyCanExecuteChangedFor(nameof(ConnectCommand))]
+        [NotifyCanExecuteChangedFor(nameof(DisconnectCommand))]
+        [NotifyCanExecuteChangedFor(nameof(RefreshLogFilesCommand))]
+        [NotifyCanExecuteChangedFor(nameof(StartTailCommand))]
+        [NotifyCanExecuteChangedFor(nameof(DownloadLogCommand))]
+        private bool isConnected;
 
         public bool IsNotConnected => !IsConnected;
 
         [ObservableProperty]
-        string statusText = "";
+        private string host = string.Empty;
 
-        public LogsViewModel(SQLiteService sQLiteService, IAlertService alertService, TcpSocketService tCPService, IMessenger messenger,
-        ILogger<LogsViewModel> logger) 
+        [ObservableProperty]
+        [NotifyCanExecuteChangedFor(nameof(ConnectCommand))]
+        private string userName = "pi";
+
+        [ObservableProperty]
+        [NotifyCanExecuteChangedFor(nameof(ConnectCommand))]
+        private string password = "1234";
+
+        [ObservableProperty]
+        private string statusText = string.Empty;
+
+        // ── Log browsing properties ─────────────────────────────────────────────
+
+        [ObservableProperty]
+        [NotifyCanExecuteChangedFor(nameof(RefreshLogFilesCommand))]
+        private string logFolderPath = string.Empty;
+
+        [ObservableProperty]
+        [NotifyCanExecuteChangedFor(nameof(DownloadLogCommand))]
+        [NotifyCanExecuteChangedFor(nameof(StartTailCommand))]
+        private LogFileEntry? selectedLogFile;
+
+        [ObservableProperty]
+        [NotifyCanExecuteChangedFor(nameof(DownloadLogCommand))]
+        private string downloadDestinationFolder = string.Empty;
+
+        [ObservableProperty]
+        [NotifyCanExecuteChangedFor(nameof(StartTailCommand))]
+        [NotifyCanExecuteChangedFor(nameof(StopTailCommand))]
+        [NotifyCanExecuteChangedFor(nameof(RefreshLogFilesCommand))]
+        [NotifyCanExecuteChangedFor(nameof(DownloadLogCommand))]
+        private bool isTailing;
+
+        /// <summary>The full tail output as a single block of text, newest line last.</summary>
+        [ObservableProperty]
+        private string tailOutput = string.Empty;
+
+        public ObservableCollection<LogFileEntry> LogFiles { get; }
+
+        // ── Connection commands ──────────────────────────────────────────────────
+
+        [RelayCommand(CanExecute = nameof(CanConnect))]
+        private async Task Connect()
         {
-            Title = "Logs";
-            _sqliteService = sQLiteService;
-            _alertService = alertService;
-            _messenger = messenger;
-            _logger = logger;
- 
-            _tCPService = tCPService;
+            IsBusy = true;
+            StatusText = $"Connecting to {Host}…";
+            _logger.LogInformation("Attempting SSH connection to {Host} as {User}", Host, UserName);
 
-
-            _messenger.Register<TcpIsConnected>(this, (r, m) =>
-            {
-
-                MainThread.BeginInvokeOnMainThread(() =>
-                {
-                    IsConnected = m.Value;
-
-                });
-
-            });
-        }
-
-        [RelayCommand]
-        private async Task GoBack()
-        {
-            await Shell.Current.GoToAsync("..");
-        }
-
-
-        [ObservableProperty]
-        string inputIPAddress;
-
-        [ObservableProperty]
-        string port;
-
-        [ObservableProperty]
-        string upCommand;
-
-        [ObservableProperty]
-        string downCommand;
-
-        [ObservableProperty]
-        string leftCommand;
-
-        [ObservableProperty]
-        string rightCommand;
-
-        [RelayCommand]
-        async Task Save()
-        {
-            if (! await ValidateSettings())
-            {
-                await _alertService.ShowAlertAsync("Error", $"Settings Input Is Incorrect", "OK");
-                return;
-            }
             try
             {
-                _sqliteService.config.IPAddress = InputIPAddress;
-                _sqliteService.config.Port = Port;
+                await _sshService.ConnectAsync(host: Host, username: UserName, password: Password);
 
-                int result = await _sqliteService.SaveConfigAsync(true);
-                if (result != 1)
-                {
-                    StatusText = $"Error Loading Settings - Settings Not Saved";
-                 //   await _alertService.ShowAlertAsync("Error", $"Error Loading Settings - Settings Not Saved", "OK");
-                }
-                else
-                {
-                    StatusText = $"Settings Saved";
-                  //  await _alertService.ShowAlertAsync("Success", $"Settings Saved", "OK");
+                IsConnected = true;
+                StatusText = $"Connected to {Host}";
+                _logger.LogInformation("SSH connection to {Host} established", Host);
 
+                // Idempotent: safe even if OnAppearing already subscribed for an
+                // existing connection made elsewhere (e.g. the Console page).
+                _sshService.ConnectionLost -= OnConnectionLost;
+                _sshService.ConnectionLost += OnConnectionLost;
+
+
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "SSH connection to {Host} failed", Host);
+                StatusText = "Connection failed";
+                await _alertService.ShowAlertAsync("Connection Failed", ex.Message, "OK");
+            }
+            finally
+            {
+                IsBusy = false;
+
+                RefreshLogFilesCommand.NotifyCanExecuteChanged();
+                StartTailCommand.NotifyCanExecuteChanged();
+                DownloadLogCommand.NotifyCanExecuteChanged();
+                ConnectCommand.NotifyCanExecuteChanged();
+                DisconnectCommand.NotifyCanExecuteChanged();
+
+            }
+        }
+
+        private bool CanConnect() =>
+            !IsBusy &&
+            !IsConnected &&
+            !string.IsNullOrWhiteSpace(Host) &&
+            !string.IsNullOrWhiteSpace(UserName) &&
+            !string.IsNullOrWhiteSpace(Password);
+
+        [RelayCommand(CanExecute = nameof(CanDisconnect))]
+        private async Task Disconnect()
+        {
+            // Both depend on the connection being alive, so tear them down
+            // before the connection itself goes away.
+            await StopTailIfActiveAsync();
+            _downloadCts?.Cancel();
+
+            try
+            {
+                await _sshService.DisconnectAsync();
+                _logger.LogInformation("Disconnected from {Host}", Host);
+                StatusText = "Disconnected";
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error while disconnecting from {Host}", Host);
+                StatusText = "Disconnect error";
+            }
+            finally
+            {
+                IsConnected = false;
+            }
+        }
+
+        private bool CanDisconnect() => IsConnected;
+
+        // ── Folder quick-fill ────────────────────────────────────────────────
+
+        [RelayCommand]
+        private void SelectDotNetFolder() => LogFolderPath = DotNetAppDefaultFolder;
+
+        [RelayCommand]
+        private void SelectMediaMtxFolder() => LogFolderPath = MediaMtxDefaultFolder;
+
+        [RelayCommand]
+        private void SelectFfmpegFolder() => LogFolderPath = FfmpegDefaultFolder;
+
+        [RelayCommand]
+        private void SelectSystemFolder() => LogFolderPath = SystemDefaultFolder;
+
+        // ── Listing ──────────────────────────────────────────────────────────
+
+        [RelayCommand(CanExecute = nameof(CanRefreshLogFiles))]
+        private async Task RefreshLogFiles()
+        {
+            if (string.IsNullOrWhiteSpace(LogFolderPath))
+                return;
+
+            IsBusy = true;
+            StatusText = $"Listing files in {LogFolderPath}…";
+            LogFiles.Clear();
+            SelectedLogFile = null;
+
+            _logger.LogInformation("Refreshing log file list for {Folder}", LogFolderPath);
+
+            try
+            {
+                var files = await _sshService.ListLogFilesAsync(LogFolderPath);
+
+                foreach (var file in files)
+                    LogFiles.Add(new LogFileEntry(file));
+
+                StatusText = LogFiles.Count > 0
+                    ? $"Found {LogFiles.Count} file(s)"
+                    : "No files found in this folder";
+
+                // Files come back newest-first already.
+                SelectedLogFile = LogFiles.FirstOrDefault();
+
+
+
+                _logger.LogInformation("Listed {Count} log file(s) in {Folder}", LogFiles.Count, LogFolderPath);
+            }
+            catch (DirectoryNotFoundException ex)
+            {
+                _logger.LogWarning(ex, "Log folder not found: {Folder}", LogFolderPath);
+                StatusText = "Folder not found";
+                await _alertService.ShowAlertAsync("Folder Not Found", ex.Message, "OK");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to list log files in {Folder}", LogFolderPath);
+                StatusText = "Failed to list files";
+                await _alertService.ShowAlertAsync("Error", ex.Message, "OK");
+            }
+            finally
+            {
+                IsBusy = false;
+
+                RefreshLogFilesCommand.NotifyCanExecuteChanged();
+                StartTailCommand.NotifyCanExecuteChanged();
+                DownloadLogCommand.NotifyCanExecuteChanged();
+            }
+        }
+
+        private bool CanRefreshLogFiles() =>
+            IsConnected && !IsBusy && !IsTailing && !string.IsNullOrWhiteSpace(LogFolderPath);
+
+        // ── Download ─────────────────────────────────────────────────────────
+
+        [RelayCommand]
+        private async Task BrowseDownloadDestination()
+        {
+            try
+            {
+                var result = await FolderPicker.Default.PickAsync(CancellationToken.None);
+
+                if (result.IsSuccessful && result.Folder is not null)
+                {
+                    DownloadDestinationFolder = result.Folder.Path;
+                    _logger.LogInformation("Download destination set to {Path}", DownloadDestinationFolder);
                 }
             }
             catch (Exception ex)
             {
-                StatusText = $"Error Loading Settings - {ex.Message}";
-                await _alertService.ShowAlertAsync("Error", $"Error Loading Settings - {ex.Message}", "OK");
+                _logger.LogError(ex, "Folder picker error while choosing download destination.");
+                StatusText = "Couldn't choose a destination folder";
+            }
+        }
+
+        [RelayCommand(CanExecute = nameof(CanDownloadLog))]
+        private async Task DownloadLog()
+        {
+            if (SelectedLogFile is null || string.IsNullOrWhiteSpace(DownloadDestinationFolder))
                 return;
+
+            var file = SelectedLogFile;
+            IsBusy = true;
+            StatusText = $"Downloading {file.FileName}…";
+            _logger.LogInformation("Downloading {RemotePath} to {LocalFolder}", file.FullPath, DownloadDestinationFolder);
+
+            _downloadCts = new CancellationTokenSource();
+
+            try
+            {
+                Directory.CreateDirectory(DownloadDestinationFolder);
+                var localPath = Path.Combine(DownloadDestinationFolder, file.FileName);
+
+                await _sshService.DownloadFileAsync(file.FullPath, localPath, _downloadCts.Token);
+
+                StatusText = $"Downloaded to {localPath}";
+                _logger.LogInformation("Download complete: {LocalPath}", localPath);
+            }
+            catch (OperationCanceledException)
+            {
+                StatusText = "Download cancelled";
+                _logger.LogWarning("Download cancelled: {RemotePath}", file.FullPath);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to download {RemotePath}", file.FullPath);
+                StatusText = "Download failed";
+                await _alertService.ShowAlertAsync("Download Failed", ex.Message, "OK");
+            }
+            finally
+            {
+                IsBusy = false;
+                _downloadCts?.Dispose();
+                _downloadCts = null;
             }
         }
+
+        private bool CanDownloadLog() =>
+            IsConnected && !IsBusy &&
+            SelectedLogFile is not null &&
+            !string.IsNullOrWhiteSpace(DownloadDestinationFolder);
+
+        // ── Tail ─────────────────────────────────────────────────────────────
+
+        [RelayCommand(CanExecute = nameof(CanStartTail))]
+        private async Task StartTail()
+        {
+            if (SelectedLogFile is null)
+                return;
+
+            // Defensive: shouldn't normally have a session already, but never
+            // start a second one on top of a leftover from a prior selection.
+            await StopTailIfActiveAsync();
+
+            ClearTail();
+            var file = SelectedLogFile;
+            AddTailLine($"Tailing {file.FullPath}…", TerminalLineKind.Info);
+            _logger.LogInformation("Starting tail of {RemotePath}", file.FullPath);
+
+            _tailSession = _sshService.TailLog(file.FullPath);
+            _tailSession.LineReceived += OnTailLineReceived;
+            IsTailing = true;
+        }
+
+        private bool CanStartTail() =>
+            IsConnected && !IsBusy && !IsTailing && SelectedLogFile is not null;
+
+
+
+        [RelayCommand(CanExecute = nameof(CanStopTail))]
+        private async Task StopTail()
+        {
+            await StopTailIfActiveAsync();
+            AddTailLine("Stopped tailing.", TerminalLineKind.Info);
+        }
+
+        private bool CanStopTail() => IsTailing;
 
         [RelayCommand]
-        async Task Test()
+        private void ClearTailView() => ClearTail();
+
+        /// <summary>
+        /// Stops and disposes the active tail session, if any. Always null-checks
+        /// before touching it and nulls it out immediately after, so this is safe
+        /// to call speculatively (e.g. before starting a new tail) and safe to
+        /// call more than once during teardown.
+        /// </summary>
+        private async Task StopTailIfActiveAsync()
         {
+            if (_tailSession is null)
+                return;
 
-            
-          //      await _tCPService.SendAsync("Test Command");
-            //await _tCPService.SendMessageFromIPAddressAndPort(IPAddress, Port, "Test Command");
+            _tailSession.LineReceived -= OnTailLineReceived;
 
-        //    await _alertService.ShowAlertAsync("Info", $"Command Sent", "OK");
+            try
+            {
+                await _tailSession.DisposeAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Error disposing tail session (best-effort).");
+            }
 
-
+            _tailSession = null;
+            IsTailing = false;
         }
+
+        private void OnTailLineReceived(string line)
+        {
+            if (_disposed)
+                return;
+
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                if (_disposed)
+                    return;
+
+                AddTailLine(line, TerminalLineKind.Stream);
+            });
+        }
+
+        // ── Navigation ────────────────────────────────────────────────────────
 
         [RelayCommand]
-        async Task ListenerStart()
+        private async Task GoBack()
         {
-        //    await _tCPService.StartAsync(IPAddress, Port);
-            //  await _tCPService.StartTestIPAddressAndPort(IPAddress, Port);
+            if (IsConnected)
+                await Disconnect();
 
-            //     await _tCPService.StartListenerFromIPAddressAndPort(IPAddress, Port);
-
-            //    await _alertService.ShowAlertAsync("Info", $"Listener Started", "OK");
+            await Shell.Current.GoToAsync("..");
         }
 
-        //[RelayCommand]
-        //async Task ListenerStop()
-        //{
-        //    // _tCPService.StopListener();
-
-        //  //  _tCPService.StopAsync();
-
-        //    await _alertService.ShowAlertAsync("Info", $"Listener Stopped", "OK");
-        //}
-
-        private async Task<bool> ValidateSettings()
+        /// <summary>
+        /// Call when the page appears. Reflects whatever connection state the
+        /// shared SshService is already in (e.g. connected from the Console
+        /// page) and (re-)subscribes to connection-loss notifications. Safe to
+        /// call more than once, including after a prior <see cref="Dispose"/> if
+        /// this view model turns out to be reused across page visits.
+        /// </summary>
+        public void OnAppearing()
         {
-            if (string.IsNullOrWhiteSpace(InputIPAddress))
+            _disposed = false;
+
+            IsConnected = _sshService.IsConnected;
+            if (IsConnected)
             {
-                StatusText = $"IP Address Is Empty";
-               // await _alertService.ShowAlertAsync("Error", $"IP Address Is Empty", "OK");
-                return false;
-            }
-            if (string.IsNullOrWhiteSpace(Port))
-            {
-                StatusText = $"Port Is Empty";
-               // await _alertService.ShowAlertAsync("Error", $"Port Is Empty", "OK");
-                return false;
-            }
-            if (string.IsNullOrWhiteSpace(UpCommand))
-            {
-           
-               // await _alertService.ShowAlertAsync("Error", $"Up Command Is Empty", "OK");
-                return false;
-            }
-            if (string.IsNullOrWhiteSpace(DownCommand))
-            {
-                await _alertService.ShowAlertAsync("Error", $"Down Command Is Empty", "OK");
-                return false;
-            }
-            if (string.IsNullOrWhiteSpace(LeftCommand))
-            {
-                await _alertService.ShowAlertAsync("Error", $"Left Command Is Empty", "OK");
-                return false;
-            }
-            if (string.IsNullOrWhiteSpace(RightCommand))
-            {
-                await _alertService.ShowAlertAsync("Error", $"Right Command Is Empty", "OK");
-                return false;
+                // Reflect the actual connected host rather than whatever's
+                // sitting in the (possibly stale, possibly mid-edit) Host entry.
+                Host = _sshService.Host;
+                StatusText = $"Connected to {Host}";
             }
 
-            if (!IPAddress.TryParse(InputIPAddress, out IPAddress ip))
-            {
-                StatusText = $"IP Address Is Invalid";
-               // await _alertService.ShowAlertAsync("Error", $"IP Address Is Invalid", "OK");
-                return false;
-            }
-            int _port;
-            if (!int.TryParse(_sqliteService.config.Port, out _port))
-            {
-                StatusText = $"Port Number Is Invalid";
-            //    await _alertService.ShowAlertAsync("Error", $"Saved Port Is Invalid", "OK");
-                return false;
-            }
-            if (_port < 0 || _port > 65535)
-            {
-                StatusText = $"Port Number Is Out Of Range";
-                await _alertService.ShowAlertAsync("Error", $"Saved Port Is Out Of Range", "OK");
-                return false;
-            }
+            LogFolderPath = DotNetAppDefaultFolder;
 
-            return true;
 
+            // Idempotent, so it doesn't matter whether Connect() on this page
+            // already subscribed for a connection made right here.
+            _sshService.ConnectionLost -= OnConnectionLost;
+            _sshService.ConnectionLost += OnConnectionLost;
+
+            _logger.LogInformation("Logs page appeared. Connected: {IsConnected}", IsConnected);
         }
 
+        private void OnConnectionLost(Exception ex)
+        {
+            if (_disposed)
+                return;
 
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                if (_disposed)
+                    return;
 
+                _logger.LogWarning(ex, "SSH connection to {Host} was lost while viewing logs.", Host);
 
+                IsConnected = false;
+                IsBusy = false;
+                StatusText = "Connection lost";
 
+                // The service has already torn down the tail's ShellStream along
+                // with everything else, so just drop our reference rather than
+                // trying to dispose it again.
+                if (_tailSession is not null)
+                {
+                    _tailSession.LineReceived -= OnTailLineReceived;
+                    _tailSession = null;
+                }
+                IsTailing = false;
+
+                _sshService.ConnectionLost -= OnConnectionLost;
+            });
+        }
+
+        /// <summary>
+        /// Unsubscribes from SshService and clears the tail buffer. Guarded so
+        /// it's safe to call more than once. This alone does not stop a running
+        /// tail or disconnect — call <see cref="Disconnect"/> first if
+        /// <see cref="IsConnected"/> (see GoBack / LogsPage.OnDisappearing for
+        /// the full, correctly-ordered teardown sequence).
+        /// </summary>
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+
+            _disposed = true;
+
+            _downloadCts?.Dispose();
+            _downloadCts = null;
+
+            _sshService.ConnectionLost -= OnConnectionLost;
+
+            // The tail Editor uses AutoSize="TextChanges"; don't pay layout cost
+            // for a large buffer nobody's looking at on the next visit.
+            ClearTail();
+        }
+
+        // ── Private helpers ───────────────────────────────────────────────────
+
+        private void ClearTail()
+        {
+            _tailLines.Clear();
+            TailOutput = string.Empty;
+        }
+
+        private void AddTailLine(string text, TerminalLineKind kind)
+        {
+            _tailLines.Enqueue(FormatTailLine(text, kind));
+
+            while (_tailLines.Count > MaxTailLines)
+                _tailLines.Dequeue();
+
+            TailOutput = string.Join(Environment.NewLine, _tailLines);
+        }
+
+        private static string FormatTailLine(string text, TerminalLineKind kind) => kind switch
+        {
+            TerminalLineKind.Error => $"✗ {text}",
+            TerminalLineKind.Info => $"· {text}",
+            TerminalLineKind.Success => $"✓ {text}",
+            TerminalLineKind.Stream => text,
+            _ => text,
+        };
     }
 }

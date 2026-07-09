@@ -6,107 +6,241 @@
              x:DataType="viewModel:LogsViewModel"
              Title="{Binding Title}"
              Shell.NavBarIsVisible="False">
-    <Grid Padding="10"
-          RowDefinitions="Auto, Auto,Auto,Auto,*,Auto"
-          ColumnDefinitions="*,*">
 
-        <!-- CUSTOM TITLE BAR -->
+    <Grid Padding="12"
+          RowDefinitions="Auto,*"
+          RowSpacing="8">
+
+        <!-- CUSTOM TITLE BAR (fixed, not part of the scrollable body) -->
         <Grid Grid.Row="0"
-              Grid.ColumnSpan="2"
-                  ColumnDefinitions="*,Auto,*"
-                  Margin="0,0,0,10">
+              ColumnDefinitions="Auto,*,Auto">
 
-            <Button Grid.Column="1"
-                        Text="⬅ Back"
-                        FontSize="18"
-                        HorizontalOptions="Start"
-                        VerticalOptions="Center"
-                        Command="{Binding GoBackCommand}" />
+            <Button Grid.Column="0"
+                    Text="⬅ Back"
+                    FontSize="18"
+                    Command="{Binding GoBackCommand}" />
 
-            <Label Grid.Column="0"
-                       Text="{Binding Title}"
-                       FontSize="22"
-                       FontAttributes="Bold"
-                       HorizontalOptions="Start"
-                       VerticalOptions="Center" />
+            <Label Grid.Column="1"
+                   Text="{Binding Title}"
+                   FontSize="22"
+                   FontAttributes="Bold"
+                   HorizontalOptions="Center"
+                   VerticalOptions="Center" />
 
-            <!-- Empty right column to keep title centred -->
-            <Label Grid.Column="2" />
-
+            <Label Grid.Column="2"
+                   FontAttributes="Bold"
+                   VerticalOptions="Center">
+                <Label.Triggers>
+                    <DataTrigger TargetType="Label" Binding="{Binding IsConnected}" Value="True">
+                        <Setter Property="Text" Value="Connected" />
+                        <Setter Property="TextColor" Value="Green" />
+                    </DataTrigger>
+                    <DataTrigger TargetType="Label" Binding="{Binding IsConnected}" Value="False">
+                        <Setter Property="Text" Value="Disconnected" />
+                        <Setter Property="TextColor" Value="Red" />
+                    </DataTrigger>
+                </Label.Triggers>
+            </Label>
         </Grid>
 
+        <!-- SCROLLABLE BODY: everything except the title bar -->
+        <ScrollView Grid.Row="1">
+            <VerticalStackLayout Spacing="8">
 
+                <!-- CONNECTION -->
+                <Border Stroke="Gray"
+                        StrokeThickness="1"
+                        Padding="10">
+                    <Grid RowDefinitions="Auto,Auto"
+                          ColumnDefinitions="Auto,*,Auto,*,Auto"
+                          ColumnSpacing="8"
+                          RowSpacing="8">
 
-        <Label Grid.Row="1"
-                   Margin="0,15,0,15"
-                   FontSize="16">
-            <Label.FormattedText>
-                <FormattedString>
-                    <Span Text="Status: " FontAttributes="Bold"/>
-                    <Span Text="{Binding StatusText}" />
-                </FormattedString>
-            </Label.FormattedText>
-        </Label>
+                        <Label Grid.Row="0" Grid.Column="0"
+                               Text="Host:"
+                               VerticalOptions="Center" />
+                        <Label Grid.Row="0" Grid.Column="1"
+                               Text="{Binding Host}"
+                               FontFamily="Courier New"
+                               VerticalOptions="Center" />
 
-        <Label Text="IP Address:"
-               Grid.Column="0"
-               Grid.Row="2"
-               HorizontalOptions="Start"
-               VerticalOptions="Center"
-               Margin="3"/>
-        <Entry x:Name="ipAddress"
-               IsEnabled="{Binding IsNotConnected}"
-                Grid.Column="1"
-                Grid.Row="2"
-                HeightRequest="40"
-                Placeholder="IP Address"
-               Text="{Binding InputIPAddress}"
-               Margin="3"/>
+                        <Label Grid.Row="1" Grid.Column="0"
+                               Text="User:"
+                               VerticalOptions="Center" />
+                        <Entry Grid.Row="1" Grid.Column="1"
+                               Text="{Binding UserName}"
+                               IsEnabled="{Binding IsNotConnected}" />
 
-        <Label Text="Port:"
-               Grid.Column="0"
-               Grid.Row="3"
-               HorizontalOptions="Start"
-               VerticalOptions="Center"
-               Margin="3"/>
-        <Entry x:Name="port"
-                IsEnabled="{Binding IsNotConnected}"
-                Grid.Column="1"
-                Grid.Row="3"
-                HeightRequest="40"
-                Placeholder="Port"
-               Text="{Binding Port}"
-                Margin="3"/>
+                        <Label Grid.Row="1" Grid.Column="2"
+                               Text="Password:"
+                               VerticalOptions="Center" />
+                        <Entry Grid.Row="1" Grid.Column="3"
+                               Text="{Binding Password}"
+                               IsPassword="True"
+                               IsEnabled="{Binding IsNotConnected}" />
 
+                        <HorizontalStackLayout Grid.Row="1" Grid.Column="4"
+                                               Spacing="6">
+                            <Button Text="Connect"
+                                    Command="{Binding ConnectCommand}" />
+                            <Button Text="Disconnect"
+                                    Command="{Binding DisconnectCommand}" />
+                        </HorizontalStackLayout>
+                    </Grid>
+                </Border>
 
+                <!-- STATUS -->
+                <Label Text="{Binding StatusText}"
+                       FontSize="13"
+                       TextColor="Gray" />
 
-        <ImageButton
-                    Source="{AppThemeBinding Light=light_save.png, Dark=dark_save.png}"
-                    WidthRequest="30"
-                    HeightRequest="30"
-                    BackgroundColor="Transparent"
-            Grid.Row="5"
-            Grid.ColumnSpan="2"
-                Command="{Binding SaveCommand}"
-            IsEnabled="{Binding IsNotBusy}"
-                Margin="0,10,0,0" />
+                <!-- FOLDER SELECTION -->
+                <Border Stroke="Gray"
+                        StrokeThickness="1"
+                        Padding="10">
+                    <VerticalStackLayout Spacing="8">
 
+                        <Label Text="Log Folder"
+                               FontAttributes="Bold"
+                               FontSize="15" />
 
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <Entry Grid.Column="0"
+                                   Placeholder="e.g. /var/log"
+                                   Text="{Binding LogFolderPath}"
+                                   IsEnabled="{Binding IsConnected}"
+                                   FontFamily="Courier New"
+                                   FontSize="13" />
+                            <Button Grid.Column="1"
+                                    Text="Refresh"
+                                    Command="{Binding RefreshLogFilesCommand}" />
+                        </Grid>
 
+                        <ScrollView Orientation="Horizontal">
+                            <HorizontalStackLayout Spacing="8">
+                                <Button Text=".NET App"
+                                        Command="{Binding SelectDotNetFolderCommand}"
+                                        IsEnabled="{Binding IsConnected}" />
+                                <Button Text="MediaMTX"
+                                        Command="{Binding SelectMediaMtxFolderCommand}"
+                                        IsEnabled="{Binding IsConnected}" />
+                                <Button Text="FFmpeg"
+                                        Command="{Binding SelectFfmpegFolderCommand}"
+                                        IsEnabled="{Binding IsConnected}" />
+                                <Button Text="System"
+                                        Command="{Binding SelectSystemFolderCommand}"
+                                        IsEnabled="{Binding IsConnected}" />
+                            </HorizontalStackLayout>
+                        </ScrollView>
 
+                        <Label Text="Log File"
+                               FontAttributes="Bold"
+                               FontSize="15" />
 
-        <!-- BUSY OVERLAY (on top) -->
-        <!-- Busy overlay -->
-        <Grid IsVisible="{Binding IsBusy}"
-      BackgroundColor="#80000000"
-      Grid.RowSpan="6"
-      ZIndex="1">
+                        <Picker Title="Select a log file"
+                                ItemsSource="{Binding LogFiles}"
+                                ItemDisplayBinding="{Binding DisplayName}"
+                                SelectedItem="{Binding SelectedLogFile}"
+                                IsEnabled="{Binding IsConnected}" />
+
+                    </VerticalStackLayout>
+                </Border>
+
+                <!-- DOWNLOAD -->
+                <Border Stroke="Gray"
+                        StrokeThickness="1"
+                        Padding="10">
+                    <VerticalStackLayout Spacing="8">
+
+                        <Label Text="Download"
+                               FontAttributes="Bold"
+                               FontSize="15" />
+
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <Entry Grid.Column="0"
+                                   Placeholder="Destination folder on this device"
+                                   Text="{Binding DownloadDestinationFolder}"
+                                   FontFamily="Courier New"
+                                   FontSize="13" />
+                            <Button Grid.Column="1"
+                                    Text="Browse"
+                                    Command="{Binding BrowseDownloadDestinationCommand}" />
+                        </Grid>
+
+                        <Button Text="Download Selected Log"
+                                Command="{Binding DownloadLogCommand}"
+                                HorizontalOptions="Start" />
+
+                    </VerticalStackLayout>
+                </Border>
+
+                <!-- TAIL CONTROLS -->
+                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto"
+                      ColumnSpacing="8">
+
+                    <Button Grid.Column="0"
+                            Text="Start Tail"
+                            Command="{Binding StartTailCommand}" />
+
+                    <Button Grid.Column="1"
+                            Text="Stop Tail"
+                            Command="{Binding StopTailCommand}" />
+
+                    <Button Grid.Column="2"
+                            Text="Clear"
+                            Command="{Binding ClearTailViewCommand}" />
+
+                    <Label Grid.Column="3"
+                           Text="Tailing…"
+                           TextColor="LimeGreen"
+                           FontAttributes="Bold"
+                           VerticalOptions="Center"
+                           IsVisible="{Binding IsTailing}" />
+                </Grid>
+
+                <Label Text="Tail Output"
+                       FontAttributes="Bold"
+                       FontSize="13"
+                       TextColor="Gray" />
+
+                <!-- TAIL OUTPUT: one read-only, multi-line Editor (not a
+                     per-line CollectionView) so output can be drag-selected
+                     and copied across several lines at once. The Editor grows
+                     to fit its content (AutoSize) and this outer ScrollView is
+                     nudged to the bottom in code-behind whenever it resizes —
+                     see LogsPage.xaml.cs. A fixed HeightRequest keeps it from
+                     fighting the page's own ScrollView for gesture handling. -->
+                <Border Stroke="Gray"
+                        StrokeThickness="1"
+                        Padding="6"
+                        HeightRequest="320">
+                    <ScrollView x:Name="TailScrollView">
+                        <Editor x:Name="TailOutputEditor"
+                                Text="{Binding TailOutput, Mode=OneWay}"
+                                FontFamily="Courier New"
+                                FontSize="12"
+                                IsReadOnly="True"
+                                AutoSize="TextChanges"
+                                BackgroundColor="Transparent"
+                                Placeholder="No output yet. Select a log file and press Start Tail."
+                                HorizontalOptions="Fill" />
+                    </ScrollView>
+                </Border>
+
+            </VerticalStackLayout>
+        </ScrollView>
+
+        <!-- BUSY OVERLAY -->
+        <Grid Grid.RowSpan="2"
+              IsVisible="{Binding IsBusy}"
+              BackgroundColor="#80000000"
+              ZIndex="1">
             <ActivityIndicator IsRunning="{Binding IsBusy}"
-                       IsVisible="{Binding IsBusy}"
-                       VerticalOptions="Center"
-                       HorizontalOptions="Center"
-                       WidthRequest="60"
-                       HeightRequest="60" />
+                               IsVisible="{Binding IsBusy}"
+                               VerticalOptions="Center"
+                               HorizontalOptions="Center"
+                               WidthRequest="60"
+                               HeightRequest="60" />
         </Grid>
 
     </Grid>

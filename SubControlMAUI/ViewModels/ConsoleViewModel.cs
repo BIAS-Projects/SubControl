@@ -16,7 +16,7 @@ namespace SubControlMAUI.ViewModels
     /// being retired; deployment-specific functionality is intentionally not carried
     /// over here.
     /// </summary>
-    public partial class ConsoleViewModel : BaseViewModel
+    public partial class ConsoleViewModel : BaseViewModel, IDisposable
     {
         private const int MaxTerminalLines = 2000;
 
@@ -34,6 +34,15 @@ namespace SubControlMAUI.ViewModels
 
         private CancellationTokenSource? _commandCts;
         private int _historyIndex = -1;
+
+        // Guards against event callbacks from SshService (which is longer-lived
+        // than this view model) touching the view model — or scheduling work on
+        // the main thread that would — after the page/view model has been torn
+        // down. Leaving the page without going through Disconnect() (e.g. an OS
+        // back-swipe on some platforms) previously left InteractiveAsyncOutputReceived
+        // / ConnectionLost subscribed to a dead view model, which could surface as
+        // an ObjectDisposedException when a queued MainThread callback finally ran.
+        private bool _disposed;
 
         public ConsoleViewModel(
             SQLiteService sqliteService,
@@ -99,6 +108,12 @@ namespace SubControlMAUI.ViewModels
         [RelayCommand(CanExecute = nameof(CanConnect))]
         private async Task Connect()
         {
+            // If this view model is being reused across page visits (e.g.
+            // registered as a Singleton rather than created fresh per
+            // navigation), a previous Dispose() call shouldn't permanently
+            // disable it — a new Connect() is exactly the point to re-arm.
+            _disposed = false;
+
             IsBusy = true;
             StatusText = $"Connecting to {Host}…";
             _logger.LogInformation("Attempting SSH connection to {Host} as {User}", Host, UserName);
@@ -283,6 +298,36 @@ namespace SubControlMAUI.ViewModels
             await Shell.Current.GoToAsync("..");
         }
 
+        /// <summary>
+        /// Unsubscribes from SshService's events and cancels any in-flight
+        /// command. Call this whenever the page is going away, regardless of
+        /// which path got it there (Back button, OS back-swipe, Shell popping
+        /// the page for any other reason) — unlike <see cref="Disconnect"/>,
+        /// which only cleans up as a side effect of an explicit user disconnect.
+        /// Safe to call more than once.
+        /// </summary>
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+
+            _disposed = true;
+
+            _commandCts?.Cancel();
+            _commandCts?.Dispose();
+            _commandCts = null;
+
+            _sshService.InteractiveAsyncOutputReceived -= OnAsyncOutputReceived;
+            _sshService.ConnectionLost -= OnConnectionLost;
+
+            // The terminal Editor uses AutoSize="TextChanges", so a large amount
+            // of accumulated output means real layout work every time this page
+            // is (re)constructed and bound. Clearing it here means that cost
+            // isn't paid again on the next visit for text nobody's looking at
+            // anymore.
+            ClearTerminal();
+        }
+
         // ── Private helpers ───────────────────────────────────────────────────
 
         /// <summary>
@@ -293,8 +338,14 @@ namespace SubControlMAUI.ViewModels
         /// </summary>
         private void OnConnectionLost(Exception ex)
         {
+            if (_disposed)
+                return;
+
             MainThread.BeginInvokeOnMainThread(() =>
             {
+                if (_disposed)
+                    return;
+
                 _logger.LogWarning(ex, "SSH connection to {Host} was lost unexpectedly.", Host);
 
                 // Unblock anything still awaiting a command result and reset the
@@ -321,8 +372,14 @@ namespace SubControlMAUI.ViewModels
         /// </summary>
         private void OnAsyncOutputReceived(string text)
         {
+            if (_disposed)
+                return;
+
             MainThread.BeginInvokeOnMainThread(() =>
             {
+                if (_disposed)
+                    return;
+
                 foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries))
                 {
                     var trimmed = line.TrimEnd('\r');

@@ -34,5 +34,12 @@ public partial class ConsolePage : ContentPage
         {
             await viewModel.DisconnectCommand.ExecuteAsync(null);
         }
+
+        // Unconditionally unsubscribe from SshService's events here, on every
+        // path off the page — Disconnect() above only runs if we were still
+        // connected. Without this, a background SshService callback firing
+        // after this page (and its DI scope, if the app uses one per page)
+        // has been torn down could throw ObjectDisposedException.
+        viewModel.Dispose();
     }
 }
