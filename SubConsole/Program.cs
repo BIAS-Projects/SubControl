@@ -26,7 +26,7 @@ try
             .ReadFrom.Configuration(context.Configuration)
             .ReadFrom.Services(services)
             .Enrich.FromLogContext())
-        // FIX 1: Hook the systemd lifetime manager into the host builder chain
+
         .UseSystemd()
         .ConfigureServices((context, services) =>
         {
@@ -38,6 +38,7 @@ try
             services.AddSingleton<SQLiteService>();
             services.AddSingleton<TcpSerialCommandHandler>();
             services.AddSingleton<TcpCameraCommandHandler>();
+            services.AddSingleton<TcpSystemCommandHandler>();
 
             // ── USB port monitor — runtime OS check, no compile-time guards ───────
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
@@ -57,7 +58,7 @@ try
                 services.AddHostedService<WmiMonitorService>();
             }
 
-            // NOTE: REMOVED services.AddSystemd() from here as it belongs on the host builder chain above.
+           
 
             services.AddSerialPortManager(context.Configuration);
             services.AddCameraManager();

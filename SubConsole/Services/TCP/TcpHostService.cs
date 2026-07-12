@@ -44,7 +44,8 @@ public sealed class TcpHostService : BackgroundService
 {
     private readonly ILogger<TcpHostService> _logger;
     private readonly TcpSerialCommandHandler _serialHandler;
-    private readonly TcpCameraCommandHandler _cameraHandler;  
+    private readonly TcpCameraCommandHandler _cameraHandler;
+    private readonly TcpSystemCommandHandler _systemHandler;
     private readonly SerialPushPump _pushPump;
     private readonly ISerialPortManagerService _serialPortManager;
     private readonly ICameraManagerService _cameraManager;   
@@ -56,7 +57,8 @@ public sealed class TcpHostService : BackgroundService
     public TcpHostService(
         ILogger<TcpHostService> logger,
         TcpSerialCommandHandler serialHandler,
-        TcpCameraCommandHandler cameraHandler,   // ← new
+        TcpCameraCommandHandler cameraHandler,
+        TcpSystemCommandHandler systemHandler,// ← new
         SerialPushPump pushPump,
         ISerialPortManagerService serialPortManager,
         ICameraManagerService cameraManager,   // ← new
@@ -65,6 +67,7 @@ public sealed class TcpHostService : BackgroundService
         _logger = logger;
         _serialHandler = serialHandler;
         _cameraHandler = cameraHandler;
+        _systemHandler = systemHandler;
         _pushPump = pushPump;
         _serialPortManager = serialPortManager;
         _cameraManager = cameraManager;
@@ -127,6 +130,14 @@ public sealed class TcpHostService : BackgroundService
             }
         }
         catch (OperationCanceledException) { }
+        catch (SocketException ex) when (stoppingToken.IsCancellationRequested)
+        {
+            // Linux raises SocketException (ECANCELED=125) instead of
+            // OperationCanceledException when the token fires on AcceptTcpClientAsync.
+            // This is expected on shutdown — not an error.
+            _logger.LogDebug(
+                "TCP listener closed on shutdown (SocketException {Code})", ex.ErrorCode);
+        }
         finally
         {
             _logger.LogInformation("TCP server shutting down");
@@ -343,11 +354,13 @@ public sealed class TcpHostService : BackgroundService
                 // Route to the correct domain handler based on the Function field.
                 // Serial commands use a device function name or "TOM".
                 // Camera commands use the reserved function name "CAMERA".
+                // System commands use the reserved function name "SYSTEM".
 
-                //var result = message.Function.Equals("CAMERA", StringComparison.OrdinalIgnoreCase)
-                var result = message.Function.Contains("CAMERA")
-                    ? await _cameraHandler.HandleAsync(message, token)
-                    : await _serialHandler.HandleAsync(message, token);
+                var result = message.Function.Contains("SYSTEM")
+                    ? await _systemHandler.HandleAsync(message, token)
+                    : message.Function.Contains("CAMERA")
+                        ? await _cameraHandler.HandleAsync(message, token)
+                        : await _serialHandler.HandleAsync(message, token);
 
                 await state.Outgoing.Writer.WriteAsync(
                     $"{frame.Id}{TcpProtocol.SEP}{result}{TcpProtocol.EOM}", token);

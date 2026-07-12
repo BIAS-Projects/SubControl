@@ -45,6 +45,8 @@ public partial class MainViewModel : BaseViewModel
     // "SerialFeature" routes to the server's serial-port manager (OPEN/CLOSE/LIST).
     private static string SerialFeature => nameof(MainViewModel);
     private static string CameraFeature => nameof(MainViewModel) + "CAMERA";
+
+    private static string SystemFeature => nameof(MainViewModel) + "SYSTEM";
     private static string RotatorFeature => Feature.RotatorName;
 
     private readonly TimeSpan _timeout = TimeSpan.FromSeconds(10);
@@ -99,6 +101,9 @@ public partial class MainViewModel : BaseViewModel
 
     [ObservableProperty]
     private Color rotatorStatusColor;
+
+    [ObservableProperty]
+    private string serverVersion = string.Empty;
 
     // -------------------------------------------------------------------------
     // Status colour map
@@ -257,6 +262,9 @@ public partial class MainViewModel : BaseViewModel
                 StatusText = "Connection failed";
                 return;
             }
+
+            StatusText = "Querying server version...";
+            await QueryServerVersionAsync();
 
             StatusText = "Querying device capabilities...";
             var serialFunctions = await QuerySerialRegisteredAsync();
@@ -1044,6 +1052,46 @@ public partial class MainViewModel : BaseViewModel
             _messengerService.Unregister<TcpDataReceivedMessage>(tcs);
         }
     }
+
+    // -------------------------------------------------------------------------
+    // VERSION query
+    // -------------------------------------------------------------------------
+
+    private async Task QueryServerVersionAsync()
+    {
+        var result = await _dispatcher.SendAndWaitAsync(SystemFeature, "VERSION", string.Empty, _timeout);
+
+        if (result is null)
+        {
+            _loggerService.LogWarning("VERSION query failed or timed out");
+            ServerVersion = string.Empty;
+            return;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(result);
+
+            if (doc.RootElement.TryGetProperty("data", out var dataElement) &&
+                dataElement.TryGetProperty("version", out var versionElement))
+            {
+                ServerVersion = versionElement.GetString() ?? string.Empty;
+                _loggerService.LogInformation("Server reported version {Version}", ServerVersion);
+            }
+            else
+            {
+                _loggerService.LogWarning("VERSION response missing expected fields: {Response}", result);
+                ServerVersion = string.Empty;
+            }
+        }
+        catch (JsonException ex)
+        {
+            _loggerService.LogError(ex, "Failed to parse VERSION response: {Response}", result);
+            ServerVersion = string.Empty;
+        }
+    }
+
+
 
     // -------------------------------------------------------------------------
     // TOM power-state predicates

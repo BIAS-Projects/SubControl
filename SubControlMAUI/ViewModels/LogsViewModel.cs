@@ -1,8 +1,12 @@
 ﻿using CommunityToolkit.Maui.Storage;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.Logging;
+using SubConsole.Models;
+using SubControlMAUI.Messages;
 using SubControlMAUI.Services;
+using SubControlMAUI.ViewModels;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -10,6 +14,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+
 
 namespace SubControlMAUI.ViewModels
 {
@@ -24,6 +29,8 @@ namespace SubControlMAUI.ViewModels
         public string FileName => Source.FileName;
         public string FullPath => Source.FullPath;
         public string DisplayName { get; }
+
+        
 
         public LogFileEntry(RemoteLogFile source)
         {
@@ -94,11 +101,26 @@ namespace SubControlMAUI.ViewModels
 
         private bool _disposed;
 
+        private readonly IMessenger _messengerService;
+        private readonly CommandDispatcherService _dispatcher;
+        private readonly ApplicationStateService _appState;
+
+        private static readonly TimeSpan _tcpTimeout = TimeSpan.FromSeconds(10);
+
+        // Function name used as the Function field in outgoing TCP messages for
+        // system-level commands (log level, version, etc). Routed server-side via
+        // message.Function.Contains("SYSTEM") — see TcpHostService.
+        private static string SystemFeature => nameof(LogsViewModel) + "SYSTEM";
+
+
         public LogsViewModel(
             SQLiteService sqliteService,
             SshService sshService,
             IAlertService alertService,
-            ILogger<LogsViewModel> logger)
+            ILogger<LogsViewModel> logger,
+            IMessenger messengerService,
+            CommandDispatcherService dispatcher,
+            ApplicationStateService applicationStateService)
         {
             Title = "Logs";
 
@@ -106,10 +128,42 @@ namespace SubControlMAUI.ViewModels
             _sshService = sshService;
             _alertService = alertService;
             _logger = logger;
+            _messengerService = messengerService;
+            _dispatcher = dispatcher;
+            _dispatcher.Owner = nameof(LogsViewModel);
+            _appState = applicationStateService;
 
             LogFiles = new ObservableCollection<LogFileEntry>();
 
             Host = _sqliteService.config?.IPAddress ?? string.Empty;
+
+            LogLevels = new ObservableCollection<string>
+    {
+        "Verbose", "Debug", "Information", "Warning", "Error", "Fatal"
+    };
+            SelectedLogLevel = "Information";
+
+            RegisterMessages();
+
+            IsConsoleConnected = _appState.IsConnected;
+            _appState.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(ApplicationStateService.IsConnected))
+                    IsConsoleConnected = _appState.IsConnected;
+            };
+        }
+
+        private void RegisterMessages()
+        {
+            // Route every incoming TCP message through the dispatcher so
+            // SendAndWaitAsync (used by UpdateLogLevel) can resolve pending requests.
+            _messengerService.Register<TcpDataReceivedMessage>(this, (_, msg) =>
+            {
+                _dispatcher.HandleIncoming(
+                    msg.Value.Function,
+                    msg.Value.Command,
+                    msg.Value.Data);
+            });
         }
 
         // ── Connection properties ───────────────────────────────────────────────
@@ -166,6 +220,20 @@ namespace SubControlMAUI.ViewModels
         private string tailOutput = string.Empty;
 
         public ObservableCollection<LogFileEntry> LogFiles { get; }
+
+        /// <summary>
+        /// Whether the shared TCP console connection (to the SubConsole server, as
+        /// distinct from the SSH connection used for browsing/tailing log files on
+        /// this page) is currently up. The log-level Update button is gated on this.
+        /// </summary>
+        [ObservableProperty]
+        [NotifyCanExecuteChangedFor(nameof(UpdateLogLevelCommand))]
+        private bool isConsoleConnected;
+
+        [ObservableProperty]
+        private string selectedLogLevel = "Information";
+
+        public ObservableCollection<string> LogLevels { get; }
 
         // ── Connection commands ──────────────────────────────────────────────────
 
@@ -554,11 +622,56 @@ namespace SubControlMAUI.ViewModels
             _downloadCts = null;
 
             _sshService.ConnectionLost -= OnConnectionLost;
+            _messengerService.Unregister<TcpDataReceivedMessage>(this);
 
-            // The tail Editor uses AutoSize="TextChanges"; don't pay layout cost
-            // for a large buffer nobody's looking at on the next visit.
             ClearTail();
         }
+
+        //-----------Logs----------------------------
+
+        // ── Server logging level ────────────────────────────────────────────────
+
+        [RelayCommand(CanExecute = nameof(CanUpdateLogLevel))]
+        private async Task UpdateLogLevel()
+        {
+            if (string.IsNullOrWhiteSpace(SelectedLogLevel))
+                return;
+
+            IsBusy = true;
+            StatusText = $"Setting server log level to {SelectedLogLevel}…";
+            _logger.LogInformation("Requesting server log level change to {Level}", SelectedLogLevel);
+
+            try
+            {
+                var result = await _dispatcher.SendAndWaitAsync(
+                    SystemFeature, "LOGGING", SelectedLogLevel, _tcpTimeout);
+
+                if (result is null)
+                {
+                    _logger.LogWarning(
+                        "LOGGING command failed or timed out for level {Level}", SelectedLogLevel);
+                    StatusText = "Failed to set log level";
+                    await _alertService.ShowAlertAsync(
+                        "Error", "The server did not confirm the log level change.", "OK");
+                    return;
+                }
+
+                _logger.LogInformation("Server log level set to {Level}", SelectedLogLevel);
+                StatusText = $"Server log level set to {SelectedLogLevel}";
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to set server log level to {Level}", SelectedLogLevel);
+                StatusText = "Failed to set log level";
+                await _alertService.ShowAlertAsync("Error", ex.Message, "OK");
+            }
+            finally
+            {
+                IsBusy = false;
+            }
+        }
+
+        private bool CanUpdateLogLevel() => IsConsoleConnected;
 
         // ── Private helpers ───────────────────────────────────────────────────
 

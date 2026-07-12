@@ -94,6 +94,30 @@
                        FontSize="13"
                        TextColor="Gray" />
 
+                <!-- SERVER LOGGING LEVEL -->
+                <Border Stroke="Gray"
+        StrokeThickness="1"
+        Padding="10">
+                    <VerticalStackLayout Spacing="8">
+
+                        <Label Text="Server Logging Level"
+               FontAttributes="Bold"
+               FontSize="15" />
+
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <Picker Grid.Column="0"
+                    Title="Select log level"
+                    ItemsSource="{Binding LogLevels}"
+                    SelectedItem="{Binding SelectedLogLevel}" />
+                            <Button Grid.Column="1"
+                    Text="Update"
+                    Command="{Binding UpdateLogLevelCommand}"
+                    IsEnabled="{Binding IsConsoleConnected}" />
+                        </Grid>
+
+                    </VerticalStackLayout>
+                </Border>
+
                 <!-- FOLDER SELECTION -->
                 <Border Stroke="Gray"
                         StrokeThickness="1"
