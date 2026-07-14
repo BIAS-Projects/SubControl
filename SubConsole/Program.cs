@@ -30,13 +30,12 @@ try
         .UseSystemd()
         .ConfigureServices((context, services) =>
         {
-            services.AddSingleton<TcpHostService>();
-            services.AddSingleton<SerialPortManagerService>();
-            services.AddSingleton<ISerialWorkerFactory, SerialWorkerFactory>();
-            services.AddHostedService(
-                provider => provider.GetRequiredService<TcpHostService>());
+          //  services.AddSingleton<TcpHostService>();
+          //  services.AddSingleton<SerialPortManagerService>();
+         //   services.AddSingleton<ISerialWorkerFactory, SerialWorkerFactory>();
+          //  services.AddHostedService(provider => provider.GetRequiredService<TcpHostService>());
             services.AddSingleton<SQLiteService>();
-            services.AddSingleton<TcpSerialCommandHandler>();
+         //   services.AddSingleton<TcpSerialCommandHandler>();
             services.AddSingleton<TcpCameraCommandHandler>();
             services.AddSingleton<TcpSystemCommandHandler>();
 

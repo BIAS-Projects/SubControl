@@ -664,9 +664,11 @@ public sealed class UsbCameraRegistry
                 },
                 (updateKey, existing) =>
                 {
-                    _logger?.LogInformation("Camera updated: {FriendlyName}", newInfo.FriendlyName);
                     if (!CameraInfoEquals(existing, newInfo))
+                    {
+                        _logger?.LogInformation("Camera updated: {FriendlyName}", newInfo.FriendlyName);
                         RaiseCameraChanged(CameraChangeKind.Updated, newInfo);
+                    }
                     return newInfo;
                 });
         }

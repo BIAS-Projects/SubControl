@@ -43,12 +43,14 @@ public abstract class UsbMonitorServiceBase : BackgroundService
         string triggerReason, CancellationToken token)
     {
         Logger.LogDebug(
-            "Triggering USB port registry refresh. Reason: {Reason}",
+            "Triggering USB port/camera registry refresh. Reason: {Reason}",
             triggerReason);
 
         try
         {
-            await UsbPortRegistry.Instance.RefreshAsync(token);
+            await Task.WhenAll(
+                UsbPortRegistry.Instance.RefreshAsync(token),
+                UsbCameraRegistry.Instance.RefreshAsync(token));
         }
         catch (OperationCanceledException)
         {
@@ -58,7 +60,7 @@ public abstract class UsbMonitorServiceBase : BackgroundService
         {
             Logger.LogError(
                 ex,
-                "USB port registry refresh failed. Reason: {Reason}",
+                "USB port/camera registry refresh failed. Reason: {Reason}",
                 triggerReason);
         }
     }
