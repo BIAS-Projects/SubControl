@@ -46,57 +46,47 @@
         <ScrollView Grid.Row="1">
             <VerticalStackLayout Spacing="8">
 
-                <!-- Credentials -->
-                <Grid ColumnDefinitions="*,*"
-                      ColumnSpacing="8">
+                <!-- CONNECTION -->
+                <Border Stroke="Gray"
+        StrokeThickness="1"
+        Padding="10">
+                    <Grid RowDefinitions="Auto,Auto"
+          ColumnDefinitions="Auto,*,Auto,*,Auto"
+          ColumnSpacing="8"
+          RowSpacing="8">
 
-                    <Entry Grid.Column="0"
-                           Placeholder="Username"
-                           Text="{Binding UserName}">
-                        <Entry.Triggers>
-                            <DataTrigger TargetType="Entry" Binding="{Binding IsConnected}" Value="True">
-                                <Setter Property="IsEnabled" Value="False" />
-                            </DataTrigger>
-                            <DataTrigger TargetType="Entry" Binding="{Binding IsConnected}" Value="False">
-                                <Setter Property="IsEnabled" Value="True" />
-                            </DataTrigger>
-                        </Entry.Triggers>
-                    </Entry>
+                        <Label Grid.Row="0" Grid.Column="0"
+               Text="Host:"
+               VerticalOptions="Center" />
+                        <Label Grid.Row="0" Grid.Column="1"
+               Text="{Binding Host}"
+               FontFamily="Courier New"
+               VerticalOptions="Center" />
 
-                    <Entry Grid.Column="1"
-                           Placeholder="Password"
-                           Text="{Binding Password}"
-                           IsPassword="True">
-                        <Entry.Triggers>
-                            <DataTrigger TargetType="Entry" Binding="{Binding IsConnected}" Value="True">
-                                <Setter Property="IsEnabled" Value="False" />
-                            </DataTrigger>
-                            <DataTrigger TargetType="Entry" Binding="{Binding IsConnected}" Value="False">
-                                <Setter Property="IsEnabled" Value="True" />
-                            </DataTrigger>
-                        </Entry.Triggers>
-                    </Entry>
-                </Grid>
+                        <Label Grid.Row="1" Grid.Column="0"
+               Text="User:"
+               VerticalOptions="Center" />
+                        <Entry Grid.Row="1" Grid.Column="1"
+               Text="{Binding UserName}"
+               IsEnabled="{Binding IsNotConnected}" />
 
-                <!-- Connect / Disconnect -->
-                <Grid ColumnDefinitions="*,*,Auto"
-                      ColumnSpacing="8">
+                        <Label Grid.Row="1" Grid.Column="2"
+               Text="Password:"
+               VerticalOptions="Center" />
+                        <Entry Grid.Row="1" Grid.Column="3"
+               Text="{Binding Password}"
+               IsPassword="True"
+               IsEnabled="{Binding IsNotConnected}" />
 
-                    <Button Grid.Column="0"
-                            Text="Connect"
-                            Command="{Binding ConnectCommand}" />
-
-                    <Button Grid.Column="1"
-                            Text="Disconnect"
-                            Command="{Binding DisconnectCommand}" />
-
-                    <ActivityIndicator Grid.Column="2"
-                                       IsRunning="{Binding IsBusy}"
-                                       IsVisible="{Binding IsBusy}"
-                                       WidthRequest="30"
-                                       HeightRequest="30"
-                                       VerticalOptions="Center" />
-                </Grid>
+                        <HorizontalStackLayout Grid.Row="1" Grid.Column="4"
+                               Spacing="6">
+                            <Button Text="Connect"
+                    Command="{Binding ConnectCommand}" />
+                            <Button Text="Disconnect"
+                    Command="{Binding DisconnectCommand}" />
+                        </HorizontalStackLayout>
+                    </Grid>
+                </Border>
 
                 <!-- MediaMTX Deployment -->
                 <Border Stroke="Gray"

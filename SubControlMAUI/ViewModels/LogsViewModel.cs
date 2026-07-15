@@ -552,6 +552,8 @@ namespace SubControlMAUI.ViewModels
         /// </summary>
         public void OnAppearing()
         {
+
+            Host = _sqliteService.config.IPAddress;
             _disposed = false;
 
             IsConnected = _sshService.IsConnected;

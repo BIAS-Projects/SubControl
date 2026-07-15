@@ -419,5 +419,12 @@ namespace SubControlMAUI.ViewModels
             TerminalLineKind.Stream => $"| {text}",
             _ => $"  {text}",
         };
+
+
+        public void OnAppearing()
+        {
+            Host = _sqliteService.config.IPAddress;
+        }
+
     }
 }

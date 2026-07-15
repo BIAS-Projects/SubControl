@@ -2,6 +2,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using SubControlMAUI.Services;
 using System;
@@ -43,7 +44,7 @@ namespace SubControlMAUI.ViewModels
         // ── Dependencies ──────────────────────────────────────────────────────
         private readonly IMessenger _messenger;
         private readonly ILogger<PiViewModel> _logger;
-        private readonly SQLiteService _sQLiteService;
+        private readonly SQLiteService _sqliteService;
         private readonly SshService _sshService;
 
         // ── Streaming session (tail / long-running process) ───────────────────
@@ -54,12 +55,12 @@ namespace SubControlMAUI.ViewModels
         public PiViewModel(
             IMessenger messenger,
             ILogger<PiViewModel> logger,
-            SQLiteService sQLiteService,
+            SQLiteService sqliteService,
             SshService sshService)
         {
             _logger = logger;
             _messenger = messenger;
-            _sQLiteService = sQLiteService;
+            _sqliteService = sqliteService;
             _sshService = sshService;
 
             Title = "Controller Management";
@@ -68,6 +69,18 @@ namespace SubControlMAUI.ViewModels
         }
 
         // ── Observable properties ─────────────────────────────────────────────
+
+        //[ObservableProperty]
+        //[NotifyCanExecuteChangedFor(nameof(ConnectCommand))]
+        //[NotifyCanExecuteChangedFor(nameof(DisconnectCommand))]
+        //[NotifyCanExecuteChangedFor(nameof(RunCommandCommand))]
+        //[NotifyCanExecuteChangedFor(nameof(GetSystemInfoCommand))]
+        //[NotifyCanExecuteChangedFor(nameof(TailLogCommand))]
+        //[NotifyCanExecuteChangedFor(nameof(StopStreamCommand))]
+        //[NotifyCanExecuteChangedFor(nameof(DeployMediaMtxCommand))]
+        //[NotifyCanExecuteChangedFor(nameof(DeployDotNetAppCommand))]
+        //[NotifyCanExecuteChangedFor(nameof(DeployFfmpegCommand))]
+        //private bool isConnected;
 
         [ObservableProperty]
         [NotifyCanExecuteChangedFor(nameof(ConnectCommand))]
@@ -79,7 +92,10 @@ namespace SubControlMAUI.ViewModels
         [NotifyCanExecuteChangedFor(nameof(DeployMediaMtxCommand))]
         [NotifyCanExecuteChangedFor(nameof(DeployDotNetAppCommand))]
         [NotifyCanExecuteChangedFor(nameof(DeployFfmpegCommand))]
+        [NotifyPropertyChangedFor(nameof(IsNotConnected))]
         private bool isConnected;
+
+        public bool IsNotConnected => !IsConnected;
 
         [ObservableProperty]
         [NotifyCanExecuteChangedFor(nameof(ConnectCommand))]
@@ -192,6 +208,9 @@ namespace SubControlMAUI.ViewModels
         [ObservableProperty]
         private string _uartConfigStatus = string.Empty;
 
+        [ObservableProperty]
+        private string host = string.Empty;
+
         // ── Connection commands ───────────────────────────────────────────────
 
         [RelayCommand(CanExecute = nameof(CanConnect))]
@@ -199,17 +218,17 @@ namespace SubControlMAUI.ViewModels
         {
             IsBusy = true;
 
-            AddLine($"Connecting to {_sQLiteService.config.IPAddress} as '{UserName}'…", TerminalLineKind.Info);
+            AddLine($"Connecting to {_sqliteService.config.IPAddress} as '{UserName}'…", TerminalLineKind.Info);
 
             try
             {
                 await _sshService.ConnectAsync(
-                    host: _sQLiteService.config.IPAddress,
+                    host: _sqliteService.config.IPAddress,
                     username: UserName,
                     password: Password);
 
                 IsConnected = true;
-                AddLine($"✓ Connected to {_sQLiteService.config.IPAddress}", TerminalLineKind.Success);
+                AddLine($"✓ Connected to {_sqliteService.config.IPAddress}", TerminalLineKind.Success);
             }
             catch (Exception ex)
             {
@@ -726,6 +745,11 @@ namespace SubControlMAUI.ViewModels
 
         // ── Navigation ────────────────────────────────────────────────────────
 
+        public void OnAppearing()
+        {
+            Host = _sqliteService.config.IPAddress;
+        }
+
         [RelayCommand]
         private async Task GoBack()
         {
@@ -744,5 +768,11 @@ namespace SubControlMAUI.ViewModels
             while (TerminalLines.Count > 2000)
                 TerminalLines.RemoveAt(0);
         }
+
+
+
+
+
+
     }
 }

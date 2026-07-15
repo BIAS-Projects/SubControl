@@ -1880,6 +1880,38 @@ namespace SubControlMAUI.Services
         }
 
         /// <summary>
+        /// Issues a sudo shutdown to gracefully power off the remote host. Unlike
+        /// <see cref="RebootAndWaitAsync"/>, this does not attempt to reconnect —
+        /// the device is expected to stay off until it's physically power-cycled
+        /// back on. The SSH connection dropping immediately after the command is
+        /// issued is expected behaviour and is not treated as a failure.
+        /// </summary>
+        public async Task ShutdownAsync(
+            string password,
+            CancellationToken cancellationToken = default)
+        {
+            EnsureConnected();
+
+            var escapedPwd = password.Replace("'", "'\\''");
+
+            _logger.LogInformation("Issuing shutdown command to {Host}", Host);
+
+            try
+            {
+                await ExecuteCommandAsync(
+                    $"printf '{escapedPwd}\\n' | sudo -S shutdown -h now",
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                // The SSH connection closing as the host powers off is expected -
+                // ExecuteCommandAsync already ran HandleConnectionLostAsync/cleanup
+                // internally before rethrowing, so there's nothing left to do here.
+                _logger.LogDebug(ex, "SSH connection closed during shutdown — this is expected.");
+            }
+        }
+
+        /// <summary>
         /// Issues a sudo reboot and polls until the device comes back online or the timeout elapses.
         /// The SSH connection drop immediately after the reboot command is issued is expected behaviour.
         /// </summary>

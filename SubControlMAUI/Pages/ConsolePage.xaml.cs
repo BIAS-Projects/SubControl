@@ -4,12 +4,12 @@ namespace SubControlMAUI.Pages;
 
 public partial class ConsolePage : ContentPage
 {
-    readonly ConsoleViewModel viewModel;
+    readonly ConsoleViewModel _viewModel;
 
     public ConsolePage(ConsoleViewModel viewModel)
     {
         InitializeComponent();
-        this.viewModel = viewModel;
+        _viewModel = viewModel;
         BindingContext = viewModel;
 
         // The Editor uses AutoSize="TextChanges" so it grows to fit all of its
@@ -24,15 +24,21 @@ public partial class ConsolePage : ContentPage
         };
     }
 
+    protected override void OnAppearing()
+    {
+        base.OnAppearing();
+        _viewModel.OnAppearing();
+    }
+
     protected override async void OnDisappearing()
     {
         base.OnDisappearing();
 
         // Guard against leaving an SSH session dangling if the user swipes back
         // or the shell navigates away without going through GoBackCommand.
-        if (viewModel.IsConnected && viewModel.DisconnectCommand.CanExecute(null))
+        if (_viewModel.IsConnected && _viewModel.DisconnectCommand.CanExecute(null))
         {
-            await viewModel.DisconnectCommand.ExecuteAsync(null);
+            await _viewModel.DisconnectCommand.ExecuteAsync(null);
         }
 
         // Unconditionally unsubscribe from SshService's events here, on every
@@ -40,6 +46,6 @@ public partial class ConsolePage : ContentPage
         // connected. Without this, a background SshService callback firing
         // after this page (and its DI scope, if the app uses one per page)
         // has been torn down could throw ObjectDisposedException.
-        viewModel.Dispose();
+        _viewModel.Dispose();
     }
 }

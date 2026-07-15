@@ -4,6 +4,7 @@ using CommunityToolkit.Maui.Extensions;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
+
 using Microsoft.Extensions.Logging;
 
 using SubConsole.Models;
@@ -27,6 +28,7 @@ public partial class MainViewModel : BaseViewModel
     private readonly IMessenger _messengerService;
     private readonly TcpSocketService _tcpService;
     private readonly RotatorViewModel _rotatorViewModel;
+    private readonly SshService _sshService;
 
     /// <summary>
     /// Handles all TCP request/response and push-confirm logic for this ViewModel.
@@ -149,7 +151,8 @@ public partial class MainViewModel : BaseViewModel
         INavigationService navigationService,
         ApplicationStateService applicationStateService,
              TcpSocketService tcpService,
-             RotatorViewModel rotatorViewModel)
+             RotatorViewModel rotatorViewModel,
+             SshService sshService)
     {
 
 
@@ -201,6 +204,7 @@ public partial class MainViewModel : BaseViewModel
             OnPropertyChanged(nameof(SystemToggleButtonImage));
         };
         _rotatorViewModel = rotatorViewModel;
+        _sshService = sshService;
     }
 
     // -------------------------------------------------------------------------
@@ -380,20 +384,55 @@ public partial class MainViewModel : BaseViewModel
     [RelayCommand]
     private async Task ToggleSystem()
     {
+
         if (AppState.IsNotConnected) return;
 
         IsBusy = true;
         try
         {
-            if (!IsSystemEnabled)
-                await EnableSystemAsync();
+            if (!_sshService.IsConnected)
+            {
+                await _sshService.ConnectAsync(
+                    host: _sqliteService.config.IPAddress,
+                    username: _sqliteService.config.PiUserName,
+                    password: _sqliteService.config.PiPassword);
+            }
+
+            if (_sshService.IsConnected)
+            {
+                await _sshService.ShutdownAsync(_sqliteService.config.PiPassword);
+                StatusText = "Shutdown command sent.";
+            }
             else
-                await DisableSystemAsync();
+            {
+                StatusText = $"Unable to connect to {_sqliteService.config.IPAddress}.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _loggerService.LogError(ex, "Shutdown command failed");
+            StatusText = $"Unable to shut down {ex.Message}.";
         }
         finally
         {
             IsBusy = false;
         }
+
+
+        //if (AppState.IsNotConnected) return;
+
+        //IsBusy = true;
+        //try
+        //{
+        //    if (!IsSystemEnabled)
+        //        await EnableSystemAsync();
+        //    else
+        //        await DisableSystemAsync();
+        //}
+        //finally
+        //{
+        //    IsBusy = false;
+        //}
     }
 
     private async Task EnableSystemAsync()

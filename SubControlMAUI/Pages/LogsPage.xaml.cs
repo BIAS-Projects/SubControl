@@ -4,12 +4,12 @@ namespace SubControlMAUI.Pages;
 
 public partial class LogsPage : ContentPage
 {
-    readonly LogsViewModel viewModel;
+    readonly LogsViewModel _viewModel;
 
     public LogsPage(LogsViewModel viewModel)
     {
         InitializeComponent();
-        this.viewModel = viewModel;
+        _viewModel = viewModel;
         BindingContext = viewModel;
 
         // The Editor uses AutoSize="TextChanges" so it grows to fit all of its
@@ -27,7 +27,7 @@ public partial class LogsPage : ContentPage
     protected override void OnAppearing()
     {
         base.OnAppearing();
-        viewModel.OnAppearing();
+        _viewModel.OnAppearing();
     }
 
     protected override async void OnDisappearing()
@@ -39,11 +39,11 @@ public partial class LogsPage : ContentPage
         // Same pattern as ConsolePage: only disconnect if we're actually
         // connected, then unconditionally dispose to unsubscribe from
         // SshService and clear the tail buffer regardless.
-        if (viewModel.IsConnected && viewModel.DisconnectCommand.CanExecute(null))
+        if (_viewModel.IsConnected && _viewModel.DisconnectCommand.CanExecute(null))
         {
-            await viewModel.DisconnectCommand.ExecuteAsync(null);
+            await _viewModel.DisconnectCommand.ExecuteAsync(null);
         }
 
-        viewModel.Dispose();
+        _viewModel.Dispose();
     }
 }

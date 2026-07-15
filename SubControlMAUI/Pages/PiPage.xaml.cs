@@ -1,3 +1,4 @@
+
 using SubControlMAUI.ViewModels;
 
 namespace SubControlMAUI.Pages;
@@ -16,6 +17,12 @@ public partial class PiPage : ContentPage
         // The VM exposes DeployProgress as an int 0–100, so we update
         // the named bar here rather than requiring a value converter in XAML.
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+    }
+
+    protected override void OnAppearing()
+    {
+        base.OnAppearing();
+        _viewModel.OnAppearing();
     }
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
