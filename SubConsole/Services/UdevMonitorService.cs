@@ -152,6 +152,10 @@ public sealed class UdevMonitorService : UsbMonitorServiceBase
 
             Logger.LogInformation("Udev monitor started (fd={Fd})", fd);
 
+            // Initial scan so we know about devices that were already present
+            // before this service started.
+            await RefreshRegistryAsync("Application startup", stoppingToken);
+
             var pollFds = new PollFd[]
             {
                 new PollFd { fd = fd, events = POLLIN }

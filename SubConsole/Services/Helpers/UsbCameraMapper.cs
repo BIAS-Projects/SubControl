@@ -266,17 +266,29 @@ public static class UsbCameraMapper
                         continue;
                     }
 
-                    var info = new UsbCameraInfo
-                    {
-                        DevicePath = $"/dev/{videoName}",
-                        VendorId = ReadSysfsFile(usbDevicePath, "idVendor"),
-                        ProductId = ReadSysfsFile(usbDevicePath, "idProduct"),
-                        SerialNumber = ReadSysfsFile(usbDevicePath, "serial"),
-                        FriendlyName = ReadSysfsFile(usbDevicePath, "product"),
-                        DeviceId = usbDevicePath
-                    };
+                var stablePath = ResolveByIdPath(videoName);
+                var devicePath = stablePath ?? $"/dev/{videoName}";
 
-                    results.Add(info);
+                if (stablePath is null)
+                {
+                    _logger?.LogWarning(
+                        "{VideoName} has no stable /dev/v4l/by-id entry — falling back to {DevicePath}. " +
+                        "This device may lack a USB serial number, so its path can change on reboot " +
+                        "if kernel enumeration order shifts.",
+                        videoName, devicePath);
+                }
+
+                var info = new UsbCameraInfo
+                {
+                    DevicePath = devicePath,
+                    VendorId = ReadSysfsFile(usbDevicePath, "idVendor"),
+                    ProductId = ReadSysfsFile(usbDevicePath, "idProduct"),
+                    SerialNumber = ReadSysfsFile(usbDevicePath, "serial"),
+                    FriendlyName = ReadSysfsFile(usbDevicePath, "product"),
+                    DeviceId = usbDevicePath
+                };
+
+                results.Add(info);
 
                     _logger?.LogInformation(
                         "Discovered USB camera {DevicePath} VID={VendorId} PID={ProductId} " +
@@ -503,6 +515,63 @@ public static class UsbCameraMapper
         }
         catch
         {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Looks up the stable /dev/v4l/by-id symlink for a given /dev/videoN node,
+    /// if one exists. udev's 60-persistent-v4l.rules creates these from the
+    /// device's USB vendor/product string + serial number, so the symlink name
+    /// stays fixed across reboots even when the kernel reassigns videoN indices.
+    /// Falls back to null if the by-id directory is absent, empty, or no entry
+    /// resolves to this specific video node (e.g. device has no USB serial).
+    /// </summary>
+    private static string? ResolveByIdPath(string videoName)
+    {
+        const string byIdRoot = "/dev/v4l/by-id";
+
+        try
+        {
+            if (!Directory.Exists(byIdRoot))
+            {
+                _logger?.LogDebug("{ByIdRoot} not present — no stable by-id paths available", byIdRoot);
+                return null;
+            }
+
+            foreach (var entry in Directory.GetFileSystemEntries(byIdRoot))
+            {
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = "readlink",
+                    Arguments = $"-f \"{entry}\"",
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using var process = Process.Start(startInfo);
+                if (process == null) continue;
+
+                var resolved = process.StandardOutput.ReadToEnd().Trim();
+                process.WaitForExit();
+
+                if (string.Equals(Path.GetFileName(resolved), videoName, StringComparison.Ordinal))
+                {
+                    _logger?.LogDebug(
+                        "Resolved stable path for {VideoName}: {ByIdPath}", videoName, entry);
+                    return entry;
+                }
+            }
+
+            _logger?.LogDebug(
+                "No by-id entry found for {VideoName} — device may lack a USB serial number",
+                videoName);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Failed scanning {ByIdRoot} for {VideoName}", byIdRoot, videoName);
             return null;
         }
     }

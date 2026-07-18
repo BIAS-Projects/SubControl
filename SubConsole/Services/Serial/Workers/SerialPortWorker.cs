@@ -217,8 +217,7 @@ public sealed class SerialPortWorker : ISerialWorker, IKeepAliveWorker
 
                 if (!enqueued) break;
 
-                _logger.LogDebug(
-                    "Keep-alive sent for {Function}", _functionName);
+             //   _logger.LogDebug("Keep-alive sent for {Function}", _functionName);
             }
         }
         catch (OperationCanceledException) { }
@@ -329,9 +328,8 @@ public sealed class SerialPortWorker : ISerialWorker, IKeepAliveWorker
 
                 try
                 {
-                    _logger.LogDebug(
-                        "Writing {ByteCount} bytes to {PortPath} for {Function}",
-                        data.Length, PortPath, _functionName);
+              //      _logger.LogDebug("Writing {ByteCount} bytes to {PortPath} for {Function}",
+              //          data.Length, PortPath, _functionName);
 
                     await _port.BaseStream.WriteAsync(data, token).ConfigureAwait(false);
                 }
