@@ -197,6 +197,7 @@ namespace SubControlMAUI.ViewModels
         [RelayCommand]
         private async Task GoBack()
         {
+            StatusText = string.Empty;
             await Shell.Current.GoToAsync("..");
         }
     }

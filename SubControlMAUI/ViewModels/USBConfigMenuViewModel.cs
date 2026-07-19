@@ -98,6 +98,7 @@ public partial class USBConfigMenuViewModel : BaseViewModel
     [RelayCommand]
     private async Task GoBack()
     {
+        StatusText = string.Empty;
         await _navigation.GoToAsync("..");
     }
 

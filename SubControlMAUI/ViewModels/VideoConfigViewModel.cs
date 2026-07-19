@@ -700,6 +700,7 @@ public partial class VideoConfigViewModel : BaseViewModel
     [RelayCommand]
     private async Task GoBack()
     {
+        StatusText = string.Empty;
         await Shell.Current.GoToAsync("..");
     }
 

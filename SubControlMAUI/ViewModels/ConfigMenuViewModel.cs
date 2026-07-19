@@ -91,6 +91,7 @@ public partial class ConfigMenuViewModel : BaseViewModel
     [RelayCommand]
     private async Task Tech()
     {
+        StatusText = string.Empty;
         await _navigation.GoToAsync(nameof(TechPage));
     }
 

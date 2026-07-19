@@ -5,15 +5,20 @@ namespace SubControlMAUI.Pages;
 
 public partial class SettingsPage : ContentPage
 {
-	SettingsViewModel viewModel;
+	SettingsViewModel _viewModel;
 	public SettingsPage(SettingsViewModel viewModel)
 	{
 		InitializeComponent();
-		this.viewModel = viewModel;
-		BindingContext = viewModel;
+		_viewModel = viewModel;
+		BindingContext = _viewModel;
     }
 
+    protected override async void OnAppearing()
+    {
+        base.OnAppearing();
+		_viewModel.OnAppearing();
 
+    }
 
 
 }

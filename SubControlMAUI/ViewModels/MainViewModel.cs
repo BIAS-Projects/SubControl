@@ -190,10 +190,12 @@ public partial class MainViewModel : BaseViewModel
             {
                 OnPropertyChanged(nameof(IsVideoEnabled));
                 OnPropertyChanged(nameof(CanEnableVideo));
+                OnPropertyChanged(nameof(VideoEnableButtonImage));
             }
             if (e.PropertyName == nameof(AppState.IsRotatorEnabled))
             {
                 OnPropertyChanged(nameof(IsRotatorEnabled));
+                OnPropertyChanged(nameof(RotatorEnableButtonImage));
             }
         };
 
@@ -242,7 +244,19 @@ public partial class MainViewModel : BaseViewModel
 
         _messengerService.Register<TcpIsConnected>(this, (_, msg) =>
         {
-            MainThread.BeginInvokeOnMainThread(() => IsConnected = msg.Value);
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                IsConnected = msg.Value;
+
+                if (!msg.Value)
+                {
+                    AppState.SetVideoEnabled(false);
+                    AppState.SetRotatorEnabled(false);
+
+                    VideoStatusColor = _statusColours[Status.CommClosed];
+                    RotatorStatusColor = _statusColours[Status.CommClosed];
+                }
+            });
         });
 
     }

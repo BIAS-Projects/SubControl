@@ -753,6 +753,7 @@ namespace SubControlMAUI.ViewModels
         [RelayCommand]
         private async Task GoBack()
         {
+       
             await StopStreamIfActive();
             await Shell.Current.GoToAsync("..");
         }

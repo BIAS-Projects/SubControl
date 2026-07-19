@@ -528,7 +528,12 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
     // -------------------------------------------------------------------------
 
     [RelayCommand]
-    private async Task GoBack() => await Shell.Current.GoToAsync("..");
+    private async Task GoBack()
+    {
+        StatusText = string.Empty;
+        await Shell.Current.GoToAsync("..");
+    }
+    
 
     // -------------------------------------------------------------------------
     // Helpers

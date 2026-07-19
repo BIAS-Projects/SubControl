@@ -85,6 +85,25 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
     // Also acts as a guard so only one poll loop runs per function at a time.
     private readonly ConcurrentDictionary<string, bool> _wasOpenBeforeDisconnect = new();
 
+    // ── FIX (reopen race) ────────────────────────────────────────────────────
+    // Per-function lock serializing Open/Close. Without this, ClosePortAsync
+    // removes the function key from _workers BEFORE awaiting worker.StopAsync()
+    // / DisposeAsync(). If OpenPortAsync for the same function is called again
+    // in that window, neither the "already open" check nor the "port already
+    // open under another function" check catches it (the key is already gone),
+    // so a brand-new worker/native handle gets created while the old one is
+    // still mid-teardown. For workers with slow-to-release native resources
+    // (e.g. FlirSerialWorker's Camera.Close()), the new Initialize() can appear
+    // to succeed while writes silently no-op against a half-closed handle.
+    // Holding this lock across the *entire* body of both OpenPortAsync and
+    // ClosePortAsync guarantees a reopen cannot begin until the previous
+    // close's native teardown has actually returned.
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _portLocks = new();
+
+    private SemaphoreSlim GetPortLock(string function)
+        => _portLocks.GetOrAdd(function, _ => new SemaphoreSlim(1, 1));
+    // ─────────────────────────────────────────────────────────────────────────
+
     // Broadcast channel — all received messages from all ports flow here.
     // Status messages (disconnect / reconnect) also flow here with FunctionName = "SYSTEM".
     private readonly Channel<SerialMessage> _broadcastChannel =
@@ -172,6 +191,7 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
         {
             _registry.Unregister(reg.Identifier);
             _wasOpenBeforeDisconnect.TryRemove(function, out _);
+            _portLocks.TryRemove(function, out _);
             return OperationResult.Success();
         }
 
@@ -186,136 +206,157 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
     public async Task<OperationResult> OpenPortAsync(
         string function, CancellationToken token = default)
     {
-        _logger.LogInformation("Opening port for function {Function}", function);
-
-        var reg = _registry.AllRegistrations.FirstOrDefault(r => r.FunctionName == function);
-        if (reg is null)
-        {
-            _logger.LogWarning(
-                "Error in open port {Function}: {Success}. Reason: Not registered",
-                function, false);
-            return OperationResult.Failure($"Function '{function}' is not registered");
-        }
-
-        if (_workers.ContainsKey(function))
-        {
-            _logger.LogWarning("Port for function {Function} is already open", function);
-            return OperationResult.Success($"Port for function '{function}' is already open");
-        }
-
-        var conflictingFunction = _workers.Keys
-            .FirstOrDefault(f =>
-            {
-                var r = _registry.AllRegistrations.FirstOrDefault(x => x.FunctionName == f);
-                return r?.Identifier.PortName == reg.Identifier.PortName;
-            });
-
-        if (conflictingFunction is not null)
-        {
-            _logger.LogWarning(
-                "Error in open port {Function}: {Success}. Reason: Port already open under {ConflictingFunction}",
-                function, false, conflictingFunction);
-            return OperationResult.Failure(
-                $"Port for function '{function}' is already open under function '{conflictingFunction}'");
-        }
-
-        if (reg.CurrentPortPath is null)
-        {
-            var refreshResult = await RefreshPortPathAsync(function, token);
-            if (!refreshResult)
-            {
-                _logger.LogWarning(
-                    "Error in open port {Function}: {Success}. Reason: OS port not found or has changed for function",
-                    function, false);
-                return OperationResult.Failure(
-                    $"OS port not found or has changed for function '{function}'");
-            }
-        }
-
-        SerialWorkerType workerType = reg.SerialWorkerType;
-        int baudRate = reg.BaudRate;
-        var portPath = reg.Identifier.PortName;
-
+        var gate = GetPortLock(function);
+        await gate.WaitAsync(token);
         try
         {
-            var worker = _workerFactory.Create(portPath, baudRate, workerType, _registry);
-            if (!_workers.TryAdd(function, worker))
-                return OperationResult.Failure($"Concurrent open for '{function}'");
+            _logger.LogInformation("Opening port for function {Function}", function);
 
-            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_appToken, token);
-            var result = await worker.StartAsync(linkedCts.Token);
-
-            if (result.IsSuccess)
-            {
-                _logger.LogDebug(
-                    "Subscribing worker for {Function} - worker count now {Count}",
-                    function, _workers.Count);
-                SubscribeWorkerToBroadcast(function, worker, _appToken);
-                _logger.LogDebug("Subscribed worker for {Function}", function);
-                _logger.LogInformation(
-                    "Completed open port {Function} on {Port} as {Type}: {Success}",
-                    function, portPath, workerType, true);
-            }
-            else
+            var reg = _registry.AllRegistrations.FirstOrDefault(r => r.FunctionName == function);
+            if (reg is null)
             {
                 _logger.LogWarning(
-                    "Error in open port {Function}: {Success}. Reason: {Message}",
-                    function, false, result.Message);
-                _workers.TryRemove(function, out _);
+                    "Error in open port {Function}: {Success}. Reason: Not registered",
+                    function, false);
+                return OperationResult.Failure($"Function '{function}' is not registered");
             }
 
-            return result;
+            if (_workers.ContainsKey(function))
+            {
+                _logger.LogWarning("Port for function {Function} is already open", function);
+                return OperationResult.Success($"Port for function '{function}' is already open");
+            }
+
+            var conflictingFunction = _workers.Keys
+                .FirstOrDefault(f =>
+                {
+                    var r = _registry.AllRegistrations.FirstOrDefault(x => x.FunctionName == f);
+                    return r?.Identifier.PortName == reg.Identifier.PortName;
+                });
+
+            if (conflictingFunction is not null)
+            {
+                _logger.LogWarning(
+                    "Error in open port {Function}: {Success}. Reason: Port already open under {ConflictingFunction}",
+                    function, false, conflictingFunction);
+                return OperationResult.Failure(
+                    $"Port for function '{function}' is already open under function '{conflictingFunction}'");
+            }
+
+            if (reg.CurrentPortPath is null)
+            {
+                var refreshResult = await RefreshPortPathAsync(function, token);
+                if (!refreshResult)
+                {
+                    _logger.LogWarning(
+                        "Error in open port {Function}: {Success}. Reason: OS port not found or has changed for function",
+                        function, false);
+                    return OperationResult.Failure(
+                        $"OS port not found or has changed for function '{function}'");
+                }
+            }
+
+            SerialWorkerType workerType = reg.SerialWorkerType;
+            int baudRate = reg.BaudRate;
+            var portPath = reg.Identifier.PortName;
+
+            try
+            {
+                var worker = _workerFactory.Create(portPath, baudRate, workerType, _registry);
+                if (!_workers.TryAdd(function, worker))
+                    return OperationResult.Failure($"Concurrent open for '{function}'");
+
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_appToken, token);
+                var result = await worker.StartAsync(linkedCts.Token);
+
+                if (result.IsSuccess)
+                {
+                    _logger.LogDebug(
+                        "Subscribing worker for {Function} - worker count now {Count}",
+                        function, _workers.Count);
+                    SubscribeWorkerToBroadcast(function, worker, _appToken);
+                    _logger.LogDebug("Subscribed worker for {Function}", function);
+                    _logger.LogInformation(
+                        "Completed open port {Function} on {Port} as {Type}: {Success}",
+                        function, portPath, workerType, true);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "Error in open port {Function}: {Success}. Reason: {Message}",
+                        function, false, result.Message);
+                    _workers.TryRemove(function, out _);
+                }
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                _workers.TryRemove(function, out _);
+                _logger.LogError(
+                    ex, "Completed open port {Function}: {Success}", function, false);
+                return OperationResult.Failure(ex.Message);
+            }
         }
-        catch (Exception ex)
+        finally
         {
-            _workers.TryRemove(function, out _);
-            _logger.LogError(
-                ex, "Completed open port {Function}: {Success}", function, false);
-            return OperationResult.Failure(ex.Message);
+            gate.Release();
         }
     }
 
     public async Task<OperationResult> ClosePortAsync(
         string function, CancellationToken token = default)
     {
-        _logger.LogInformation("Closing port for function {Function}", function);
-
-        // TryRemove happens BEFORE StopAsync — SubscribeWorkerToBroadcast checks
-        // _workers.ContainsKey(function) when the channel completes to distinguish
-        // a deliberate close (key already gone) from an unexpected disconnect.
-        if (!_workers.TryRemove(function, out var worker))
-        {
-            _logger.LogWarning(
-                "Error in close port {Function}: {Success}. Reason: Not open",
-                function, false);
-            return OperationResult.Failure($"No open port for function '{function}'");
-        }
-
+        var gate = GetPortLock(function);
+        await gate.WaitAsync(token);
         try
         {
-            await worker.StopAsync();
-            await worker.DisposeAsync();
+            _logger.LogInformation("Closing port for function {Function}", function);
 
-            string key = _registry.ResolveKeyForFunction(function);
-            if (key is null)
+            // TryRemove happens BEFORE StopAsync — SubscribeWorkerToBroadcast checks
+            // _workers.ContainsKey(function) when the channel completes to distinguish
+            // a deliberate close (key already gone) from an unexpected disconnect.
+            // This ordering is unchanged by the lock — what the lock adds is that
+            // OpenPortAsync for this same function cannot start running until
+            // StopAsync/DisposeAsync below have actually returned.
+            if (!_workers.TryRemove(function, out var worker))
             {
                 _logger.LogWarning(
-                    "Error in close port {Function}: {Success}. Reason: No key found for function",
+                    "Error in close port {Function}: {Success}. Reason: Not open",
                     function, false);
-                return OperationResult.Failure($"No key found for function '{function}'");
+                return OperationResult.Failure($"No open port for function '{function}'");
             }
 
-            _registry.ClearPortPath(key);
+            try
+            {
+                await worker.StopAsync();
+                await worker.DisposeAsync();
 
-            _logger.LogInformation(
-                "Completed close port {Function}: {Success}", function, true);
-            return OperationResult.Success();
+                string key = _registry.ResolveKeyForFunction(function);
+                if (key is null)
+                {
+                    _logger.LogWarning(
+                        "Error in close port {Function}: {Success}. Reason: No key found for function",
+                        function, false);
+                    return OperationResult.Failure($"No key found for function '{function}'");
+                }
+
+                _registry.ClearPortPath(key);
+
+                _logger.LogInformation(
+                    "Completed close port {Function}: {Success}", function, true);
+                return OperationResult.Success();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex, "Exception in close port {Function}: {Success}", function, false);
+                return OperationResult.Failure(ex.Message);
+            }
         }
-        catch (Exception ex)
+        finally
         {
-            _logger.LogError(
-                ex, "Exception in close port {Function}: {Success}", function, false);
-            return OperationResult.Failure(ex.Message);
+            gate.Release();
         }
     }
 
@@ -402,16 +443,62 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
 
         if (_wasOpenBeforeDisconnect.ContainsKey(reg.FunctionName))
         {
+            // FIX: HandlePortRemovedAsync (the Linux/udev registry-diff disconnect
+            // path) marks _wasOpenBeforeDisconnect but does NOT start a
+            // PollForReconnectAsync loop — that only happens from
+            // SubscribeWorkerToBroadcast's "unexpected channel completion" branch,
+            // which is the Windows-style detection path. On platforms where
+            // UsbPortRegistry reliably fires Added/Removed (Linux, per the class
+            // comment above), this branch used to just log that "the poll loop
+            // will handle reopen" and return — but no poll loop existed, so the
+            // device would sit marked as disconnected forever, even though it was
+            // physically back and the OS had already assigned it a fresh path.
+            // Since we're handling the Added event, we already have everything
+            // needed to reopen directly — do that instead of waiting on a loop
+            // that was never started.
             _logger.LogInformation(
-                "Port {Function} added event received — poll loop will handle reopen on {Port}",
+                "Port {Function} added event received — attempting immediate reopen on {Port}",
                 reg.FunctionName, port.PortName);
+
+            _wasOpenBeforeDisconnect.TryRemove(reg.FunctionName, out _);
+
+            var reopenResult = await OpenPortAsync(reg.FunctionName, token);
+
+            if (reopenResult.IsSuccess)
+            {
+                await PublishStatusMessageAsync(
+                    reg.FunctionName,
+                    SerialMessageKind.Reconnected,
+                    $"Device reconnected and port reopened on {port.PortName}",
+                    token);
+
+                _logger.LogInformation(
+                    "Completed port add {Function}: {OldPort} → {NewPort} (auto-reopened): {Success}",
+                    reg.FunctionName, oldPort, port.PortName, true);
+            }
+            else
+            {
+                // Device node exists but isn't ready yet (e.g. still settling
+                // right after enumeration) — put the flag back and fall back to
+                // the poll loop as a backstop so it keeps retrying.
+                _wasOpenBeforeDisconnect.TryAdd(reg.FunctionName, true);
+
+                _logger.LogWarning(
+                    "Port {Function} added event received but immediate reopen failed ({Message}) — " +
+                    "starting reconnect poll as fallback",
+                    reg.FunctionName, reopenResult.Message);
+
+                _ = Task.Run(
+                    () => PollForReconnectAsync(reg.FunctionName, _appToken),
+                    _appToken);
+            }
 
             return new PortRemapResult(
                 Function: reg.FunctionName,
                 OldPort: oldPort,
                 NewPort: port.PortName,
                 Kind: PortChangeKind.Added,
-                Error: null);
+                Error: reopenResult.IsSuccess ? null : reopenResult.Message);
         }
 
         await PublishStatusMessageAsync(

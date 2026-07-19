@@ -20,8 +20,10 @@ namespace SubControlMAUI.ViewModels
         TcpSocketService _tCPService;
         IMessenger _messenger;
         ILogger<SettingsViewModel> _logger;
+        ApplicationStateService _applicationStateService;
 
-        [ObservableProperty]
+
+[ObservableProperty]
         [NotifyPropertyChangedFor(nameof(IsNotConnected))]
         bool isConnected = false;
 
@@ -31,15 +33,19 @@ namespace SubControlMAUI.ViewModels
         string statusText = "";
 
         public SettingsViewModel(SQLiteService sQLiteService, IAlertService alertService, TcpSocketService tCPService, IMessenger messenger,
-        ILogger<SettingsViewModel> logger) 
+        ILogger<SettingsViewModel> logger,
+        ApplicationStateService applicationStateService) 
         {
             Title = "Ethernet Settings";
             _sqliteService = sQLiteService;
             _alertService = alertService;
             _messenger = messenger;
             _logger = logger;
-            Setup();
+ 
             _tCPService = tCPService;
+            _applicationStateService = applicationStateService;
+
+            Setup();
 
 
             _messenger.Register<TcpIsConnected>(this, (r, m) =>
@@ -48,6 +54,14 @@ namespace SubControlMAUI.ViewModels
                 MainThread.BeginInvokeOnMainThread(() =>
                 {
                     IsConnected = m.Value;
+                    if (IsConnected)
+                    {
+                        StatusText = "Please disconnect before editing connection settings";
+                    }
+                    else
+                    {
+                        StatusText = "";
+                    }
 
                 });
 
@@ -57,6 +71,7 @@ namespace SubControlMAUI.ViewModels
         [RelayCommand]
         private async Task GoBack()
         {
+            StatusText = string.Empty;
             await Shell.Current.GoToAsync("..");
         }
 
@@ -211,12 +226,23 @@ namespace SubControlMAUI.ViewModels
 
         public void Setup()
         {
+
+
             InputIPAddress = _sqliteService.config.IPAddress;
             Port = _sqliteService.config.Port;
-            UpCommand = _sqliteService.config.CutterUpCommand;
-            DownCommand = _sqliteService.config.CutterDownCommand;
-            LeftCommand = _sqliteService.config.CutterLeftCommand;
-            RightCommand = _sqliteService.config.CutterRightCommand;
+
+        }
+
+        public void OnAppearing()
+        {
+            if (IsConnected)
+            {
+                StatusText = "Please disconnect before editing connection settings";
+            }
+            else
+            {
+                StatusText = "";
+            }
         }
 
     }

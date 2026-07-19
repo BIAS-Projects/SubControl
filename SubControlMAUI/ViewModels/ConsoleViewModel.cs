@@ -292,6 +292,7 @@ namespace SubControlMAUI.ViewModels
         [RelayCommand]
         private async Task GoBack()
         {
+            StatusText = string.Empty;
             if (IsConnected)
                 await Disconnect();
 

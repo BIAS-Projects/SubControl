@@ -290,7 +290,12 @@ public partial class RotatorViewModel : BaseViewModel
             data => MatchesCommandCode(data, "MML"));
 
     [RelayCommand]
-    private async Task GoBack() => await Shell.Current.GoToAsync("..");
+    private async Task GoBack()
+    {
+        StatusText = string.Empty;
+        await Shell.Current.GoToAsync("..");
+    }
+    
 
     // ─────────────────────────────────────────────────────────────────────────
     // Shared command runner
