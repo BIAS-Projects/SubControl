@@ -6,6 +6,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using SubControlMAUI.Services;
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Threading;
@@ -13,43 +14,25 @@ using System.Threading.Tasks;
 
 namespace SubControlMAUI.ViewModels
 {
-    /// <summary>
-    /// A single line in the output terminal, tagged with its source type for colour-coding.
-    /// </summary>
-    //public partial class TerminalLine : ObservableObject
-    //{
-    //    public string Text { get; }
-    //    public TerminalLineKind Kind { get; }
-    //    public DateTime Timestamp { get; } = DateTime.Now;
-
-    //    public TerminalLine(string text, TerminalLineKind kind = TerminalLineKind.Output)
-    //    {
-    //        Text = text;
-    //        Kind = kind;
-    //    }
-    //}
-
-    //public enum TerminalLineKind
-    //{
-    //    Info,       // status / connection messages  → blue/grey
-    //    Command,    // echoed user input             → yellow
-    //    Output,     // stdout from commands          → white
-    //    Error,      // stderr / failures             → red
-    //    Stream,     // live tail / streaming output  → green
-    //    Success,    // exit-code 0 confirmation      → green-muted
-    //}
-
-    public partial class PiViewModel : BaseViewModel
+    public partial class PiViewModel : BaseViewModel, IDisposable
     {
+        private const int MaxTerminalLines = 2000;
+
         // ── Dependencies ──────────────────────────────────────────────────────
         private readonly IMessenger _messenger;
         private readonly ILogger<PiViewModel> _logger;
         private readonly SQLiteService _sqliteService;
         private readonly SshService _sshService;
 
-        // ── Streaming session (tail / long-running process) ───────────────────
+        // ── Streaming session (used by deploy commands to auto-tail the
+        //    resulting service's journal once it's up) ─────────────────────────
         private SshStreamSession? _activeStream;
-        private CancellationTokenSource? _commandCts;
+
+        // ── Terminal output buffer (single Editor, newest line last — same
+        //    pattern as LogsViewModel.TailOutput) ──────────────────────────────
+        private readonly Queue<string> _terminalLines = new();
+
+        private bool _disposed;
 
         // ── Constructor ───────────────────────────────────────────────────────
         public PiViewModel(
@@ -64,31 +47,13 @@ namespace SubControlMAUI.ViewModels
             _sshService = sshService;
 
             Title = "Controller Management";
-            CommandHistory = new ObservableCollection<string>();
-            TerminalLines = new ObservableCollection<TerminalLine>();
         }
 
         // ── Observable properties ─────────────────────────────────────────────
 
-        //[ObservableProperty]
-        //[NotifyCanExecuteChangedFor(nameof(ConnectCommand))]
-        //[NotifyCanExecuteChangedFor(nameof(DisconnectCommand))]
-        //[NotifyCanExecuteChangedFor(nameof(RunCommandCommand))]
-        //[NotifyCanExecuteChangedFor(nameof(GetSystemInfoCommand))]
-        //[NotifyCanExecuteChangedFor(nameof(TailLogCommand))]
-        //[NotifyCanExecuteChangedFor(nameof(StopStreamCommand))]
-        //[NotifyCanExecuteChangedFor(nameof(DeployMediaMtxCommand))]
-        //[NotifyCanExecuteChangedFor(nameof(DeployDotNetAppCommand))]
-        //[NotifyCanExecuteChangedFor(nameof(DeployFfmpegCommand))]
-        //private bool isConnected;
-
         [ObservableProperty]
         [NotifyCanExecuteChangedFor(nameof(ConnectCommand))]
         [NotifyCanExecuteChangedFor(nameof(DisconnectCommand))]
-        [NotifyCanExecuteChangedFor(nameof(RunCommandCommand))]
-        [NotifyCanExecuteChangedFor(nameof(GetSystemInfoCommand))]
-        [NotifyCanExecuteChangedFor(nameof(TailLogCommand))]
-        [NotifyCanExecuteChangedFor(nameof(StopStreamCommand))]
         [NotifyCanExecuteChangedFor(nameof(DeployMediaMtxCommand))]
         [NotifyCanExecuteChangedFor(nameof(DeployDotNetAppCommand))]
         [NotifyCanExecuteChangedFor(nameof(DeployFfmpegCommand))]
@@ -110,13 +75,11 @@ namespace SubControlMAUI.ViewModels
         private string password = "1234";
 
         [ObservableProperty]
-        private string commandInput = string.Empty;
-
-        [ObservableProperty]
-        private string logFilePath = "/var/log/syslog";
-
-        [ObservableProperty]
         private bool isStreaming;
+
+        /// <summary>The full terminal output as a single block of text, newest line last.</summary>
+        [ObservableProperty]
+        private string terminalOutput = string.Empty;
 
         // ── MediaMTX deployment properties ────────────────────────────────────
 
@@ -165,14 +128,6 @@ namespace SubControlMAUI.ViewModels
         [ObservableProperty]
         [NotifyCanExecuteChangedFor(nameof(DeployFfmpegCommand))]
         private bool isFfmpegDeploying;
-
-        /// <summary>All lines displayed in the terminal panel.</summary>
-        public ObservableCollection<TerminalLine> TerminalLines { get; }
-
-        /// <summary>Previous commands for quick recall.</summary>
-        public ObservableCollection<string> CommandHistory { get; }
-
-        private int _historyIndex = -1;
 
         [ObservableProperty]
         [NotifyCanExecuteChangedFor(nameof(DeployDotNetAppCommand))]
@@ -267,147 +222,10 @@ namespace SubControlMAUI.ViewModels
 
         private bool CanDisconnect() => IsConnected;
 
-        // ── Command execution ─────────────────────────────────────────────────
-
-        [RelayCommand(CanExecute = nameof(CanRunCommand))]
-        private async Task RunCommand()
-        {
-            if (string.IsNullOrWhiteSpace(CommandInput)) return;
-
-            var cmd = CommandInput.Trim();
-            CommandInput = string.Empty;
-
-            // Store in history (most recent first, no duplicates)
-            if (CommandHistory.Count == 0 || CommandHistory[0] != cmd)
-                CommandHistory.Insert(0, cmd);
-            _historyIndex = -1;
-
-            AddLine($"$ {cmd}", TerminalLineKind.Command);
-
-            _commandCts = new CancellationTokenSource();
-            IsBusy = true;
-
-            try
-            {
-                var result = await _sshService.ExecuteCommandAsync(cmd, _commandCts.Token);
-
-                if (!string.IsNullOrWhiteSpace(result.StdOut))
-                {
-                    foreach (var line in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-                        AddLine(line, TerminalLineKind.Output);
-                }
-
-                if (!string.IsNullOrWhiteSpace(result.StdErr))
-                {
-                    foreach (var line in result.StdErr.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-                        AddLine(line, TerminalLineKind.Error);
-                }
-
-                AddLine(
-                    $"[exit {result.ExitCode} | {result.Duration.TotalMilliseconds:N0}ms]",
-                    result.Succeeded ? TerminalLineKind.Success : TerminalLineKind.Error);
-            }
-            catch (OperationCanceledException)
-            {
-                AddLine("Command cancelled.", TerminalLineKind.Info);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Command execution error");
-                AddLine($"Error: {ex.Message}", TerminalLineKind.Error);
-            }
-            finally
-            {
-                IsBusy = false;
-                _commandCts?.Dispose();
-                _commandCts = null;
-            }
-        }
-
-        private bool CanRunCommand() => IsConnected && !IsStreaming;
-
-        // ── System info shortcut ──────────────────────────────────────────────
-
-        [RelayCommand(CanExecute = nameof(CanRunCommand))]
-        private async Task GetSystemInfo()
-        {
-            AddLine("Fetching system info…", TerminalLineKind.Info);
-            IsBusy = true;
-            try
-            {
-                var result = await _sshService.GetSystemInfoAsync();
-                foreach (var line in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-                    AddLine(line, TerminalLineKind.Output);
-            }
-            catch (Exception ex)
-            {
-                AddLine($"Error: {ex.Message}", TerminalLineKind.Error);
-            }
-            finally { IsBusy = false; }
-        }
-
-        // ── Log tailing (streaming) ───────────────────────────────────────────
-
-        [RelayCommand(CanExecute = nameof(CanTailLog))]
-        private async Task TailLog()
-        {
-            await StopStreamIfActive();
-
-            AddLine($"▶ Tailing {LogFilePath}…", TerminalLineKind.Info);
-            IsStreaming = true;
-
-            _activeStream = _sshService.TailLog(LogFilePath);
-            _activeStream.LineReceived += OnStreamLine;
-        }
-
-        private bool CanTailLog() => IsConnected && !IsStreaming;
-
-        [RelayCommand(CanExecute = nameof(CanStopStream))]
-        private async Task StopStream()
-        {
-            await StopStreamIfActive();
-            AddLine("◼ Stream stopped.", TerminalLineKind.Info);
-        }
-
-        private bool CanStopStream() => IsStreaming;
-
-        private async Task StopStreamIfActive()
-        {
-            if (_activeStream is not null)
-            {
-                _activeStream.LineReceived -= OnStreamLine;
-                await _activeStream.DisposeAsync();
-                _activeStream = null;
-                IsStreaming = false;
-            }
-        }
-
-        private void OnStreamLine(string line)
-        {
-            // Marshal to the UI thread
-            MainThread.BeginInvokeOnMainThread(() => AddLine(line, TerminalLineKind.Stream));
-        }
-
         // ── Terminal helpers ──────────────────────────────────────────────────
 
         [RelayCommand]
-        private void ClearTerminal() => TerminalLines.Clear();
-
-        [RelayCommand]
-        private void HistoryUp()
-        {
-            if (CommandHistory.Count == 0) return;
-            _historyIndex = Math.Min(_historyIndex + 1, CommandHistory.Count - 1);
-            CommandInput = CommandHistory[_historyIndex];
-        }
-
-        [RelayCommand]
-        private void HistoryDown()
-        {
-            if (_historyIndex <= 0) { _historyIndex = -1; CommandInput = string.Empty; return; }
-            _historyIndex--;
-            CommandInput = CommandHistory[_historyIndex];
-        }
+        private void ClearTerminal() => ClearTerminalOutput();
 
         // ── MediaMTX deployment ──────────────────────────────────────────────
 
@@ -459,7 +277,6 @@ namespace SubControlMAUI.ViewModels
 
                 // Start tailing the service log automatically
                 await StopStreamIfActive();
-                LogFilePath = "/var/log/syslog";
                 AddLine("▶ Tailing syslog for MediaMTX output…", TerminalLineKind.Info);
                 IsStreaming = true;
                 _activeStream = _sshService.StartStreamingCommand(
@@ -699,7 +516,6 @@ namespace SubControlMAUI.ViewModels
                 AddLine($"✓ .NET App '{DotNetServiceName}' successfully registered and activated on boot.", TerminalLineKind.Success);
 
                 await StopStreamIfActive();
-                LogFilePath = "/var/log/syslog";
                 AddLine($"▶ Tracking systemd runtime feedback messages for {DotNetServiceName}...", TerminalLineKind.Info);
                 IsStreaming = true;
                 _activeStream = _sshService.StartStreamingCommand($"sudo journalctl -u {DotNetServiceName}.service -f -n 30 --no-pager");
@@ -747,33 +563,111 @@ namespace SubControlMAUI.ViewModels
 
         public void OnAppearing()
         {
+            _disposed = false;
             Host = _sqliteService.config.IPAddress;
         }
 
         [RelayCommand]
         private async Task GoBack()
         {
-       
+
             await StopStreamIfActive();
             await Shell.Current.GoToAsync("..");
         }
 
         // ── Private helpers ───────────────────────────────────────────────────
 
-        private void AddLine(string text, TerminalLineKind kind = TerminalLineKind.Output)
+        private async Task StopStreamIfActive()
         {
-            // Always called on the UI thread (callers from background threads use BeginInvokeOnMainThread)
-            TerminalLines.Add(new TerminalLine(text, kind));
-
-            // Cap history to avoid runaway memory on long sessions
-            while (TerminalLines.Count > 2000)
-                TerminalLines.RemoveAt(0);
+            if (_activeStream is not null)
+            {
+                _activeStream.LineReceived -= OnStreamLine;
+                await _activeStream.DisposeAsync();
+                _activeStream = null;
+                IsStreaming = false;
+            }
         }
 
+        private void OnStreamLine(string line)
+        {
+            if (_disposed)
+                return;
 
+            // Marshal to the UI thread
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                if (_disposed)
+                    return;
 
+                AddLine(line, TerminalLineKind.Stream);
+            });
+        }
 
+        /// <summary>
+        /// Clears the terminal buffer. Mirrors LogsViewModel.ClearTail() — kept
+        /// as its own helper so both the Clear button and Dispose() can reuse it
+        /// without duplicating the queue/property reset logic.
+        /// </summary>
+        private void ClearTerminalOutput()
+        {
+            _terminalLines.Clear();
+            TerminalOutput = string.Empty;
+        }
 
+        /// <summary>
+        /// Best-effort teardown for when the page is dismissed by something
+        /// other than the Back button (Shell popping it, OS swipe-back, etc.).
+        /// Unsubscribes from the active stream so a stray callback can't touch
+        /// a dead view model, and clears the terminal buffer so a large
+        /// accumulated buffer doesn't cost layout time if the view model is
+        /// ever reused. Safe to call more than once.
+        /// </summary>
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
 
+            _disposed = true;
+
+            if (_activeStream is not null)
+            {
+                var stream = _activeStream;
+                _activeStream = null;
+
+                stream.LineReceived -= OnStreamLine;
+
+                try
+                {
+                    _ = stream.DisposeAsync().AsTask();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Error disposing active stream (best-effort).");
+                }
+            }
+
+            IsStreaming = false;
+            ClearTerminalOutput();
+        }
+
+        private void AddLine(string text, TerminalLineKind kind = TerminalLineKind.Output)
+        {
+            _terminalLines.Enqueue(FormatLine(text, kind));
+
+            while (_terminalLines.Count > MaxTerminalLines)
+                _terminalLines.Dequeue();
+
+            TerminalOutput = string.Join(Environment.NewLine, _terminalLines);
+        }
+
+        private static string FormatLine(string text, TerminalLineKind kind) => kind switch
+        {
+            TerminalLineKind.Error => $"✗ {text}",
+            TerminalLineKind.Info => $"· {text}",
+            TerminalLineKind.Success => $"✓ {text}",
+            TerminalLineKind.Command => $"$ {text}",
+            TerminalLineKind.Stream => text,
+            _ => text,
+        };
     }
 }

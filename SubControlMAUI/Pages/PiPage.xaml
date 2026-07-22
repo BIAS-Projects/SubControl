@@ -284,121 +284,35 @@
                     </VerticalStackLayout>
                 </Border>
 
-                <!-- Terminal output -->
+                <!-- Terminal output: single read-only, auto-growing Editor
+                     (same pattern as LogsPage's tail output) so multi-line
+                     output can be drag-selected and copied at once. -->
+                <Label Text="Terminal Output"
+                       FontAttributes="Bold"
+                       FontSize="13"
+                       TextColor="Gray" />
+
                 <Border Stroke="Gray"
                         StrokeThickness="1"
                         Padding="6"
-                        HeightRequest="300">
-                    <CollectionView x:Name="TerminalView"
-                                    ItemsSource="{Binding TerminalLines}"
-                                    SelectionMode="None">
-
-                        <CollectionView.ItemTemplate>
-                            <DataTemplate x:DataType="vm:TerminalLine">
-                                <Editor Text="{Binding Text}"
-                                        FontFamily="Courier New"
-                                        FontSize="12"
-                                        IsReadOnly="True"
-                                        AutoSize="TextChanges"
-                                        BackgroundColor="Transparent"
-                                        Margin="0">
-                                    <Editor.Triggers>
-                                        <DataTrigger TargetType="Editor" Binding="{Binding Kind}" Value="Command">
-                                            <Setter Property="TextColor" Value="Orange" />
-                                            <Setter Property="FontAttributes" Value="Bold" />
-                                        </DataTrigger>
-                                        <DataTrigger TargetType="Editor" Binding="{Binding Kind}" Value="Error">
-                                            <Setter Property="TextColor" Value="Red" />
-                                        </DataTrigger>
-                                        <DataTrigger TargetType="Editor" Binding="{Binding Kind}" Value="Info">
-                                            <Setter Property="TextColor" Value="CornflowerBlue" />
-                                        </DataTrigger>
-                                        <DataTrigger TargetType="Editor" Binding="{Binding Kind}" Value="Success">
-                                            <Setter Property="TextColor" Value="LimeGreen" />
-                                        </DataTrigger>
-                                        <DataTrigger TargetType="Editor" Binding="{Binding Kind}" Value="Stream">
-                                            <Setter Property="TextColor" Value="MediumAquamarine" />
-                                        </DataTrigger>
-                                    </Editor.Triggers>
-                                </Editor>
-                            </DataTemplate>
-                        </CollectionView.ItemTemplate>
-
-                        <CollectionView.EmptyView>
-                            <Label Text="No output yet. Connect and run a command."
-                                   HorizontalOptions="Center"
-                                   VerticalOptions="Center"
-                                   Margin="0,40"
-                                   TextColor="Gray" />
-                        </CollectionView.EmptyView>
-                    </CollectionView>
+                        HeightRequest="320">
+                    <ScrollView x:Name="TerminalScrollView">
+                        <Editor x:Name="TerminalOutputEditor"
+                                Text="{Binding TerminalOutput, Mode=OneWay}"
+                                FontFamily="Courier New"
+                                FontSize="12"
+                                IsReadOnly="True"
+                                AutoSize="TextChanges"
+                                BackgroundColor="Transparent"
+                                Placeholder="No output yet. Connect to get started."
+                                HorizontalOptions="Fill" />
+                    </ScrollView>
                 </Border>
 
-                <!-- Command input -->
-                <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto"
-                      ColumnSpacing="6">
-
-                    <Label Grid.Column="0"
-                           Text="$"
-                           FontSize="16"
-                           FontAttributes="Bold"
-                           VerticalOptions="Center" />
-
-                    <Entry Grid.Column="1"
-                           Placeholder="Enter command"
-                           Text="{Binding CommandInput}"
-                           ReturnCommand="{Binding RunCommandCommand}"
-                           IsEnabled="{Binding IsConnected}"
-                           FontFamily="Courier New"
-                           FontSize="13" />
-
-                    <Button Grid.Column="2"
-                            Text="Up"
-                            Padding="10,6"
-                            Command="{Binding HistoryUpCommand}"
-                            IsEnabled="{Binding IsConnected}" />
-
-                    <Button Grid.Column="3"
-                            Text="Down"
-                            Padding="10,6"
-                            Command="{Binding HistoryDownCommand}"
-                            IsEnabled="{Binding IsConnected}" />
-
-                    <Button Grid.Column="4"
-                            Text="Run"
-                            Command="{Binding RunCommandCommand}"
-                            IsEnabled="{Binding IsConnected}" />
-                </Grid>
-
                 <!-- Toolbar -->
-                <ScrollView Orientation="Horizontal">
-                    <HorizontalStackLayout Spacing="8">
-
-                        <Button Text="Clear"
-                                Command="{Binding ClearTerminalCommand}" />
-
-                        <Button Text="Sys Info"
-                                Command="{Binding GetSystemInfoCommand}"
-                                IsEnabled="{Binding IsConnected}" />
-
-                        <Label Text="Log:" VerticalOptions="Center" />
-
-                        <Entry Text="{Binding LogFilePath}"
-                               WidthRequest="220"
-                               FontFamily="Courier New"
-                               FontSize="12"
-                               IsEnabled="{Binding IsConnected}" />
-
-                        <Button Text="Tail"
-                                Command="{Binding TailLogCommand}"
-                                IsEnabled="{Binding IsConnected}" />
-
-                        <Button Text="Stop"
-                                Command="{Binding StopStreamCommand}"
-                                IsEnabled="{Binding IsStreaming}" />
-
-                    </HorizontalStackLayout>
-                </ScrollView>
+                <Button Text="Clear"
+                        Command="{Binding ClearTerminalCommand}"
+                        HorizontalOptions="Start" />
 
             </VerticalStackLayout>
         </ScrollView>

@@ -22,8 +22,8 @@ try
 
     var host = Host.CreateDefaultBuilder(args)
         .UseSerilog((context, services, configuration) => configuration
-            .MinimumLevel.ControlledBy(levelSwitch)
             .ReadFrom.Configuration(context.Configuration)
+            .MinimumLevel.ControlledBy(levelSwitch)
             .ReadFrom.Services(services)
             .Enrich.FromLogContext())
 

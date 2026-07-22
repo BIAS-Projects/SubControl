@@ -105,6 +105,16 @@ namespace SubControlMAUI.Services
     /// a key) will block waiting for the completion marker until the 5-minute safety
     /// timeout cancels it. Password-requiring commands should keep piping credentials in,
     /// the way the deployment methods on <see cref="SshService"/> already do.
+    ///
+    /// Reentrant disposal: an unexpected connection drop can be detected from two
+    /// places at once — this session's own reader loop, and the exec channel used by
+    /// a concurrent <see cref="SshService.ExecuteCommandAsync"/> call — both of which
+    /// funnel into <see cref="SshService"/>'s connection-lost handling, which in turn
+    /// disposes this session. That disposal can happen *while* <see cref="ExecuteAsync"/>
+    /// is still unwinding on the stack that triggered it (see the catch block below),
+    /// so both <see cref="DisposeAsync"/> and the command-lock release in
+    /// <see cref="ExecuteAsync"/> are written to tolerate the session having already
+    /// been torn down.
     /// </summary>
     public sealed class SshInteractiveSession : IAsyncDisposable
     {
@@ -136,6 +146,12 @@ namespace SubControlMAUI.Services
         private readonly object _bufferLock = new();
         private readonly StringBuilder _buffer = new();
         private readonly SemaphoreSlim _commandLock = new(1, 1); // one command in flight at a time
+
+        // Guards against DisposeAsync running more than once — e.g. once from a
+        // ConnectionLost handler that fires while ExecuteAsync is still unwinding
+        // on the stack that detected the drop, and again from a caller further up
+        // (CloseInteractiveSessionAsync / DisconnectAsync) doing its own cleanup.
+        private bool _disposed;
 
         // How far into _buffer we've already confirmed there's no marker match.
         // Re-scanning from here (rather than from index 0) on every chunk keeps
@@ -430,6 +446,10 @@ namespace SubControlMAUI.Services
                 {
                     lock (_bufferLock) { _pendingCompletion = null; _pendingMarkerRegex = null; }
                     _logger.LogWarning(ex, "SSH connection lost while sending command: {Command}", command);
+                    // This can synchronously dispose this very session (see class
+                    // remarks) before control returns here, which is why the
+                    // finally block below tolerates _commandLock already being
+                    // disposed rather than assuming it's still alive.
                     await _onConnectionLost(ex);
                     throw;
                 }
@@ -497,12 +517,40 @@ namespace SubControlMAUI.Services
             }
             finally
             {
-                _commandLock.Release();
+                // A ConnectionLost handler triggered from the catch blocks above
+                // can synchronously call DisposeAsync() on this same session
+                // before this finally runs (see class remarks), which disposes
+                // _commandLock out from under us. Releasing a disposed
+                // SemaphoreSlim throws ObjectDisposedException; since the lock
+                // no longer serves any purpose once the session is torn down,
+                // that specific exception is swallowed here rather than masking
+                // whatever connection error the caller is already unwinding with.
+                try
+                {
+                    _commandLock.Release();
+                }
+                catch (ObjectDisposedException)
+                {
+                    _logger.LogDebug("Command lock was already disposed (session torn down concurrently) — ignoring.");
+                }
             }
         }
 
         public async ValueTask DisposeAsync()
         {
+            // Guards against double-disposal: an unexpected connection drop can be
+            // detected from more than one place at once (this session's reader
+            // loop, and a concurrent stateless command's exec channel), both of
+            // which route through SshService's connection-lost handling and can
+            // end up calling this more than once, plus a subsequent explicit
+            // CloseInteractiveSessionAsync()/DisconnectAsync() doing its own
+            // cleanup. Without this guard, a second call disposes an
+            // already-disposed ShellStream/CancellationTokenSource/SemaphoreSlim.
+            if (_disposed)
+                return;
+
+            _disposed = true;
+
             _readerCts.Cancel();
             try { await _readerTask.WaitAsync(TimeSpan.FromSeconds(3)); } catch { /* best-effort */ }
 

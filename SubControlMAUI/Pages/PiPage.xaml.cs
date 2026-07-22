@@ -25,6 +25,13 @@ public partial class PiPage : ContentPage
         _viewModel.OnAppearing();
     }
 
+
+    protected override async void OnDisappearing()
+    {
+        base.OnDisappearing();
+        _viewModel.Dispose();
+    }
+
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(PiViewModel.DeployProgress))

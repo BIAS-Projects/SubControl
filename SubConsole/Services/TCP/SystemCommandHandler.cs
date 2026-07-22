@@ -94,7 +94,7 @@ public sealed class TcpSystemCommandHandler
     /// </summary>
     private Task<string> HandleLoggingAsync(TCPMessageBody<string> message, CancellationToken token)
     {
-        _logger.LogInformation(
+        _logger.LogCritical(
             "Changing log level to {Level}",
             message.Data);
 
@@ -103,14 +103,14 @@ public sealed class TcpSystemCommandHandler
 
         if (!Enum.TryParse<LogEventLevel>(message.Data, out var level))
         {
-            _logger.LogWarning("LOGGING failed: unrecognised level {Level}", message.Data);
+            _logger.LogCritical("LOGGING failed: unrecognised level {Level}", message.Data);
             return Task.FromResult(ErrorResponse($"Unknown logging level: {message.Data}"));
         }
 
         var previous = _levelSwitch.MinimumLevel;
         _levelSwitch.MinimumLevel = level;
 
-        _logger.LogInformation(
+        _logger.LogCritical(
             "Log level changed from {Previous} to {New}",
             previous, level);
 

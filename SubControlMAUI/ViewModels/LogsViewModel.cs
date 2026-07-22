@@ -157,6 +157,9 @@ namespace SubControlMAUI.ViewModels
         {
             // Route every incoming TCP message through the dispatcher so
             // SendAndWaitAsync (used by UpdateLogLevel) can resolve pending requests.
+            // Idempotent — safe to call again after Dispose() unregistered us,
+            // e.g. when the page is revisited.
+            _messengerService.Unregister<TcpDataReceivedMessage>(this);
             _messengerService.Register<TcpDataReceivedMessage>(this, (_, msg) =>
             {
                 _dispatcher.HandleIncoming(
@@ -206,7 +209,7 @@ namespace SubControlMAUI.ViewModels
 
         [ObservableProperty]
         [NotifyCanExecuteChangedFor(nameof(DownloadLogCommand))]
-        private string downloadDestinationFolder = string.Empty;
+        private string downloadDestinationFolder = "C:";
 
         [ObservableProperty]
         [NotifyCanExecuteChangedFor(nameof(StartTailCommand))]
@@ -568,6 +571,7 @@ namespace SubControlMAUI.ViewModels
 
             LogFolderPath = DotNetAppDefaultFolder;
 
+            RegisterMessages();
 
             // Idempotent, so it doesn't matter whether Connect() on this page
             // already subscribed for a connection made right here.
