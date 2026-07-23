@@ -352,6 +352,7 @@ public partial class FeatureOptionViewModel : BaseViewModel
                         {
                             // Already present — just refresh description and reset selection
                             existing.Description = port.Description;
+                            existing.PortPath = port.PortPath;
                             existing.SetSelectionSilently("Unselected");
                         }
                         else if (i < UsbDevices.Count)
@@ -359,6 +360,7 @@ public partial class FeatureOptionViewModel : BaseViewModel
                             // Reuse an existing slot at this index position
                             UsbDevices[i].Name = port.Key;
                             UsbDevices[i].Description = port.Description;
+                            UsbDevices[i].PortPath = port.PortPath;
                             UsbDevices[i].SetSelectionSilently("Unselected");
                         }
                         else
@@ -368,6 +370,7 @@ public partial class FeatureOptionViewModel : BaseViewModel
                             {
                                 Name = port.Key,
                                 Description = port.Description,
+                                PortPath = port.PortPath,
                                 OnFunctionSelected = HandleSelection
                             };
                             newDevice.SetSelectionSilently("Unselected");
@@ -380,6 +383,7 @@ public partial class FeatureOptionViewModel : BaseViewModel
                     {
                         UsbDevices[i].Name = $"USB{i + 1}";
                         UsbDevices[i].Description = null;
+                        UsbDevices[i].PortPath = "";
                         UsbDevices[i].SetSelectionSilently("Unselected");
                     }
                 }

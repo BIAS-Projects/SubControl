@@ -99,7 +99,7 @@ namespace SubControlMAUI.ViewModels
         {
             if (! await ValidateSettings())
             {
-                await _alertService.ShowAlertAsync("Error", $"Settings Input Is Incorrect", "OK");
+                await _alertService.ShowAlertAsync("Error", $"Settings Are Incorrect", "OK");
                 return;
             }
             try
@@ -176,27 +176,7 @@ namespace SubControlMAUI.ViewModels
                // await _alertService.ShowAlertAsync("Error", $"Port Is Empty", "OK");
                 return false;
             }
-            if (string.IsNullOrWhiteSpace(UpCommand))
-            {
-           
-               // await _alertService.ShowAlertAsync("Error", $"Up Command Is Empty", "OK");
-                return false;
-            }
-            if (string.IsNullOrWhiteSpace(DownCommand))
-            {
-                await _alertService.ShowAlertAsync("Error", $"Down Command Is Empty", "OK");
-                return false;
-            }
-            if (string.IsNullOrWhiteSpace(LeftCommand))
-            {
-                await _alertService.ShowAlertAsync("Error", $"Left Command Is Empty", "OK");
-                return false;
-            }
-            if (string.IsNullOrWhiteSpace(RightCommand))
-            {
-                await _alertService.ShowAlertAsync("Error", $"Right Command Is Empty", "OK");
-                return false;
-            }
+  
 
             if (!IPAddress.TryParse(InputIPAddress, out IPAddress ip))
             {

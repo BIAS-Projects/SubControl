@@ -16,6 +16,8 @@
     <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
     <PackageReference Include="sqlite-net-pcl" Version="1.9.172" />
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" />
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3.android" Version="2.1.12" />
     <PackageReference Include="System.ComponentModel.Annotations" Version="5.0.0" />
     <PackageReference Include="System.Device.Gpio" Version="4.1.0" />
     <PackageReference Include="System.IO.Ports" Version="10.0.4" />

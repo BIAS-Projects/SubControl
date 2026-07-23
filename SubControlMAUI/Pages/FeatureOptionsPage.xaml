@@ -75,7 +75,7 @@
                         </Border.StrokeShape>
                         <Grid ColumnDefinitions="*,*" Padding="5">
                             <!-- USB Device Name -->
-                            <Label Text="{Binding Name}"
+                            <Label Text="{Binding PortPath}"
                            VerticalOptions="Center"
                            FontAttributes="Bold" />
                             <!-- Function Picker -->
