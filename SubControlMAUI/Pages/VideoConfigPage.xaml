@@ -73,7 +73,7 @@
                         </Border.StrokeShape>
 
                         <Grid ColumnDefinitions="*,*" Padding="5">
-                        <Label Text="{Binding DeviceId}"
+                            <Label Text="{Binding FriendlyName}"
                VerticalOptions="Center"
                FontAttributes="Bold"
   />

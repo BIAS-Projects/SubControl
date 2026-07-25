@@ -1,20 +1,15 @@
 ﻿using CommunityToolkit.Mvvm.ComponentModel;
-
 namespace SubControlMAUI.Models;
 
 public partial class UsbDevice : ObservableObject
 {
     public Action<UsbDevice, string> OnFunctionSelected { get; set; }
-
     [ObservableProperty]
     private string _name;
-
     [ObservableProperty]
     private string _description = "";
-
     [ObservableProperty]
     private string _portPath = "";
-
     private string _selectedFunction = "Unselected";
     public string SelectedFunction
     {
@@ -28,7 +23,6 @@ public partial class UsbDevice : ObservableObject
             OnFunctionSelected?.Invoke(this, value);
         }
     }
-
     // Picker binds to this — replaced wholesale, no mutation
     private List<string> _availableFunctions = new()
         { "Unselected", "TOM Input", "TOM Output", "TOM AHRS", "TOM GNSS", "TOM FLIR", "ROTOR" };
@@ -41,13 +35,11 @@ public partial class UsbDevice : ObservableObject
             OnPropertyChanged();
         }
     }
-
     public void SetSelectionSilently(string value)
     {
         _selectedFunction = string.IsNullOrEmpty(value) ? "Unselected" : value;
         OnPropertyChanged(nameof(SelectedFunction));
     }
-
     public void UpdateAvailableFunctions(List<string> available)
     {
         AvailableFunctions = new List<string>(available);

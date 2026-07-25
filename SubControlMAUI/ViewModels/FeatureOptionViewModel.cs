@@ -1,6 +1,4 @@
-﻿
-
-using CommunityToolkit.Mvvm.ComponentModel;
+﻿using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.Logging;
@@ -11,6 +9,7 @@ using SubControlMAUI.ViewModels;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using static SubControlMAUI.Models.UsbDeviceInfo;
 using static System.Net.Mime.MediaTypeNames;
 
@@ -30,9 +29,6 @@ public partial class FeatureOptionViewModel : BaseViewModel
     [ObservableProperty]
     public ObservableCollection<UsbSerialPortInfo> availablePorts = new();
 
-    //private readonly List<string> _allFunctions = new()
-    //    { "Unselected", "TOM Input", "TOM Output", "TOM AHRS", "TOM GNSS", "TOM FLIR", "ROTOR" };
-
     private readonly List<FunctionToPortEntry> _allFunctions = new()
 {
     new FunctionToPortEntry { FunctionName = Feature.TOMInput,  BaudRate = "115200", WorkerType = SerialWorkerType.Text.ToString() },
@@ -43,9 +39,23 @@ public partial class FeatureOptionViewModel : BaseViewModel
     new FunctionToPortEntry { FunctionName = Feature.RotatorName,      BaudRate = "9600", WorkerType = SerialWorkerType.Text.ToString() },
 };
 
+    // Matches a trailing "-ifNN" (optionally followed by "-portN") on the PortPath,
+    // e.g. ".../usb-FTDI_..._BP04126-01-if03-port0" -> base=".../usb-FTDI_..._BP04126-01", num=3
+    private static readonly Regex PortPathIfRegex =
+        new(@"^(?<base>.+)-if(?<num>\d+)(-port\d+)?$", RegexOptions.Compiled);
+
+    private static (string GroupKey, int IfNum) GetPortSortKey(UsbSerialPortInfo port)
+    {
+        var path = port.PortPath ?? "";
+        var match = PortPathIfRegex.Match(path);
+        return match.Success
+            ? (match.Groups["base"].Value, int.Parse(match.Groups["num"].Value))
+            : (path, -1);
+    }
+
     public FeatureOptionViewModel(IMessenger messengerService,
         ILogger<FeatureOptionViewModel> loggerService,
-        INavigationService navigationService, 
+        INavigationService navigationService,
         IAlertService alertService,
         TcpSocketService tcpService,
         ApplicationStateService applicationStateService)
@@ -102,17 +112,17 @@ public partial class FeatureOptionViewModel : BaseViewModel
 
 
 
-      //      await _alertService.ShowAlertAsync("Information", $"TcpDataReceivedMessage: {msg.Value}", "OK");
+            //      await _alertService.ShowAlertAsync("Information", $"TcpDataReceivedMessage: {msg.Value}", "OK");
         });
 
         _messengerService.Register<TcpSendRequestMessage>(this, async (r, msg) =>
         {
             //_alertService.ShowAlertAsync("Information", $"TcpSendRequestMessage: {msg}", "OK");
 
-         //   await MainThread.InvokeOnMainThreadAsync(async () =>
-         //   {
-         //       await _alertService.ShowAlertAsync("Information", $"TcpSendRequestMessage: {msg.Value}", "OK");
-         //   });
+            //   await MainThread.InvokeOnMainThreadAsync(async () =>
+            //   {
+            //       await _alertService.ShowAlertAsync("Information", $"TcpSendRequestMessage: {msg.Value}", "OK");
+            //   });
 
         });
 
@@ -123,7 +133,7 @@ public partial class FeatureOptionViewModel : BaseViewModel
                 StatusText = msg.Value;
             });
 
-            
+
 
         });
 
@@ -145,7 +155,7 @@ public partial class FeatureOptionViewModel : BaseViewModel
         _messengerService.Register<TcpAckTimeoutMessage>(this, (r, msg) =>
         {
             // _alertService.ShowAlertAsync("Information", $"TcpAckTimeoutMessage: {msg}", "OK");
-            MainThread.BeginInvokeOnMainThread(() => 
+            MainThread.BeginInvokeOnMainThread(() =>
             {
                 StatusText = $"No response to: {msg.Command}";
             });
@@ -153,7 +163,7 @@ public partial class FeatureOptionViewModel : BaseViewModel
 
         _messengerService.Register<TcpNackMessage>(this, (r, msg) =>
         {
-         //   _alertService.ShowAlertAsync("Information", $"TcpNackMessage: {msg}", "OK");
+            //   _alertService.ShowAlertAsync("Information", $"TcpNackMessage: {msg}", "OK");
 
             MainThread.BeginInvokeOnMainThread(() =>
             {
@@ -222,36 +232,6 @@ public partial class FeatureOptionViewModel : BaseViewModel
             _isRebuilding = false;
         }
     }
-
-    //[RelayCommand]
-    //public async Task QueryDevices() {
-    //    IsBusy = true;
-    //    try
-    //    {
-
-    //        IsBusy = true;
-    //        //       var bytes = System.Text.Encoding.UTF8.GetBytes(text);
-
-    //        TCPMessageBody<string> command = new TCPMessageBody<string>(nameof(FeatureOptionViewModel), "LIST DEVICES", "");
-    //        if(await _tcpService.SendCommandAsync(command, _cts.Token))
-    //        {
-    //            UsbDetailsDownloaded = true;
-    //            StatusText = "Downloaded";
-
-    //        }
-    //        else
-    //        {
-    //            StatusText = "Error";
-    //        }
-
-
-
-    //    }
-    //    finally
-    //    {
-    //        IsBusy = false;
-    //    }
-    //}
 
     [RelayCommand]
     public async Task Save()
@@ -330,20 +310,26 @@ public partial class FeatureOptionViewModel : BaseViewModel
                 return;
             }
 
+            // Order so related interfaces (same base id) group together, if00 → if01 → if02...
+            var orderedPorts = response.Data
+                .OrderBy(p => GetPortSortKey(p).GroupKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(p => GetPortSortKey(p).IfNum)
+                .ToList();
+
             await MainThread.InvokeOnMainThreadAsync(() =>
             {
                 // 1. Update the raw ports collection
                 AvailablePorts.Clear();
-                foreach (var port in response.Data)
+                foreach (var port in orderedPorts)
                     AvailablePorts.Add(port);
 
                 _isRebuilding = true;
                 try
                 {
                     // 2. For each received port, find an existing UsbDevice by Key or add a new one
-                    for (int i = 0; i < response.Data.Count; i++)
+                    for (int i = 0; i < orderedPorts.Count; i++)
                     {
-                        var port = response.Data[i];
+                        var port = orderedPorts[i];
 
                         // Try to find an existing slot that already represents this port
                         var existing = UsbDevices.FirstOrDefault(d => d.Name == port.Key);
@@ -379,7 +365,7 @@ public partial class FeatureOptionViewModel : BaseViewModel
                     }
 
                     // 3. Reset any slots beyond the received port count back to defaults
-                    for (int i = response.Data.Count; i < UsbDevices.Count; i++)
+                    for (int i = orderedPorts.Count; i < UsbDevices.Count; i++)
                     {
                         UsbDevices[i].Name = $"USB{i + 1}";
                         UsbDevices[i].Description = null;
@@ -393,7 +379,7 @@ public partial class FeatureOptionViewModel : BaseViewModel
                 }
 
                 UsbDetailsDownloaded = true;
-                StatusText = $"Downloaded {response.Data.Count} port(s)";
+                StatusText = $"Downloaded {orderedPorts.Count} port(s)";
             });
 
             // Chain: now request what's already registered so selections can be restored
