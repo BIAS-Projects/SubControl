@@ -320,6 +320,7 @@ public partial class PeriscopeViewModel : BaseViewModel, IDisposable
 
         MainThread.BeginInvokeOnMainThread(() => Fps = 0);
         FrameInvalidated?.Invoke();
+        StatusText = "Stopped";
     }
 
     // -------------------------------------------------------------------------

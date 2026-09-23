@@ -995,7 +995,7 @@ public partial class MainViewModel : BaseViewModel
                 _timeout) is null)
         {
             StatusText = "Enable failed — TOM did not confirm power on";
-            return false;
+         //   return false;
         }
 
         return true;

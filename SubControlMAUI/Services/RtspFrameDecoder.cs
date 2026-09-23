@@ -407,9 +407,11 @@ public sealed unsafe class RtspFrameDecoder : IRtspFrameDecoder
             if (codecCtx != null) { var c = codecCtx; ffmpeg.avcodec_free_context(&c); }
             if (fmtCtx != null) { var f = fmtCtx; ffmpeg.avformat_close_input(&f); }
             if (frameBuffer != IntPtr.Zero) Marshal.FreeHGlobal(frameBuffer);
-
+           // if(_running) RaiseStatus("Stopped");
             _running = false;
-            RaiseStatus("Stopped");
+           
+
+           
         }
     }
 

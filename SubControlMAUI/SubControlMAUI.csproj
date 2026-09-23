@@ -1,8 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<TargetFrameworks>net10.0-android;net10.0-ios;net10.0-maccatalyst</TargetFrameworks>
-		<TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('windows'))">$(TargetFrameworks);net10.0-windows10.0.19041.0</TargetFrameworks>
+		<!--<TargetFrameworks>net10.0-android;net10.0-ios;net10.0-maccatalyst</TargetFrameworks>
+		<TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('windows'))">$(TargetFrameworks);net10.0-windows10.0.19041.0</TargetFrameworks>-->
+
+		<TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
 
 		<!-- Note for MacCatalyst:
 		The default runtime is maccatalyst-x64, except in Release config, in which case the default is maccatalyst-x64;maccatalyst-arm64.
@@ -48,16 +50,38 @@
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 	</PropertyGroup>
 
-<PropertyGroup Condition="'$(TargetFramework)'=='net10.0-windows10.0.19041.0'">
-  <PublishSingleFile>true</PublishSingleFile>
-  <SelfContained>true</SelfContained>
-  <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-  <EnableMsixTooling>true</EnableMsixTooling>
-  <UseMonoRuntime>false</UseMonoRuntime>
-  <WindowsPackageType>None</WindowsPackageType>
-  <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
-</PropertyGroup>
+	<!--<PropertyGroup Condition="'$(TargetFramework)'=='net10.0-windows10.0.19041.0'">
 
+		<RuntimeIdentifier>win-x64</RuntimeIdentifier>
+
+		<SelfContained>true</SelfContained>
+		<WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+
+		<PublishSingleFile>false</PublishSingleFile>
+		<PublishTrimmed>false</PublishTrimmed>
+
+		<WindowsPackageType>None</WindowsPackageType>
+		<EnableMsixTooling>false</EnableMsixTooling>
+
+	</PropertyGroup>-->
+
+
+	<PropertyGroup Condition="'$(TargetFramework)'=='net10.0-windows10.0.19041.0'">
+
+		<RuntimeIdentifier>win-x64</RuntimeIdentifier>
+
+		<SelfContained>true</SelfContained>
+
+		<WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+
+		<PublishSingleFile>false</PublishSingleFile>
+		<PublishTrimmed>false</PublishTrimmed>
+
+	</PropertyGroup>
+
+	<PropertyGroup>
+		<SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+	</PropertyGroup>
 
 	<ItemGroup>
 		<!-- App Icon -->
@@ -77,6 +101,11 @@
 	</ItemGroup>
 
 	<ItemGroup>
+	  <Content Remove="Resources\Images\light_padlock.png" />
+	  <Content Remove="Resources\Images\light_padlock_unlock.png" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<PackageReference Include="CommunityToolkit.Maui" Version="13.0.0" />
 		<PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
 		<PackageReference Include="FFmpeg.AutoGen" Version="8.0.0.1" />
@@ -86,9 +115,13 @@
 		<PackageReference Include="SkiaSharp.Views.Maui.Core" Version="3.119.2" />
 		<PackageReference Include="sqlite-net-pcl" Version="1.9.172" />
 		<PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" />
-		<PackageReference Include="SQLitePCLRaw.lib.e_sqlite3.android" Version="2.1.12" />
+
 		<PackageReference Include="SSH.NET" Version="2025.1.0" />
 		<PackageReference Include="System.Device.Gpio" Version="4.1.0" />
+	</ItemGroup>
+
+	<ItemGroup Condition="'$(TargetFramework)'=='net10.0-android'">
+		<PackageReference Include="SQLitePCLRaw.lib.e_sqlite3.android" Version="2.1.12" />
 	</ItemGroup>
 
 	<ItemGroup>

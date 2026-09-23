@@ -12,7 +12,7 @@ Shell.NavBarIsVisible="False">
 
 
     <Grid>
-        <Grid RowDefinitions="Auto,Auto,Auto,*,Auto"
+        <Grid RowDefinitions="Auto,Auto,Auto,*,Auto,Auto"
               Padding="10">
 
             <!-- CUSTOM TITLE BAR -->
@@ -116,9 +116,29 @@ Shell.NavBarIsVisible="False">
                         BorderWidth="0" />
             </Grid>
 
+            <!--<Grid Grid.Row="5"
+                 ColumnDefinitions="*,*,*"
+                 ColumnSpacing="20"
+                 Margin="0,30,0,0">
+ 
+
+                <ImageButton
+                    Grid.Column="1"
+                      Source="{Binding RotatorBrakeButtonImage}"
+                      WidthRequest="{Binding ButtonSize}"
+                      HeightRequest="{Binding ButtonSize}"
+                      BackgroundColor="Transparent"
+                      Command="{Binding BrakeCommand}"
+                      IsEnabled="{Binding IsEnabled}" />
+
+
+            </Grid>-->
+
+
+
             <!-- BOTTOM BUTTONS -->
-            <Grid Grid.Row="4"
-                  ColumnDefinitions="*,*,*"
+            <Grid Grid.Row="5"
+                  ColumnDefinitions="*,*,*,*"
                   ColumnSpacing="20"
                   Margin="0,30,0,0">
                 <Button Grid.Column="0"
@@ -136,6 +156,12 @@ Shell.NavBarIsVisible="False">
                         Command="{Binding StopCommand}"
                         IsEnabled="{Binding IsNotBusy}"/>
                 <Button Grid.Column="2"
+                        Text="{Binding BrakeButtonText}"
+                        FontSize="20"
+                        HeightRequest="80"
+                        Command="{Binding BrakeCommand}"
+                        IsEnabled="{Binding IsNotBusy}"/>
+                <Button Grid.Column="3"
                         Text="{Binding MaxRotatorValue, StringFormat=' {0}° ▶▶'}"
                         FontSize="20"
                         HeightRequest="80"
@@ -143,6 +169,8 @@ Shell.NavBarIsVisible="False">
                         IsEnabled="{Binding IsNotMaxRotatorValue}"/>
             </Grid>
 
+            
+            
         </Grid>
     </Grid>
 

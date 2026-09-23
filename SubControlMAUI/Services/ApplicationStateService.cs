@@ -115,5 +115,7 @@ namespace SubControlMAUI.Services
 
         public string ConfigScreenPassword { get; set; } = "BIAS";
 
+        public bool RotatorBrakeEnabled = false;
+
     }
 }

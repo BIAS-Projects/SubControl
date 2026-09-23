@@ -10,6 +10,8 @@ using SubControlMAUI.Messages;
 using SubControlMAUI.Models;
 using SubControlMAUI.Services;
 using System.Diagnostics;
+using Windows.UI.ApplicationSettings;
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Gauge drawable (unchanged from original)
@@ -63,6 +65,12 @@ public partial class RotatorViewModel : BaseViewModel
     public RotatorGaugeDrawable GaugeDrawable { get; } = new();
     public Action? RefreshGaugeView { get; set; }
 
+    private static string ThemePrefix =>
+    Application.Current?.RequestedTheme == AppTheme.Dark ? "dark" : "light";
+
+ 
+    public string RotatorBrakeButtonImage =>
+        $"{ThemePrefix}_padlock{(IsBrakeEnabled ? "" : "unlock")}.png";
 
     private void RefreshGauge()
     {
@@ -70,7 +78,7 @@ public partial class RotatorViewModel : BaseViewModel
         GaugeDrawable.MinValue = MinRotatorValue;
         GaugeDrawable.MaxValue = MaxRotatorValue;
         RefreshGaugeView?.Invoke();
-      //  OnPropertyChanged(nameof(GaugeDrawable));
+        //  OnPropertyChanged(nameof(GaugeDrawable));
     }
 
     // ── services ──────────────────────────────────────────────────────────────
@@ -125,7 +133,7 @@ public partial class RotatorViewModel : BaseViewModel
         _tcp = tcp;
         _alertService = alertService;
         _dispatcher = dispatcher;
-            _dispatcher.Owner = nameof(RotatorViewModel);
+        _dispatcher.Owner = nameof(RotatorViewModel);
 
         ArmAngle = 73;
         //StatusText = string.Empty;
@@ -196,9 +204,16 @@ public partial class RotatorViewModel : BaseViewModel
 
     [ObservableProperty]
     private bool canNudgeForward = false;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(BrakeButtonText))]
+    private bool isBrakeEnabled = false;
+
+    public string  BrakeButtonText => IsBrakeEnabled ? "UNBRAKE" : "BRAKE";
+
     partial void OnArmAngleChanged(double value)
     {
-    //    Math.Clamp(value, 0, 180);
+        //    Math.Clamp(value, 0, 180);
         RefreshGauge();
     }
 
@@ -276,6 +291,37 @@ public partial class RotatorViewModel : BaseViewModel
             data => MatchesCommandCode(data, "MST"));
 
     [RelayCommand]
+
+    private async Task Brake()
+    {
+        Task result;
+        if (!AppState.RotatorBrakeEnabled)
+        {
+            var (success, message) = await RunCommandWithResultAsync(
+           "Sending brake on command...", "Brake on command accepted", "brake on command failed",
+           Rotator.BrakeOn,
+           data => MatchesCommandCode(data, "MBS"));
+            if(success)
+            {
+                IsBrakeEnabled = true;
+                AppState.RotatorBrakeEnabled = true;
+            }
+        }
+        else
+        {
+            var (success, message) = await RunCommandWithResultAsync(
+           "Sending brake off command...", "Brake off command accepted", "brake off command failed",
+           Rotator.BrakeOff,
+           data => MatchesCommandCode(data, "MBR"));
+            if (success)
+            {
+                IsBrakeEnabled = false;
+            }
+        }
+        
+    }
+
+    [RelayCommand]
     private Task AdjustBackward()
         => RunCommandAsync(
             "Adjusting rotator backwards...", "Rotator backwards adjust command accepted", "Adjust backward command failed",
@@ -304,7 +350,62 @@ public partial class RotatorViewModel : BaseViewModel
     // serial port and wait for the device to push back a response on the same
     // channel that satisfies confirmPredicate.
     // ─────────────────────────────────────────────────────────────────────────
+    //private async Task RunCommandAsync(
+    //    string pendingMessage,
+    //    string successMessage,
+    //    string failureMessage,
+    //    string payload,
+    //    Func<string, bool> confirmPredicate)
+    //{
+    //    if (!await _commandLock.WaitAsync(_lockWaitTimeout))
+    //    {
+    //        SetStatus("Command already in progress");
+    //        return;
+    //    }
+
+    //    IsBusy = true;
+    //    try
+    //    {
+    //        SetStatus(pendingMessage);
+
+    //        bool ok = await _dispatcher.SendAndWaitForPushAsync(
+    //Feature.RotatorName,
+    //"WRITE TEXT",
+    //payload,
+    //Feature.RotatorName,
+    //confirmPredicate,
+    //_commandTimeout) is not null;
+
+    //        //bool ok = await _dispatcher.SendAndWaitForPushAsync(
+    //        //    Feature.RotatorName, "WRITE TEXT", payload,
+    //        //    Feature.RotatorName, confirmPredicate,
+    //        //    _commandTimeout) is null;
+
+    //        SetStatus(ok ? successMessage : failureMessage);
+    //    }
+    //    finally
+    //    {
+    //        IsBusy = false;
+    //        _commandLock.Release();
+    //    }
+    //}
+
+
+
+
     private async Task RunCommandAsync(
+        string pendingMessage,
+        string successMessage,
+        string failureMessage,
+        string payload,
+        Func<string, bool> confirmPredicate)
+    {
+        IsBrakeEnabled = false;
+        _ = await RunCommandWithResultAsync(pendingMessage, successMessage, failureMessage, payload, confirmPredicate);
+    }
+
+    // New method offering detailed return data
+    private async Task<(bool Success, string Message)> RunCommandWithResultAsync(
         string pendingMessage,
         string successMessage,
         string failureMessage,
@@ -313,8 +414,9 @@ public partial class RotatorViewModel : BaseViewModel
     {
         if (!await _commandLock.WaitAsync(_lockWaitTimeout))
         {
-            SetStatus("Command already in progress");
-            return;
+            string lockFail = "Command already in progress";
+            SetStatus(lockFail);
+            return (false, lockFail);
         }
 
         IsBusy = true;
@@ -323,19 +425,16 @@ public partial class RotatorViewModel : BaseViewModel
             SetStatus(pendingMessage);
 
             bool ok = await _dispatcher.SendAndWaitForPushAsync(
-    Feature.RotatorName,
-    "WRITE TEXT",
-    payload,
-    Feature.RotatorName,
-    confirmPredicate,
-    _commandTimeout) is not null;
+                Feature.RotatorName,
+                "WRITE TEXT",
+                payload,
+                Feature.RotatorName,
+                confirmPredicate,
+                _commandTimeout) is not null;
 
-            //bool ok = await _dispatcher.SendAndWaitForPushAsync(
-            //    Feature.RotatorName, "WRITE TEXT", payload,
-            //    Feature.RotatorName, confirmPredicate,
-            //    _commandTimeout) is null;
-
-            SetStatus(ok ? successMessage : failureMessage);
+            string finalMessage = ok ? successMessage : failureMessage;
+            SetStatus(finalMessage);
+            return (ok, finalMessage);
         }
         finally
         {
@@ -343,6 +442,9 @@ public partial class RotatorViewModel : BaseViewModel
             _commandLock.Release();
         }
     }
+
+
+
 
     // ─────────────────────────────────────────────────────────────────────────
     // TCP data handler — encoder angle processing
@@ -395,6 +497,7 @@ public partial class RotatorViewModel : BaseViewModel
         _pollingCts?.Cancel();
         _pollingCts = new CancellationTokenSource();
         _ = StartPollingAsync(_pollingCts.Token);
+        IsBrakeEnabled = AppState.RotatorBrakeEnabled;
     }
 
     public void OnDisappearing()
@@ -547,6 +650,34 @@ public partial class RotatorViewModel : BaseViewModel
         {
             SetStatus("Rotator failed to respond to set speed command");
             return false;
+        }
+
+        await Task.Delay(interCommandDelay);
+
+        var mrkResponse = await GetBrakeSettingInternal();
+
+ 
+
+        if (String.IsNullOrWhiteSpace(mrkResponse))
+        {
+            SetStatus("Rotator respond to read brake status command");
+            return false;
+        }
+        else
+        {
+            string brakeSetting = GetBrakeSettingFromCommand(mrkResponse);
+            if (brakeSetting.Equals("On"))
+            {
+                AppState.RotatorBrakeEnabled = true;
+            }
+            else if (brakeSetting.Equals("Off"))
+            {
+                AppState.RotatorBrakeEnabled = false;
+            }
+            else
+            {
+                SetStatus("Rotator respond to read brake status command format incorrect");
+            }
         }
 
         await Task.Delay(interCommandDelay);
@@ -1528,6 +1659,28 @@ public partial class RotatorViewModel : BaseViewModel
     _commandTimeout);
 
         return mspResponse!;
+    }
+
+    private static string GetBrakeSettingFromCommand(string response)
+    {
+        if(String.IsNullOrEmpty(response))
+        {
+            return "Empty response";
+        }
+        string code = response.Substring(8, 1);
+        return code switch
+        {
+            "0" => "Off",
+            "1" => "On",
+            _ => $"Unknown ({code})"
+        };
+        //string code = response.Substring(5, 4);
+        //return code switch
+        //{
+        //    "0000" => "Off",
+        //    "0001" => "On",
+        //    _ => $"Unknown ({code})"
+        //};
     }
 
 }
