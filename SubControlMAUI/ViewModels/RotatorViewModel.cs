@@ -316,6 +316,7 @@ public partial class RotatorViewModel : BaseViewModel
             if (success)
             {
                 IsBrakeEnabled = false;
+                AppState.RotatorBrakeEnabled = false;
             }
         }
         
