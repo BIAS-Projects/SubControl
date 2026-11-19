@@ -131,7 +131,7 @@ public sealed class DeviceRegistry : IDeviceRegistry
 
         var reg = new DeviceRegistration(identifier, functionName, baudRate, serialWorker)
         {
-            PortSettings = portSettings
+            PortSettings = portSettings ?? SerialPortSettings.Default
         };
 
         _byKey[identifier.Key] = reg;

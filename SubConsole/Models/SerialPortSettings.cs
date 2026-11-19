@@ -9,6 +9,8 @@ public sealed record SerialPortSettings(
     Handshake Handshake = Handshake.None,
     bool KeepAliveEnabled = false,
     string KeepAlivePayload = ";",
+    bool DtrEnable = false,
+    bool RtsEnable = false,
     int KeepAliveIntervalMs = 1_000)
 {
     public static SerialPortSettings Default { get; } = new();

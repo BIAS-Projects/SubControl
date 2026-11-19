@@ -92,13 +92,27 @@ public sealed class SerialPortWorker : ISerialWorker, IKeepAliveWorker
                 Handshake = settings?.Handshake ?? Handshake.None,
                 Parity = settings?.Parity ?? Parity.None,
                 DataBits = settings?.DataBits ?? 8,
-                StopBits = stopBits
+                StopBits = stopBits,
+
+                DtrEnable = settings?.DtrEnable ?? false,
+                RtsEnable = settings?.RtsEnable ?? false
             };
             _port.Open();
 
+
+
             _logger.LogInformation(
-                "{Function} opening at {Baud} baud, {DataBits} databits,{Parity} parity,{StopBits} stop bits",
-                _functionName, BaudRate, settings?.DataBits, settings?.Parity, settings?.StopBits);
+                "{Function} Serial configuration: Port={Port}, Baud={Baud}, DataBits={DataBits}, " +
+                "Parity={Parity}, StopBits={StopBits}, Handshake={Handshake}, DTR={DtrEnable}, RTS={RtsEnable}",
+                _functionName,
+                _port.PortName,
+                _port.BaudRate,
+                _port.DataBits,
+                _port.Parity,
+                _port.StopBits,
+                _port.Handshake,
+                _port.DtrEnable,
+                _port.RtsEnable);
 
             var linked = CancellationTokenSource
                 .CreateLinkedTokenSource(appToken, _cts.Token).Token;
@@ -281,9 +295,14 @@ public sealed class SerialPortWorker : ISerialWorker, IKeepAliveWorker
 
             while (!token.IsCancellationRequested && _port?.IsOpen == true)
             {
+
+
                 int count = await _port.BaseStream
                     .ReadAsync(buffer, token)
                     .ConfigureAwait(false);
+
+
+                _logger.LogInformation( "Read loop count for {Function} on {Port} is {count}",  _functionName, PortPath, count);
 
                 if (count <= 0) continue;
 
