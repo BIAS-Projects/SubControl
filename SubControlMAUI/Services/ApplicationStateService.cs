@@ -30,6 +30,7 @@ namespace SubControlMAUI.Services
             new Feature {Name = Feature.TOMGNSS, IsFitted= false, IsCommPortOpen = false, IsEnabled = false },
             new Feature {Name = Feature.TOMFLIR, IsFitted= false, IsCommPortOpen = false, IsEnabled = false },
             new Feature {Name = Feature.GpioUart0, IsFitted= false, IsCommPortOpen = false, IsEnabled = false },
+            new Feature {Name = Feature.Slider, IsFitted= false, IsCommPortOpen = false, IsEnabled = false },
 
 
     };
@@ -67,6 +68,9 @@ namespace SubControlMAUI.Services
 
         public bool IsRotatorEnabled =>
     GetFeatureByName(Feature.RotatorName)?.IsEnabled == true;
+
+        public bool IsSliderEnabled =>
+GetFeatureByName(Feature.SliderName)?.IsEnabled == true;
 
         // Helper to set comm port state for both TOM ports atomically
         public void SetVideoCommPortOpen(bool isOpen)
@@ -109,6 +113,17 @@ namespace SubControlMAUI.Services
                 UpdateFeature(rotator);
             }
             OnPropertyChanged(nameof(IsRotatorEnabled));  // ← notify bindings
+        }
+
+        public void SetSliderEnabled(bool isEnabled)
+        {
+            var slider = GetFeatureByName(Feature.SliderName);
+            if (slider is not null)
+            {
+                slider.IsEnabled = isEnabled;
+                UpdateFeature(slider);
+            }
+            OnPropertyChanged(nameof(IsSliderEnabled));  // ← notify bindings
         }
 
         public string SnapShotPath { get; set; } = "C:";

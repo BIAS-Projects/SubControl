@@ -17,11 +17,14 @@ namespace SubControlMAUI.Models
 
         public static string VideoName = "Video";
         public static string RotatorName = "Rotator";
+        public static string SliderName = "Slider";
         public static string TOMInput = "TOM Input";
         public static string TOMOutput = "TOM Output";
         public static string TOMAHRS = "TOM AHRS";
         public static string TOMGNSS = "TOM GNSS";
         public static string TOMFLIR = "TOM FLIR";
+
+        public static string Slider = "Slider";
         public static string PushNotification = "PUSH";
         public const string GpioUart0 = "GPIO_UART0"; // must match GpioUartOptions.FunctionName server-side
 

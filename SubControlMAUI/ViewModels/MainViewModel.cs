@@ -74,9 +74,12 @@ public partial class MainViewModel : BaseViewModel
     public bool IsVideoEnabled => AppState.IsVideoEnabled;
     public bool IsRotatorEnabled => AppState.IsRotatorEnabled;
 
+    public bool IsSliderEnabled => AppState.IsSliderEnabled;
+
     // Tracks whether the rotator was previously enabled so the toggle state
     // machine knows which direction to step through next.
     public bool RotatorPreviouslyEnabled { get; private set; }
+    public bool SliderPreviouslyEnabled { get; private set; }
 
     public bool CanEnableVideo =>
         AppState.IsConnected &&
@@ -85,6 +88,10 @@ public partial class MainViewModel : BaseViewModel
     public bool CanEnableRotator =>
         AppState.IsConnected &&
         AppState.GetFeatureByName(Feature.RotatorName)?.IsFitted == true;
+    public bool CanEnableSlider =>
+    AppState.IsConnected &&
+    AppState.GetFeatureByName(Feature.SliderName)?.IsFitted == true;
+
 
     [ObservableProperty]
     private double buttonSize;
@@ -100,6 +107,9 @@ public partial class MainViewModel : BaseViewModel
 
     [ObservableProperty]
     private Color videoStatusColor;
+
+    [ObservableProperty]
+    private Color sliderStatusColor;
 
     [ObservableProperty]
     private Color rotatorStatusColor;
@@ -134,6 +144,9 @@ public partial class MainViewModel : BaseViewModel
 
     public string VideoEnableButtonImage =>
         $"{ThemePrefix}_{(IsVideoEnabled ? "on" : "off")}_button.png";
+    public string SliderEnableButtonImage =>
+    $"{ThemePrefix}_{(IsSliderEnabled ? "on" : "off")}_button.png";
+
 
     public string SystemToggleButtonImage =>
         $"{ThemePrefix}_{(IsSystemEnabled ? "on" : "off")}_button.png";
@@ -169,6 +182,7 @@ public partial class MainViewModel : BaseViewModel
 
         videoStatusColor = _statusColours[Status.Unknown];
         rotatorStatusColor = _statusColours[Status.Unknown];
+        sliderStatusColor = _statusColours[Status.Unknown];
 
         RegisterMessages();
 
@@ -184,6 +198,7 @@ public partial class MainViewModel : BaseViewModel
                 OnPropertyChanged(nameof(CanDisableSystem));
                 OnPropertyChanged(nameof(CanEnableVideo));
                 OnPropertyChanged(nameof(CanEnableRotator));
+                OnPropertyChanged(nameof(CanEnableSlider));
                 IsConnected = AppState.IsConnected;
             }
             if (e.PropertyName == nameof(AppState.IsVideoEnabled))
@@ -197,12 +212,18 @@ public partial class MainViewModel : BaseViewModel
                 OnPropertyChanged(nameof(IsRotatorEnabled));
                 OnPropertyChanged(nameof(RotatorEnableButtonImage));
             }
+            if (e.PropertyName == nameof(AppState.IsSliderEnabled))
+            {
+                OnPropertyChanged(nameof(IsSliderEnabled));
+                OnPropertyChanged(nameof(SliderEnableButtonImage));
+            }
         };
 
         App.ThemeChanged += () =>
         {
             OnPropertyChanged(nameof(RotatorEnableButtonImage));
             OnPropertyChanged(nameof(VideoEnableButtonImage));
+            OnPropertyChanged(nameof(SliderEnableButtonImage));
             OnPropertyChanged(nameof(SystemToggleButtonImage));
         };
         _rotatorViewModel = rotatorViewModel;
@@ -252,9 +273,11 @@ public partial class MainViewModel : BaseViewModel
                 {
                     AppState.SetVideoEnabled(false);
                     AppState.SetRotatorEnabled(false);
+                    AppState.SetSliderEnabled(false);
 
                     VideoStatusColor = _statusColours[Status.CommClosed];
                     RotatorStatusColor = _statusColours[Status.CommClosed];
+                    SliderStatusColor = _statusColours[Status.CommClosed];
                 }
             });
         });
@@ -297,6 +320,7 @@ public partial class MainViewModel : BaseViewModel
 
             var tomInput = AppState.GetFeatureByName(Feature.TOMInput);
             var rotator = AppState.GetFeatureByName(Feature.RotatorName);
+            var slider = AppState.GetFeatureByName(Feature.SliderName);
 
             MainThread.BeginInvokeOnMainThread(() =>
             {
@@ -314,8 +338,16 @@ public partial class MainViewModel : BaseViewModel
                     _ => _statusColours[Status.CommClosed]
                 };
 
+                SliderStatusColor = slider switch
+                {
+                    null or { IsFitted: false } => _statusColours[Status.Unknown],
+                    { IsCommPortOpen: true } => _statusColours[Status.CommOpen],
+                    _ => _statusColours[Status.CommClosed]
+                };
+
                 OnPropertyChanged(nameof(CanEnableVideo));
                 OnPropertyChanged(nameof(CanEnableRotator));
+                OnPropertyChanged(nameof(CanEnableSlider));
             });
 
             StatusText = "Connected";
@@ -353,6 +385,14 @@ public partial class MainViewModel : BaseViewModel
                 RotatorPreviouslyEnabled = false;
             }
 
+            var slider = AppState.GetFeatureByName(Feature.SliderName);
+            if (slider?.IsFitted == true && slider.IsEnabled)
+            {
+                slider.IsEnabled = false;
+                AppState.UpdateFeature(slider);
+
+            }
+
             foreach (var feature in AppState.Features.ToList().Where(f => f.IsCommPortOpen))
             {
                 StatusText = $"Closing {feature.Name}...";
@@ -379,8 +419,10 @@ public partial class MainViewModel : BaseViewModel
             {
                 VideoStatusColor = _statusColours[Status.Unknown];
                 RotatorStatusColor = _statusColours[Status.Unknown];
+                SliderStatusColor = _statusColours[Status.Unknown];
                 OnPropertyChanged(nameof(CanEnableVideo));
                 OnPropertyChanged(nameof(CanEnableRotator));
+                OnPropertyChanged(nameof(CanEnableSlider));
             });
 
             StatusText = "Disconnected";
@@ -523,8 +565,17 @@ public partial class MainViewModel : BaseViewModel
                 _ => _statusColours[Status.Unknown]
             };
 
+            SliderStatusColor = rotator switch
+            {
+                { IsEnabled: true } => _statusColours[Status.Enabled],
+                { IsCommPortOpen: true } => _statusColours[Status.Disabled],
+                { IsFitted: true } => _statusColours[Status.CommClosed],
+                _ => _statusColours[Status.Unknown]
+            };
+
             OnPropertyChanged(nameof(CanEnableVideo));
             OnPropertyChanged(nameof(CanEnableRotator));
+            OnPropertyChanged(nameof(CanEnableSlider));
         });
 
         IsSystemEnabled = true;
@@ -578,8 +629,15 @@ public partial class MainViewModel : BaseViewModel
                 _ => _statusColours[Status.CommClosed]
             };
 
+            SliderStatusColor = rotator switch
+            {
+                null or { IsFitted: false } => _statusColours[Status.Unknown],
+                _ => _statusColours[Status.CommClosed]
+            };
+
             OnPropertyChanged(nameof(CanEnableVideo));
             OnPropertyChanged(nameof(CanEnableRotator));
+            OnPropertyChanged(nameof(CanEnableSlider));
         });
 
         IsSystemEnabled = false;
@@ -780,6 +838,84 @@ public partial class MainViewModel : BaseViewModel
     }
 
     // -------------------------------------------------------------------------
+    // ToggleRotatorEnable
+    //
+    // State machine:
+    //   CommClosed → CommOpen → Enabled → Disabled → CommClosed → …
+    // -------------------------------------------------------------------------
+
+    [RelayCommand]
+    private async Task ToggleSliderEnable()
+    {
+        var feature = AppState.GetFeatureByName(Feature.SliderName);
+        if (feature is null || !feature.IsFitted) return;
+
+        IsBusy = true;
+        try
+        {
+            if (!feature.IsCommPortOpen)
+            {
+                // CommClosed → CommOpen
+                if (await OpenFeatureCommPort(Feature.SliderName))
+                {
+                    feature.IsCommPortOpen = true;
+                    AppState.UpdateFeature(feature);
+                    MainThread.BeginInvokeOnMainThread(() =>
+                        SliderStatusColor = _statusColours[Status.CommOpen]);
+                    StatusText = "Slider comm port opened";
+                }
+                else
+                {
+                    MainThread.BeginInvokeOnMainThread(() =>
+                        SliderStatusColor = _statusColours[Status.CommClosed]);
+                }
+            }
+            else if (feature.IsCommPortOpen && !feature.IsEnabled && !SliderPreviouslyEnabled)
+            {
+                // CommOpen → Enabled
+                if (await EnableSlider())
+                {
+                    feature.IsEnabled = true;
+                    AppState.UpdateFeature(feature);
+                    AppState.SetSliderEnabled(true);
+                    SliderPreviouslyEnabled = true;
+                    MainThread.BeginInvokeOnMainThread(() =>
+                        SliderStatusColor = _statusColours[Status.Enabled]);
+                    StatusText = "Slider enabled";
+                }
+            }
+            else if (feature.IsEnabled && SliderPreviouslyEnabled)
+            {
+                // Enabled → Disabled
+                feature.IsEnabled = false;
+                AppState.UpdateFeature(feature);
+                AppState.SetSliderEnabled(false);
+                MainThread.BeginInvokeOnMainThread(() =>
+                    SliderStatusColor = _statusColours[Status.Disabled]);
+                StatusText = "Slider disabled";
+            }
+            else
+            {
+                // Disabled → CommClosed
+                if (await CloseFeatureCommPort(Feature.SliderName))
+                {
+                    feature.IsEnabled = false;
+                    feature.IsCommPortOpen = false;
+                    SliderPreviouslyEnabled = false;
+                    AppState.UpdateFeature(feature);
+                    MainThread.BeginInvokeOnMainThread(() =>
+                        SliderStatusColor = _statusColours[Status.CommClosed]);
+                    StatusText = "Slider comm port closed";
+                }
+            }
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Navigation commands
     // -------------------------------------------------------------------------
 
@@ -853,6 +989,13 @@ public partial class MainViewModel : BaseViewModel
     {
         _rotatorViewModel.UpdateRotatorSettings();
         await Shell.Current.GoToAsync(nameof(RotatorPage));
+    }
+
+
+    [RelayCommand]
+    private async Task Slider()
+    {
+        await Shell.Current.GoToAsync(nameof(SliderPage));
     }
 
     [RelayCommand]
@@ -1051,6 +1194,11 @@ public partial class MainViewModel : BaseViewModel
         //}
         //            return true;
 
+    }
+
+    private async Task<bool> EnableSlider()
+    {
+        return true;
     }
 
     // -------------------------------------------------------------------------

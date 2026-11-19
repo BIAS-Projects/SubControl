@@ -97,7 +97,7 @@ public sealed class SerialPortWorker : ISerialWorker, IKeepAliveWorker
             _port.Open();
 
             _logger.LogInformation(
-                "{Function} opening at {Baud} baud, {DataBits}{Parity}{StopBits}",
+                "{Function} opening at {Baud} baud, {DataBits} databits,{Parity} parity,{StopBits} stop bits",
                 _functionName, BaudRate, settings?.DataBits, settings?.Parity, settings?.StopBits);
 
             var linked = CancellationTokenSource

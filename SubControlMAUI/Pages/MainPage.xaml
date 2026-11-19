@@ -124,7 +124,7 @@
 
             <!-- Main Buttons -->
             <Grid Grid.Row="3"
-                  ColumnDefinitions="*,*,*"
+                  ColumnDefinitions="*,*,*,*"
                   ColumnSpacing="40"
                   HorizontalOptions="Center"
                   VerticalOptions="Center">
@@ -176,8 +176,33 @@
                     <Label Text="Rotator" HorizontalOptions="Center"/>
                 </VerticalStackLayout>
 
-                <!-- SETTINGS -->
+                <!-- SLIDER -->
                 <VerticalStackLayout Grid.Column="2" Spacing="8" HorizontalOptions="Center">
+                    <ImageButton Source="{Binding SliderEnableButtonImage}"
+                                WidthRequest="30"
+                                HeightRequest="30"
+                                 BackgroundColor="Transparent"
+                                 Command="{Binding ToggleSliderEnableCommand}"
+                                 IsEnabled="{Binding CanEnableSlider}" />
+
+                    <ImageButton Source="{AppThemeBinding Light=light_slider.png, Dark=dark_slider.png}"
+                                 WidthRequest="{Binding ButtonSize}"
+                                 HeightRequest="{Binding ButtonSize}"
+                                 BackgroundColor="Transparent"
+                                 Command="{Binding SliderCommand}"
+                                 IsEnabled="{Binding IsSliderEnabled}" />
+
+                    <BoxView HeightRequest="8"
+                             WidthRequest="60"
+                             CornerRadius="4"
+                             Color="{Binding SliderStatusColor}" />
+
+                    <Label Text="Slider" HorizontalOptions="Center"/>
+                </VerticalStackLayout>
+
+
+                <!-- SETTINGS -->
+                <VerticalStackLayout Grid.Column="3" Spacing="8" HorizontalOptions="Center">
 
                     
                     <ImageButton Source="{AppThemeBinding Light=light_settings.png, Dark=dark_settings.png}"

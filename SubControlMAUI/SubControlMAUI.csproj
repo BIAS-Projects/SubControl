@@ -134,6 +134,9 @@
 	  <Compile Update="Pages\ConsolePage.xaml.cs">
 	    <DependentUpon>ConsolePage.xaml</DependentUpon>
 	  </Compile>
+	  <Compile Update="Pages\SliderPage.xaml.cs">
+	    <DependentUpon>SliderPage.xaml</DependentUpon>
+	  </Compile>
 	  <Compile Update="Pages\VideoOptionsPage.xaml.cs">
 	    <DependentUpon>VideoOptionsPage.xaml</DependentUpon>
 	  </Compile>
@@ -168,6 +171,9 @@
 	    <Generator>MSBuild:Compile</Generator>
 	  </MauiXaml>
 	  <MauiXaml Update="Pages\ConsolePage.xaml">
+	    <Generator>MSBuild:Compile</Generator>
+	  </MauiXaml>
+	  <MauiXaml Update="Pages\SliderPage.xaml">
 	    <Generator>MSBuild:Compile</Generator>
 	  </MauiXaml>
 	  <MauiXaml Update="Pages\VideoOptionsPage.xaml">

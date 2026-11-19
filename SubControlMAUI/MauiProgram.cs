@@ -99,6 +99,9 @@ namespace SubControlMAUI
             builder.Services.AddSingleton<LogsPage>();
             builder.Services.AddSingleton<LogsViewModel>();
 
+            builder.Services.AddSingleton<SliderPage>();
+            builder.Services.AddSingleton<SliderViewModel>();
+
 
             builder.Services.AddSingleton<SQLiteService>();
 

@@ -32,6 +32,7 @@ namespace SubControlMAUI
             Routing.RegisterRoute(nameof(PiPage), typeof(PiPage));
             Routing.RegisterRoute(nameof(ConsolePage), typeof(ConsolePage));
             Routing.RegisterRoute(nameof(LogsPage), typeof(LogsPage));
+            Routing.RegisterRoute(nameof(SliderPage), typeof(SliderPage));
 
         }
 

@@ -12,6 +12,7 @@ namespace SubConsole.Models
         public static string TOMGNSS = "TOM GNSS";
         public static string TOMFLIR = "TOM FLIR";
 
+        public static string Slider = "Slider";
 
 
     }

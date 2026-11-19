@@ -37,6 +37,7 @@ public partial class FeatureOptionViewModel : BaseViewModel
     new FunctionToPortEntry { FunctionName = Feature.TOMGNSS,   BaudRate = "115200", WorkerType = SerialWorkerType.Text.ToString() },
     new FunctionToPortEntry { FunctionName = Feature.TOMFLIR,   BaudRate = "921600", WorkerType = SerialWorkerType.Flir.ToString() },
     new FunctionToPortEntry { FunctionName = Feature.RotatorName,      BaudRate = "9600", WorkerType = SerialWorkerType.Text.ToString() },
+    new FunctionToPortEntry { FunctionName = Feature.Slider,      BaudRate = "9600", WorkerType = SerialWorkerType.Text.ToString() },
 };
 
     // Matches a trailing "-ifNN" (optionally followed by "-portN") on the PortPath,
