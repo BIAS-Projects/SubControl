@@ -17,10 +17,12 @@ public interface ISerialWorkerFactory
 {
     ISerialWorker Create(
         string portPath,
-        int baudRate,
+        SerialPortSettings settings,
         SerialWorkerType type,
         IDeviceRegistry registry);
 }
+
+
 
 public sealed class SerialWorkerFactory : ISerialWorkerFactory
 {
@@ -29,34 +31,29 @@ public sealed class SerialWorkerFactory : ISerialWorkerFactory
 
     public SerialWorkerFactory(ILogger<SerialWorkerFactory> logger, ILoggerFactory loggerFactory)
     {
-        _logger        = logger;
+        _logger = logger;
         _loggerFactory = loggerFactory;
     }
 
     public ISerialWorker Create(
         string portPath,
-        int baudRate,
+        SerialPortSettings settings,
         SerialWorkerType type,
         IDeviceRegistry registry)
     {
-
         _logger.LogDebug(
             "Creating serial worker {WorkerType} for {PortPath} at {BaudRate}",
-            type,
-            portPath,
-            baudRate);
+            type, portPath, settings.BaudRate);
 
         return type switch
         {
             SerialWorkerType.Text => new SerialPortWorker(
-                portPath, baudRate,
+                portPath, settings,
                 _loggerFactory.CreateLogger<SerialPortWorker>(),
                 registry),
 
-            // Add new worker types here — they all receive registry so they
-            // can annotate outbound messages with function names.
             SerialWorkerType.Flir => new FlirSerialWorker(
-                portPath, baudRate,
+                portPath, settings,
                 _loggerFactory.CreateLogger<FlirSerialWorker>(),
                 registry),
 

@@ -10,7 +10,7 @@ namespace SubConsole.Models
     {
         public string DeviceKey { get; set; }
         public string FunctionName { get; set; }
-        public string BaudRate { get; set; }
-        public string  WorkerType { get; set; }
+        public string WorkerType { get; set; }
+        public SerialPortSettings Settings { get; set; } = SerialPortSettings.Default;
     }
 }

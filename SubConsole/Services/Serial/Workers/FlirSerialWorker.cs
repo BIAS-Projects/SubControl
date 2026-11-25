@@ -11,8 +11,11 @@ namespace SubConsole.Services.Serial.Workers;
 
 public class FlirSerialWorker : ISerialWorker
 {
+    //public string PortPath { get; set; }
+    //private readonly int _baudRate = 921600;
+
     public string PortPath { get; set; }
-    private readonly int _baudRate = 921600;
+    private readonly SerialPortSettings _settings;
 
     private Camera _camera;
 
@@ -31,13 +34,14 @@ public class FlirSerialWorker : ISerialWorker
     private readonly ILogger<FlirSerialWorker> _logger;
     private readonly IDeviceRegistry _registry;
 
-    public FlirSerialWorker(string portName,
-        int baudRate,
+    public FlirSerialWorker(
+        string portName,
+        SerialPortSettings settings,
         ILogger<FlirSerialWorker> logger,
         IDeviceRegistry registry)
     {
         PortPath = portName;
-        _baudRate = baudRate;
+        _settings = settings;
         _logger = logger;
         _registry = registry;
 
@@ -73,13 +77,11 @@ public class FlirSerialWorker : ISerialWorker
         {
             _logger.LogInformation(
                 "Starting FLIR worker on {Port} @ {Baud}",
-                PortPath,
-                _baudRate);
+                PortPath, _settings.BaudRate);
 
             // FIX: Always start with a completely fresh SDK instance to clean internal memory states
             _camera = new Camera();
-
-            _camera.Initialize(PortPath, (uint)_baudRate);
+            _camera.Initialize(PortPath, (uint)_settings.BaudRate);
 
             IsOpen = true;
 

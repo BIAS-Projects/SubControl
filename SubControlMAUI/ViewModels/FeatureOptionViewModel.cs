@@ -8,7 +8,9 @@ using SubControlMAUI.Services;
 using SubControlMAUI.ViewModels;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.IO.Ports;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using static SubControlMAUI.Models.UsbDeviceInfo;
 using static System.Net.Mime.MediaTypeNames;
@@ -25,19 +27,37 @@ public partial class FeatureOptionViewModel : BaseViewModel
     private CancellationTokenSource _cts = new();
     public ApplicationStateService AppState { get; }
 
+    private static readonly JsonSerializerOptions _entryOptions = new()
+    {
+        WriteIndented = false,
+        PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter() }
+    };
+
     private bool _isRebuilding = false;
     [ObservableProperty]
     public ObservableCollection<UsbSerialPortInfo> availablePorts = new();
 
+    //    private readonly List<FunctionToPortEntry> _allFunctions = new()
+    //{
+    //    new FunctionToPortEntry { FunctionName = Feature.TOMInput,  BaudRate = "115200", WorkerType = SerialWorkerType.Text.ToString() },
+    //    new FunctionToPortEntry { FunctionName = Feature.TOMOutput, BaudRate = "115200", WorkerType = SerialWorkerType.Text.ToString() },
+    //    new FunctionToPortEntry { FunctionName = Feature.TOMAHRS,   BaudRate = "115200", WorkerType = SerialWorkerType.Text.ToString() },
+    //    new FunctionToPortEntry { FunctionName = Feature.TOMGNSS,   BaudRate = "115200", WorkerType = SerialWorkerType.Text.ToString() },
+    //    new FunctionToPortEntry { FunctionName = Feature.TOMFLIR,   BaudRate = "921600", WorkerType = SerialWorkerType.Flir.ToString() },
+    //    new FunctionToPortEntry { FunctionName = Feature.RotatorName,      BaudRate = "9600", WorkerType = SerialWorkerType.Text.ToString() },
+    //    new FunctionToPortEntry { FunctionName = Feature.Slider,      BaudRate = "9600", WorkerType = SerialWorkerType.Text.ToString() },
+    //};
+
     private readonly List<FunctionToPortEntry> _allFunctions = new()
 {
-    new FunctionToPortEntry { FunctionName = Feature.TOMInput,  BaudRate = "115200", WorkerType = SerialWorkerType.Text.ToString() },
-    new FunctionToPortEntry { FunctionName = Feature.TOMOutput, BaudRate = "115200", WorkerType = SerialWorkerType.Text.ToString() },
-    new FunctionToPortEntry { FunctionName = Feature.TOMAHRS,   BaudRate = "115200", WorkerType = SerialWorkerType.Text.ToString() },
-    new FunctionToPortEntry { FunctionName = Feature.TOMGNSS,   BaudRate = "115200", WorkerType = SerialWorkerType.Text.ToString() },
-    new FunctionToPortEntry { FunctionName = Feature.TOMFLIR,   BaudRate = "921600", WorkerType = SerialWorkerType.Flir.ToString() },
-    new FunctionToPortEntry { FunctionName = Feature.RotatorName,      BaudRate = "9600", WorkerType = SerialWorkerType.Text.ToString() },
-    new FunctionToPortEntry { FunctionName = Feature.Slider,      BaudRate = "9600", WorkerType = SerialWorkerType.Text.ToString() },
+    new FunctionToPortEntry { FunctionName = Feature.TOMInput, Settings = SerialPortSettings.Default with { BaudRate = 115200, StopBits = StopBits.Two}, WorkerType = SerialWorkerType.Text.ToString() },
+    new FunctionToPortEntry { FunctionName = Feature.TOMOutput, Settings = SerialPortSettings.Default with { BaudRate = 115200, StopBits = StopBits.Two }, WorkerType = SerialWorkerType.Text.ToString() },
+    new FunctionToPortEntry { FunctionName = Feature.TOMAHRS, Settings = SerialPortSettings.Default with { BaudRate = 115200, StopBits = StopBits.Two },  WorkerType = SerialWorkerType.Text.ToString() },
+    new FunctionToPortEntry { FunctionName = Feature.TOMGNSS, Settings = SerialPortSettings.Default with { BaudRate = 115200, StopBits = StopBits.Two }, WorkerType = SerialWorkerType.Text.ToString() },
+    new FunctionToPortEntry { FunctionName = Feature.TOMFLIR, Settings = SerialPortSettings.Default with { BaudRate = 921600 }, WorkerType = SerialWorkerType.Flir.ToString() },
+    new FunctionToPortEntry { FunctionName = Feature.RotatorName, Settings = SerialPortSettings.Default with { BaudRate = 9600 }, WorkerType = SerialWorkerType.Text.ToString() },
+    new FunctionToPortEntry { FunctionName = Feature.Slider, Settings = SerialPortSettings.Default with { BaudRate = 9600, DtrEnable = true }, WorkerType = SerialWorkerType.Text.ToString() },
 };
 
     // Matches a trailing "-ifNN" (optionally followed by "-portN") on the PortPath,
@@ -264,13 +284,17 @@ public partial class FeatureOptionViewModel : BaseViewModel
                     {
                         DeviceKey = device.Name,
                         FunctionName = device.SelectedFunction,
-                        BaudRate = template.BaudRate,
+                        Settings = template.Settings,
                         WorkerType = template.WorkerType
                     };
 
+                    //var command = new TCPMessageBody<string>(
+                    //    nameof(FeatureOptionViewModel), "REGISTER",
+                    //    JsonSerializer.Serialize(entry));
+
                     var command = new TCPMessageBody<string>(
                         nameof(FeatureOptionViewModel), "REGISTER",
-                        JsonSerializer.Serialize(entry));
+                        JsonSerializer.Serialize(entry, _entryOptions));
 
                     if (!await _tcpService.SendCommandAsync(command, _cts.Token))
                     {

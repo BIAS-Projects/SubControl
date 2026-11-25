@@ -6,6 +6,7 @@ using SubConsole.Services.Serial;
 using SubConsole.Services.Serial.Commands;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using static SubConsole.Models.UsbDeviceInfo;
 
 namespace SubConsole.Services.TCP;
@@ -46,6 +47,13 @@ public sealed class TcpSerialCommandHandler
 
     private static readonly JsonSerializerOptions _jsonOptions =
         new() { WriteIndented = false };
+
+    private static readonly JsonSerializerOptions _entryOptions = new()
+    {
+        WriteIndented = false,
+        PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter() }
+    };
 
     public TcpSerialCommandHandler(
         ISerialCommandDispatcher dispatcher,
@@ -183,7 +191,8 @@ public sealed class TcpSerialCommandHandler
         FunctionToPortEntry entry;
         try
         {
-            entry = JsonSerializer.Deserialize<FunctionToPortEntry>(message.Data);
+            //  entry = JsonSerializer.Deserialize<FunctionToPortEntry>(message.Data);
+            entry = JsonSerializer.Deserialize<FunctionToPortEntry>(message.Data, _entryOptions);
         }
         catch (Exception ex)
         {
@@ -192,14 +201,15 @@ public sealed class TcpSerialCommandHandler
 
         if (entry is null)
             return ErrorResponse($"HandleRegisterAsync invalid JSON: {message.Data}");
+        if (entry.Settings is null)
+            return ErrorResponse("HandleRegisterAsync PortSettings cannot be empty");
+        var settingsError = entry.Settings.Validate();
+        if (settingsError is not null)
+            return ErrorResponse($"HandleRegisterAsync invalid PortSettings: {settingsError}");
         if (string.IsNullOrWhiteSpace(entry.DeviceKey))
             return ErrorResponse("HandleRegisterAsync DeviceKey cannot be empty");
         if (string.IsNullOrWhiteSpace(entry.FunctionName))
             return ErrorResponse("HandleRegisterAsync FunctionName cannot be empty");
-        if (string.IsNullOrWhiteSpace(entry.BaudRate))
-            return ErrorResponse("HandleRegisterAsync Baudrate cannot be empty");
-        if (!int.TryParse(entry.BaudRate, out baudrate))
-            return ErrorResponse("HandleRegisterAsync BaudRate must be numeric");
         if (string.IsNullOrWhiteSpace(entry.WorkerType))
             return ErrorResponse("HandleRegisterAsync WorkerType cannot be empty");
         if (!Enum.TryParse<SerialWorkerType>(entry.WorkerType, out serialWorkerType))
@@ -253,7 +263,7 @@ public sealed class TcpSerialCommandHandler
 
         _logger.LogInformation(
             "Registering device {DeviceKey} as {FunctionName} ({WorkerType} @ {BaudRate})",
-            entry.DeviceKey, entry.FunctionName, serialWorkerType, baudrate);
+            entry.DeviceKey, entry.FunctionName, serialWorkerType, entry.Settings);
 
         var devices = await _manager.EnumerateUsbDevicesAsync(token);
         var found = devices.FirstOrDefault(d => d.Key == entry.DeviceKey);
@@ -271,8 +281,8 @@ public sealed class TcpSerialCommandHandler
             Identifier = found,
             FunctionName = entry.FunctionName,
             AutoOpen = false,
-            BaudRate = baudrate,
-            WorkerType = serialWorkerType
+            WorkerType = serialWorkerType,
+            PortSettings = entry.Settings
         }, token);
 
         if (result.IsSuccess)

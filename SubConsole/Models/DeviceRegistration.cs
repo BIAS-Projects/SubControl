@@ -10,25 +10,21 @@ namespace SubConsole.Models
         public UsbSerialPortInfo Identifier { get; }
         public string Key { get; }
         public string FunctionName { get; }
-        public int BaudRate { get; set; }
         public SerialWorkerType SerialWorkerType { get; }
         public string? CurrentPortPath { get; internal set; }
+        public SerialPortSettings PortSettings { get; }
 
-        public SerialPortSettings? PortSettings { get; init; }
+        public int BaudRate => PortSettings.BaudRate;   // kept for the DB column / callers
 
         public DeviceRegistration(
-            UsbSerialPortInfo identifier, string functionName, int baudRate, SerialWorkerType serialWorker)
+            UsbSerialPortInfo identifier, string functionName,
+            SerialWorkerType serialWorker, SerialPortSettings portSettings)
         {
             Identifier = identifier;
             FunctionName = functionName;
             SerialWorkerType = serialWorker;
-            BaudRate = baudRate;
+            PortSettings = portSettings;
             Key = identifier.Key;
-
-            // Static (non-USB) devices have a fixed, known port path at
-            // construction time — seed CurrentPortPath immediately so the
-            // very first persist (before SetPortPath is called) doesn't
-            // write a null/empty value.
             CurrentPortPath = identifier.IsStatic ? identifier.PortName : null;
         }
     }

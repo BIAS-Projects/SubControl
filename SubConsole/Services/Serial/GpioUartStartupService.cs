@@ -48,7 +48,6 @@ public sealed class GpioUartStartupService : BackgroundService
             deviceId: "GPIO-UART0",
             portPath: _options.PortPath,
             functionName: _options.FunctionName,
-            baudRate: _options.BaudRate,
             type: SerialWorkerType.Text,
             portSettings: settings,
             token: stoppingToken);

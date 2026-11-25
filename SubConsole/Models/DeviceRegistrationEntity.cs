@@ -31,32 +31,31 @@ namespace SubConsole.Models
             {
                 Key = model.Key,
                 FunctionName = model.FunctionName,
-                BaudRate = model.BaudRate,
+                BaudRate = model.PortSettings.BaudRate,   // legacy column kept in sync
                 SerialWorkerType = (int)model.SerialWorkerType,
                 IdentifierJson = JsonSerializer.Serialize(model.Identifier),
                 CurrentPortPath = model.CurrentPortPath,
-                PortSettingsJson = model.PortSettings is null
-                    ? null
-                    : JsonSerializer.Serialize(model.PortSettings)
+                PortSettingsJson = JsonSerializer.Serialize(model.PortSettings)
             };
         }
         public static DeviceRegistration ToModel(DeviceRegistrationEntity entity)
         {
-            var identifier = JsonSerializer.Deserialize<UsbSerialPortInfo>(entity.IdentifierJson);
+            var identifier = JsonSerializer.Deserialize<UsbSerialPortInfo>(entity.IdentifierJson)
+                ?? throw new InvalidOperationException("Failed to deserialize Identifier");
 
+            // Rows saved before PortSettings existed fall back to the old BaudRate column.
+            var legacy = SerialPortSettings.Default with { BaudRate = entity.BaudRate };
             var portSettings = string.IsNullOrWhiteSpace(entity.PortSettingsJson)
-                ? null
-                : JsonSerializer.Deserialize<SerialPortSettings>(entity.PortSettingsJson);
+                ? legacy
+                : JsonSerializer.Deserialize<SerialPortSettings>(entity.PortSettingsJson) ?? legacy;
 
             return new DeviceRegistration(
                 identifier,
                 entity.FunctionName,
-                entity.BaudRate,
-                (SerialWorkerType)entity.SerialWorkerType
-            )
+                (SerialWorkerType)entity.SerialWorkerType,
+                portSettings)
             {
-                CurrentPortPath = entity.CurrentPortPath,
-                PortSettings = portSettings
+                CurrentPortPath = entity.CurrentPortPath
             };
         }
     }

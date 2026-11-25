@@ -90,28 +90,19 @@ public sealed class ListRegisteredDevicesCommand : ISerialCommand
 public sealed class RegisterDeviceCommand : ISerialCommand
 {
     public required UsbSerialPortInfo Identifier { get; init; }
-    //public required IEnumerable<string> FunctionNames { get; init; }
     public required string FunctionName { get; init; }
-
-    /// <summary>
-    /// When true the manager will also open the serial port immediately
-    /// using <see cref="BaudRate"/> and <see cref="WorkerType"/>.
-    /// </summary>
+    public required SerialPortSettings PortSettings { get; init; }
     public bool AutoOpen { get; init; } = false;
-
-    public int BaudRate { get; init; } = 115_200;
     public SerialWorkerType WorkerType { get; init; } = SerialWorkerType.Text;
 
     public async Task<OperationResult> ExecuteAsync(
-        ISerialPortManagerService manager,
-        CancellationToken token)
+        ISerialPortManagerService manager, CancellationToken token)
     {
-        manager.RegisterDevice(Identifier, FunctionName, BaudRate, WorkerType);
+        var result = await manager.RegisterDeviceAsync(
+            Identifier, FunctionName, WorkerType, PortSettings);
+        if (!result.IsSuccess || !AutoOpen) return result;
 
-        if (!AutoOpen)
-            return OperationResult.Success();
-
-        return await manager.OpenPortAsync(Identifier.Key, token);
+        return await manager.OpenPortAsync(FunctionName, token);   // was Identifier.Key
     }
 }
 

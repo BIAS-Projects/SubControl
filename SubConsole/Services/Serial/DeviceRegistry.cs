@@ -15,8 +15,8 @@ public interface IDeviceRegistry
 {
     // ── Registration ─────────────────────────────────────────────────────────
     Task<OperationResult> Register(
-   UsbSerialPortInfo identifier, string functionName, int baudRate,
-   SerialWorkerType serialWorker, SerialPortSettings? portSettings = null);
+        UsbSerialPortInfo identifier, string functionName,
+        SerialWorkerType serialWorker, SerialPortSettings portSettings);
 
     DeviceRegistration? GetRegistration(string functionName);
     /// <summary>
@@ -110,7 +110,7 @@ public sealed class DeviceRegistry : IDeviceRegistry
 
         foreach (var device in result.Value)
         {
-            await Register(device.Identifier, device.FunctionName, device.BaudRate, device.SerialWorkerType, device.PortSettings);
+            await Register(device.Identifier, device.FunctionName, device.SerialWorkerType, device.PortSettings);
         }
         _logger.LogInformation(
             "Completed loading device registry: {Success}. Devices loaded: {Count}",
@@ -122,17 +122,14 @@ public sealed class DeviceRegistry : IDeviceRegistry
 
     //    public void Register(DeviceIdentifier identifier, string functionName, int baudRate, SerialWorkerType serialWorker)
     public async Task<OperationResult> Register(
-        UsbSerialPortInfo identifier, string functionName, int baudRate,
-        SerialWorkerType serialWorker, SerialPortSettings? portSettings = null)
+        UsbSerialPortInfo identifier, string functionName,
+        SerialWorkerType serialWorker, SerialPortSettings portSettings)
     {
         _logger.LogInformation(
             "Registering device {Key} as function {Function} @ {Baud}",
-            identifier.Key, functionName, baudRate);
+            identifier.Key, functionName, portSettings.BaudRate);
 
-        var reg = new DeviceRegistration(identifier, functionName, baudRate, serialWorker)
-        {
-            PortSettings = portSettings ?? SerialPortSettings.Default
-        };
+        var reg = new DeviceRegistration(identifier, functionName, serialWorker, portSettings);
 
         _byKey[identifier.Key] = reg;
         _byFunction[functionName] = identifier.Key;

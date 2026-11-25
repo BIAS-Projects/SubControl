@@ -56,19 +56,22 @@ public sealed class SerialPortWorker : ISerialWorker, IKeepAliveWorker
     public bool IsKeepAliveRunning =>
         _keepAliveCts is not null && !_keepAliveCts.IsCancellationRequested;
 
+    private readonly SerialPortSettings _settings;
+
     public SerialPortWorker(
         string portPath,
-        int baudRate,
+        SerialPortSettings settings,
         ILogger<SerialPortWorker> logger,
         IDeviceRegistry registry)
     {
         PortPath = portPath;
+        _settings = settings;
         _logger = logger;
         _registry = registry;
-        BaudRate = baudRate;
     }
 
-    public int BaudRate { get; }
+    public int BaudRate => _settings.BaudRate;
+
 
     // ── Start / Stop ──────────────────────────────────────────────────────────
 
@@ -76,31 +79,22 @@ public sealed class SerialPortWorker : ISerialWorker, IKeepAliveWorker
     {
         try
         {
-            _functionName = _registry.GetFunctionName(PortPath) ?? PortPath;
+            _functionName = _registry.GetFunctionName(PortPath);
+            if (string.IsNullOrEmpty(_functionName)) _functionName = PortPath;
 
-            var registration = _registry.GetRegistration(_functionName);
-            var settings = registration?.PortSettings;
-
-            StopBits stopBits = settings?.StopBits
-                ?? (_functionName.Contains("TOM") ? StopBits.Two : StopBits.One);
-
-            bool dtrEnable = _functionName.Contains("Slider");
-
-            _port = new SerialPort(PortPath, BaudRate)
+            _port = new SerialPort(PortPath, _settings.BaudRate)
             {
                 WriteTimeout = 2_000,
                 ReadTimeout = 2_000,
                 Encoding = Encoding.ASCII,
-                Handshake = settings?.Handshake ?? Handshake.None,
-                Parity = settings?.Parity ?? Parity.None,
-                DataBits = settings?.DataBits ?? 8,
-                StopBits = stopBits,
-
-                DtrEnable = dtrEnable,
-                RtsEnable = settings?.RtsEnable ?? false
+                Handshake = _settings.Handshake,
+                Parity = _settings.Parity,
+                DataBits = _settings.DataBits,
+                StopBits = _settings.StopBits,
+                DtrEnable = _settings.DtrEnable,
+                RtsEnable = _settings.RtsEnable
             };
             _port.Open();
-
 
 
             _logger.LogInformation(
@@ -123,19 +117,15 @@ public sealed class SerialPortWorker : ISerialWorker, IKeepAliveWorker
             _writerTask = Task.Run(() => WriteLoopAsync(linked), linked);
 
             // ── Start keep-alive if configured ────────────────────────────────
-            if (settings?.KeepAliveEnabled == true &&
-                !string.IsNullOrEmpty(settings.KeepAlivePayload))
+            if (_settings.KeepAliveEnabled && !string.IsNullOrEmpty(_settings.KeepAlivePayload))
             {
-                _keepAlivePayload = Encoding.ASCII.GetBytes(settings.KeepAlivePayload);
-                _keepAliveIntervalMs = settings.KeepAliveIntervalMs > 0
-                    ? settings.KeepAliveIntervalMs
-                    : 1_000;
-
+                _keepAlivePayload = Encoding.ASCII.GetBytes(_settings.KeepAlivePayload);
+                _keepAliveIntervalMs = _settings.KeepAliveIntervalMs > 0 ? _settings.KeepAliveIntervalMs : 1_000;
                 StartKeepAlive();
-
-                _logger.LogInformation(
+            
+            _logger.LogInformation(
                     "Keep-alive started for {Function} — payload '{Payload}' every {Interval}ms",
-                    _functionName, settings.KeepAlivePayload, _keepAliveIntervalMs);
+                    _functionName, _settings.KeepAlivePayload, _keepAliveIntervalMs);
             }
 
             _startedTcs.TrySetResult();

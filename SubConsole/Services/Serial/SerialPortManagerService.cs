@@ -26,10 +26,10 @@ public interface ISerialPortManagerService
         CancellationToken token = default);
 
     // ── Registry ──────────────────────────────────────────────────────────────
-    void RegisterDevice(UsbSerialPortInfo identifier, string functionName, int baudRate, SerialWorkerType type);
+    Task<OperationResult>  RegisterDeviceAsync(UsbSerialPortInfo identifier, string functionName, SerialWorkerType type, SerialPortSettings settings);
 
     Task<OperationResult> RegisterStaticDeviceAsync(
-        string deviceId, string portPath, string functionName, int baudRate,
+        string deviceId, string portPath, string functionName, 
         SerialWorkerType type, SerialPortSettings? portSettings = null,
         CancellationToken token = default);
 
@@ -157,13 +157,14 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
 
     // ── Registry ──────────────────────────────────────────────────────────────
 
-    public void RegisterDevice(
-        UsbSerialPortInfo identifier, string functionName, int baudRate, SerialWorkerType type)
-        => _registry.Register(identifier, functionName, baudRate, type);
+    public Task<OperationResult> RegisterDeviceAsync( 
+        UsbSerialPortInfo identifier, string functionName,
+        SerialWorkerType type, SerialPortSettings settings)
+        => _registry.Register(identifier, functionName, type, settings);
 
-    public async Task<OperationResult> RegisterStaticDeviceAsync(
-        string deviceId, string portPath, string functionName, int baudRate,
-        SerialWorkerType type, SerialPortSettings? portSettings = null,
+    public async Task<OperationResult>RegisterStaticDeviceAsync(
+        string deviceId, string portPath, string functionName,
+        SerialWorkerType type, SerialPortSettings portSettings,
         CancellationToken token = default)
     {
         _logger.LogInformation(
@@ -172,7 +173,7 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
 
         var identifier = UsbSerialPortInfo.CreateStatic(deviceId, portPath);
 
-        var result = await _registry.Register(identifier, functionName, baudRate, type, portSettings);
+        var result = await _registry.Register(identifier, functionName, type, portSettings);
         if (!result.IsSuccess) return result;
 
         // Static devices are never seen by USB enumeration — set the port
@@ -184,18 +185,16 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
     public async Task<OperationResult> UnregisterDeviceAsync(
         string function, CancellationToken token = default)
     {
-        var close = await ClosePortAsync(function, token);
+        await ClosePortAsync(function, token);   // "not open" is fine here
 
         var reg = _registry.AllRegistrations.FirstOrDefault(r => r.FunctionName == function);
-        if (reg is not null)
-        {
-            _registry.Unregister(reg.Identifier);
-            _wasOpenBeforeDisconnect.TryRemove(function, out _);
-            _portLocks.TryRemove(function, out _);
-            return OperationResult.Success();
-        }
+        if (reg is null)
+            return OperationResult.Failure($"Function: {function} not found in registered device list");
 
-        return OperationResult.Failure($"Function: {function} not found in registered device list");
+        var result = await _registry.Unregister(reg.Identifier);
+        _wasOpenBeforeDisconnect.TryRemove(function, out _);
+        _portLocks.TryRemove(function, out _);
+        return result;
     }
 
     public IReadOnlyList<DeviceRegistration> GetRegisteredDevices()
@@ -262,7 +261,7 @@ public sealed class SerialPortManagerService : BackgroundService, ISerialPortMan
 
             try
             {
-                var worker = _workerFactory.Create(portPath, baudRate, workerType, _registry);
+                var worker = _workerFactory.Create(portPath, reg.PortSettings, workerType, _registry);
                 if (!_workers.TryAdd(function, worker))
                     return OperationResult.Failure($"Concurrent open for '{function}'");
 

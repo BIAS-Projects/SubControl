@@ -1,14 +1,9 @@
-﻿using Microsoft.AspNetCore.DataProtection.KeyManagement;
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using SQLite;
 using SubConsole.Models;
 using SubConsole.Services.Video;
 using SubControl.Model;
-using System.Net.NetworkInformation;
-using System.Reflection;
-using System.Text.Json;
 using static SubConsole.Models.UsbDeviceInfo;
-using static System.Net.WebRequestMethods;
 
 namespace SubConsole.Services.SQL
 {
@@ -26,8 +21,6 @@ namespace SubConsole.Services.SQL
         {
             _logger = logger;
         }
-
-        //    public Config config { get; set; }
 
         private async Task<OperationResult> Init()
         {
@@ -52,7 +45,7 @@ namespace SubConsole.Services.SQL
                 Database = new SQLiteAsyncConnection(dbPath, Constants.Flags);
 
                 await Database.CreateTableAsync<DeviceRegistrationEntity>();
-                await Database.CreateTableAsync<CameraRegistrationEntity>();  // ← new
+                await Database.CreateTableAsync<CameraRegistrationEntity>();
 
                 _logger.LogInformation("SQLite initialized successfully");
                 return OperationResult.Success();
@@ -72,7 +65,7 @@ namespace SubConsole.Services.SQL
                 _logger.LogWarning("Dropping all SQLite tables");
 
                 await Database.DropTableAsync<DeviceRegistrationEntity>();
-                await Database.DropTableAsync<CameraRegistrationEntity>();  // ← new
+                await Database.DropTableAsync<CameraRegistrationEntity>();
 
                 _logger.LogInformation("All tables dropped successfully");
                 return OperationResult.Success();
@@ -222,7 +215,6 @@ namespace SubConsole.Services.SQL
 
         #endregion
 
-
         #region DeviceRegistry
 
         public async Task<OperationResultWithValue<List<DeviceRegistration>>> GetDeviceRegistriesAsync()
@@ -235,43 +227,23 @@ namespace SubConsole.Services.SQL
 
                 var entities = await Database.Table<DeviceRegistrationEntity>().ToListAsync();
 
-                var result = new List<DeviceRegistration>();
+                var result = entities
+                    .Select(DeviceRegistrationEntity.ToModel)
+                    .ToList();
 
-                foreach (var entity in entities)
-                {
-                    var identifier = JsonSerializer.Deserialize<UsbSerialPortInfo>(entity.IdentifierJson)
-                        ?? throw new Exception("Failed to deserialize Identifier");
-
-                    SerialPortSettings? portSettings = string.IsNullOrWhiteSpace(entity.PortSettingsJson)
-                        ? null
-                        : JsonSerializer.Deserialize<SerialPortSettings>(entity.PortSettingsJson);
-
-                    var model = new DeviceRegistration(
-                        identifier,
-                        entity.FunctionName,
-                        entity.BaudRate,
-                        (SerialWorkerType)entity.SerialWorkerType
-                    )
-                    {
-                        CurrentPortPath = entity.CurrentPortPath,
-                        PortSettings = portSettings
-                    };
-
-                    result.Add(model);
-                }
                 _logger.LogInformation(
                     "Loaded {Count} device registrations from database",
                     result.Count);
+
                 return OperationResultWithValue<List<DeviceRegistration>>.Success(result);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to load device registrations");
-                return OperationResultWithValue<List<DeviceRegistration>>.Failure($"Exception: {ex.Message}");
-
+                return OperationResultWithValue<List<DeviceRegistration>>.Failure(
+                    $"Exception: {ex.Message}");
             }
         }
-
 
         public async Task<OperationResult> UpsertDeviceRegistrationAsync(DeviceRegistration model)
         {
@@ -280,33 +252,23 @@ namespace SubConsole.Services.SQL
                 await Init();
 
                 _logger.LogInformation(
-                    "Upserting device registration {DeviceKey} (Function={FunctionName}, Port={PortPath})",
+                    "Upserting device registration {DeviceKey} (Function={FunctionName}, Port={PortPath}, Baud={BaudRate})",
                     model.Key,
                     model.FunctionName,
-                    model.CurrentPortPath);
+                    model.CurrentPortPath,
+                    model.PortSettings.BaudRate);
 
-                var entity = new DeviceRegistrationEntity
-                {
-                    Key = model.Key,
-                    FunctionName = model.FunctionName,
-                    BaudRate = model.BaudRate,
-                    SerialWorkerType = (int)model.SerialWorkerType,
-                    IdentifierJson = JsonSerializer.Serialize(model.Identifier),
-                    CurrentPortPath = model.CurrentPortPath,
-                    PortSettingsJson = model.PortSettings is null
-                        ? null
-                        : JsonSerializer.Serialize(model.PortSettings)
-                };
-
+                var entity = DeviceRegistrationEntity.ToEntity(model);
                 var rows = await Database.InsertOrReplaceAsync(entity);
 
-                if(rows != 1)
+                if (rows != 1)
                 {
                     _logger.LogWarning(
                         "Failed to upsert device registration {DeviceKey} update returned:{Rows} expecting:1",
                         model.Key,
                         rows);
-                    return OperationResult.Failure($"Failed to upsert device registration {model.Key} update returned:{rows} expecting:1");
+                    return OperationResult.Failure(
+                        $"Failed to upsert device registration {model.Key} update returned:{rows} expecting:1");
                 }
 
                 _logger.LogDebug(
@@ -325,7 +287,6 @@ namespace SubConsole.Services.SQL
                 return OperationResult.Failure($"Exception: {ex.Message}");
             }
         }
-
 
         public async Task<OperationResult> DeleteDeviceRegistrationAsync(string key)
         {
@@ -347,7 +308,8 @@ namespace SubConsole.Services.SQL
                         "Failed to delete device registration {DeviceKey} update returned:{Rows} expecting:1",
                         key,
                         rows);
-                    return OperationResult.Failure($"Failed to delete device registration {key} update returned:{rows} expecting:1");
+                    return OperationResult.Failure(
+                        $"Failed to delete device registration {key} update returned:{rows} expecting:1");
                 }
 
                 _logger.LogDebug(
@@ -390,135 +352,7 @@ namespace SubConsole.Services.SQL
             }
         }
 
-
-
         #endregion
-
-        #region "Config"
-
-        //public async Task<bool> GetConfigAsync()
-        //{
-        //    try
-        //    {
-        //        await Init();
-        //        config = await Database.Table<Config>().Where(i => i.Id == 0).FirstOrDefaultAsync();
-        //        return config is not null;
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        LastError = ex.Message;
-        //        return false;
-        //    }
-        //}
-
-        //public async Task<bool> SetDefaultConfig()
-        //{
-        //    config = new Config
-        //    {
-        //        Id = 0,
-        //        IPAddress = "127.0.0.1",
-        //        Port = "9000",
-        //        Rs232Port = "COM1",
-        //        BaudRate = 9600,
-        //        Parity = "None",
-        //        DataBits = 8,
-        //        StopBits = "One",
-        //        FlowControl = "None",
-        //        BusId = 1,
-        //        DeviceAddress = 60,
-        //        ClockRate = 1000000,
-        //        CutterUpCommand = "CUTTER_UP",
-        //        CutterDownCommand = "CUTTER_DOWN",
-        //        CutterLeftCommand = "CUTTER_LEFT",
-        //        CutterRightCommand = "CUTTER_RIGHT",
-        //        PeriscopeUpCommand = "PERISCOPE_UP",
-        //        PeriscopeDownCommand = "PERISCOPE_DOWN",
-        //        Features = "CUTTER,PERISCOPE"
-        //    };
-        //    return await SaveConfigAsync(false) == 1;
-        //}
-
-        //public async Task<int> SaveConfigAsync(bool isUpdate)
-        //{
-        //    try
-        //    {
-        //        await Init();
-        //        return isUpdate
-        //            ? await Database.UpdateAsync(config)
-        //            : await Database.InsertAsync(config);
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        LastError = ex.Message;
-        //        return -1;
-        //    }
-        //}
-
-        //public async Task<int> DeleteAllConfig()
-        //{
-        //    try
-        //    {
-        //        await Init();
-        //        return await Database.DeleteAllAsync<Config>();
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        LastError = ex.Message;
-        //        return -1;
-        //    }
-        //}
-
-
-
-
-        //public async Task<bool> SetDefaultConfig()
-        //{
-        //    config = new Config
-        //    {
-        //        Id = 0,
-        //        IPAddress = "127.0.0.1",
-        //        Port = "9000",
-        //        Rs232Port = "COM1",
-        //        BaudRate = 9600,
-        //        Parity = "None",
-        //        DataBits = 8,
-        //        StopBits = "One",
-        //        FlowControl = "None",
-        //        BusId = 1,
-        //        DeviceAddress = 60,
-        //        ClockRate = 1000000,
-        //        CutterUpCommand = "CUTTER_UP",
-        //        CutterDownCommand = "CUTTER_DOWN",
-        //        CutterLeftCommand = "CUTTER_LEFT",
-        //        CutterRightCommand = "CUTTER_RIGHT",
-        //        PeriscopeUpCommand = "PERISCOPE_UP",
-        //        PeriscopeDownCommand = "PERISCOPE_DOWN",
-        //        Features = "CUTTER,PERISCOPE"
-        //    };
-        //    return await SaveConfigAsync(false) == 1;
-        //}
-
-        //public async Task<int> SaveConfigAsync(bool isUpdate)
-        //{
-        //    try
-        //    {
-        //        await Init();
-        //        return isUpdate
-        //            ? await Database.UpdateAsync(config)
-        //            : await Database.InsertAsync(config);
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        LastError = ex.Message;
-        //        return -1;
-        //    }
-        //}
-
-        #endregion
-
-
-
-
     }
 
     public static class Constants

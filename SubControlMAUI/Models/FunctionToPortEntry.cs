@@ -10,6 +10,6 @@ public record FunctionToPortEntry
 {
     public string DeviceKey { get; set; }
     public string FunctionName { get; set; }
-    public string BaudRate { get; set; }
+    public SerialPortSettings Settings { get; set; } = SerialPortSettings.Default;
     public string  WorkerType { get; set; }
 }
