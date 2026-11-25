@@ -84,6 +84,8 @@ public sealed class SerialPortWorker : ISerialWorker, IKeepAliveWorker
             StopBits stopBits = settings?.StopBits
                 ?? (_functionName.Contains("TOM") ? StopBits.Two : StopBits.One);
 
+            bool dtrEnable = _functionName.Contains("Slider");
+
             _port = new SerialPort(PortPath, BaudRate)
             {
                 WriteTimeout = 2_000,
@@ -94,7 +96,7 @@ public sealed class SerialPortWorker : ISerialWorker, IKeepAliveWorker
                 DataBits = settings?.DataBits ?? 8,
                 StopBits = stopBits,
 
-                DtrEnable = settings?.DtrEnable ?? false,
+                DtrEnable = dtrEnable,
                 RtsEnable = settings?.RtsEnable ?? false
             };
             _port.Open();

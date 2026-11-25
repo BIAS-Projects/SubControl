@@ -39,6 +39,8 @@ public partial class SliderViewModel : BaseViewModel
 
     private int interCommandDelay = 500;
 
+    private readonly TimeSpan _commandTimeout = TimeSpan.FromSeconds(10);
+
     /// <summary>
     /// Shared dispatcher for request/response and push-confirm operations.
     /// The rotator exclusively uses push-confirm (SendAndWaitForPushAsync) because
@@ -51,10 +53,7 @@ public partial class SliderViewModel : BaseViewModel
     // ── command serialisation ─────────────────────────────────────────────────
     private readonly SemaphoreSlim _commandLock = new(1, 1);
 
-    // ── polling ───────────────────────────────────────────────────────────────
-    private CancellationTokenSource? _pollingCts;
-    private readonly TimeSpan _pollingInterval = TimeSpan.FromMilliseconds(500);
-    private bool _isPageVisible;
+
 
 
 
@@ -128,6 +127,10 @@ public partial class SliderViewModel : BaseViewModel
 
     [ObservableProperty] private string statusText = string.Empty;
 
+    [ObservableProperty] private string message = string.Empty;
+
+    [ObservableProperty] private string sliderReceivedMessage = string.Empty;
+
     // ─────────────────────────────────────────────────────────────────────────
     // Helpers
     // ─────────────────────────────────────────────────────────────────────────
@@ -150,28 +153,16 @@ public partial class SliderViewModel : BaseViewModel
     {
         try
         {
-            //var function = msg.Value.Function;
-            //var raw = msg.Value.Data;
+            if(!msg.Value.Function.Equals(Feature.SliderName))
+            {
+                return Task.CompletedTask;
+            }
+            if(!msg.Value.Data.Contains(Slider.MessageHeader))
+            {
+                return Task.CompletedTask;
+            }
+            Message = msg.Value.Data;
 
-            //if (!function.Equals(Feature.RotatorName, StringComparison.OrdinalIgnoreCase))
-            //    return Task.CompletedTask;
-
-            //Debug.WriteLine($"RotatorViewModel raw incoming: '{raw}'");
-
-            //var data = raw?.Trim();
-            //if (string.IsNullOrWhiteSpace(data)) return Task.CompletedTask;
-
-            //bool hasValidHeader = Rotator.Headers.Any(h => data.StartsWith(h, StringComparison.OrdinalIgnoreCase));
-            //bool hasValidTerminator = Rotator.Terminators.Any(t => data.EndsWith(t, StringComparison.OrdinalIgnoreCase));
-
-            //if (!hasValidHeader || !hasValidTerminator) return Task.CompletedTask;
-
-            //long now = Environment.TickCount64;
-            //if ((now - Interlocked.Read(ref _lastStatusTick)) >= StatusThrottleMs)
-            //    Interlocked.Exchange(ref _lastStatusTick, now);
-
-            //if (MatchesCommandCode(data, "MRL"))
-            //    UpdateEncoderAngle(data);
         }
         catch (Exception ex)
         {
@@ -183,19 +174,12 @@ public partial class SliderViewModel : BaseViewModel
 
     public void OnAppearing()
     {
-        //_isPageVisible = true;
-        //_pollingCts?.Cancel();
-        //_pollingCts = new CancellationTokenSource();
-        //_ = StartPollingAsync(_pollingCts.Token);
-        //IsBrakeEnabled = AppState.RotatorBrakeEnabled;
+
     }
 
     public void OnDisappearing()
     {
-        //_isPageVisible = false;
-        //_pollingCts?.Cancel();
-        //_pollingCts?.Dispose();
-        //_pollingCts = null;
+
     }
 
     [RelayCommand]
@@ -204,4 +188,25 @@ public partial class SliderViewModel : BaseViewModel
         StatusText = string.Empty;
         await Shell.Current.GoToAsync("..");
     }
+
+    [RelayCommand]
+    private async Task SendSliderMessage()
+    {
+        SliderReceivedMessage = String.Empty;
+        StatusText = String.Empty;
+        var espResponse = await _dispatcher.SendAndWaitForPushAsync(
+         Feature.SliderName, "WRITE TEXT",
+         "T",
+         Feature.SliderName,
+         r => r.Contains("You sent"),
+         _commandTimeout);
+
+        if (espResponse is null)
+        {
+            SetStatus("ESP failed to respond to command");
+            return;
+        }
+        SliderReceivedMessage = espResponse;
+    }
+
 }
