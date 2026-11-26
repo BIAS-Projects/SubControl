@@ -116,7 +116,7 @@
 		<PackageReference Include="sqlite-net-pcl" Version="1.9.172" />
 		<PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" />
 
-		<PackageReference Include="SSH.NET" Version="2025.1.0" />
+		<PackageReference Include="SSH.NET" Version="2026.0.1" />
 		<PackageReference Include="System.Device.Gpio" Version="4.1.0" />
 		<PackageReference Include="System.IO.Ports" Version="11.0.0" />
 	</ItemGroup>

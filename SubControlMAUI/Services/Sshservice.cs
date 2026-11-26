@@ -1075,12 +1075,14 @@ namespace SubControlMAUI.Services
             {
                 using var fs = File.OpenRead(localPath);
                 var totalBytes = fs.Length;
-                long uploaded = 0;
-
+ 
                 _sftpClient!.UploadFile(fs, remotePath, uploaded =>
                 {
-                    Interlocked.Add(ref uploaded, 0); // suppress CS0728
-                    progress?.Report((double)uploaded / totalBytes * 100.0);
+                    if (totalBytes > 0)
+                    {
+                        Interlocked.Add(ref uploaded, 0); // suppress CS0728
+                        progress?.Report((double)uploaded / totalBytes * 100.0);
+                    }
                 });
 
                 _logger.LogInformation("Upload complete: {RemotePath} ({Bytes:N0} bytes)", remotePath, totalBytes);
